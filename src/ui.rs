@@ -35,6 +35,17 @@ pub fn app_icon() -> egui::IconData {
         .expect("Bundled PaperCraft icon must be valid PNG")
 }
 
+/// Icon handed to the OS for the window and Dock. macOS does not mask
+/// application icons, so it gets the rounded tile with a transparent margin.
+pub fn window_icon() -> egui::IconData {
+    if cfg!(target_os = "macos") {
+        eframe::icon_data::from_png_bytes(include_bytes!("../assets/papercraft-macos.png"))
+            .expect("Bundled PaperCraft macOS icon must be valid PNG")
+    } else {
+        app_icon()
+    }
+}
+
 pub fn font(size: f32) -> FontId {
     FontId::proportional(size)
 }
@@ -478,6 +489,18 @@ mod tests {
         let icon = app_icon();
         assert_eq!([icon.width, icon.height], [256, 256]);
         assert_eq!(icon.rgba.len(), 256 * 256 * 4);
+    }
+
+    #[test]
+    fn macos_window_icon_has_transparent_corners() {
+        let icon =
+            eframe::icon_data::from_png_bytes(include_bytes!("../assets/papercraft-macos.png"))
+                .unwrap();
+        let alpha = |x: u32, y: u32| icon.rgba[((y * icon.width + x) * 4 + 3) as usize];
+        assert_eq!([icon.width, icon.height], [512, 512]);
+        assert_eq!(alpha(0, 0), 0);
+        assert_eq!(alpha(60, 60), 0);
+        assert_eq!(alpha(256, 256), 255);
     }
 
     #[test]

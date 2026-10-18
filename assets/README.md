@@ -4,7 +4,10 @@ The engraved origami-crane mark is original project artwork generated with the b
 
 - `papercraft-logo.png`: full-resolution generated logo.
 - `papercraft-icon.png`: 256-pixel runtime icon for the window and dashboard.
+- `papercraft-macos.png`: 512-pixel rounded-tile runtime icon for the macOS Dock.
 - `papercraft.icns`: macOS application icon, containing the standard 16–1024 pixel sizes.
+
+macOS does not mask application icons, so the macOS files carry their own rounded tile (824 pixels on a 1024-pixel canvas) and transparent margin. Regenerate both with `python3 packaging/macos/make_icon.py`.
 
 ## Final generation prompt
 

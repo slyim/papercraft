@@ -3,7 +3,7 @@
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_icon(papercraft::ui::app_icon())
+            .with_icon(papercraft::ui::window_icon())
             .with_inner_size([1380.0, 860.0])
             .with_min_inner_size([960.0, 640.0])
             // macOS: the tab strip shares the title bar with the window controls.
