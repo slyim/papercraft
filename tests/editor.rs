@@ -1,9 +1,29 @@
-use crumbs::{
-    app::{CrumbsApp, Tool, View},
+use eframe::egui;
+use papercraft::{
+    app::{PaperCraftApp, Tool, View},
     document::{DEFAULT_CANVAS, Document, Editor, NodeKind},
     recents::Recents,
 };
-use eframe::egui;
+
+#[test]
+fn legacy_crumbs_documents_survive_the_papercraft_rename() {
+    let directory = tempfile::tempdir().unwrap();
+    let old_path = directory.path().join("legacy.crumbs");
+    let original = include_bytes!("fixtures/legacy.crumbs");
+    std::fs::write(&old_path, original).unwrap();
+    let document = Document::load(&old_path).unwrap();
+    assert_eq!(document.version, 1);
+    assert!(
+        document
+            .nodes
+            .iter()
+            .any(|node| node.text.contains("Crumbs"))
+    );
+    let new_path = directory.path().join("design.papercraft");
+    document.save(&new_path).unwrap();
+    assert_eq!(Document::load(&new_path).unwrap(), document);
+    assert_eq!(std::fs::read(old_path).unwrap(), original);
+}
 
 #[test]
 fn document_edit_history_save_and_export_round_trip() {
@@ -87,8 +107,8 @@ fn invalid_documents_and_edits_cannot_replace_valid_work() {
 fn native_editor_renders_at_supported_sizes_and_keyboard_actions_use_history() {
     for size in [[1380.0, 860.0], [960.0, 640.0]] {
         let ctx = egui::Context::default();
-        CrumbsApp::configure(&ctx);
-        let mut app = CrumbsApp::from_document(Document::example());
+        PaperCraftApp::configure(&ctx);
+        let mut app = PaperCraftApp::from_document(Document::example());
         let frame = |events| egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -185,7 +205,7 @@ fn input(size: [f32; 2], events: Vec<egui::Event>) -> egui::RawInput {
 
 fn run(
     ctx: &egui::Context,
-    app: &mut CrumbsApp,
+    app: &mut PaperCraftApp,
     size: [f32; 2],
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
@@ -195,7 +215,7 @@ fn run(
 }
 
 /// Screen rectangle of the painted artboard.
-fn artboard(ctx: &egui::Context, app: &mut CrumbsApp, size: [f32; 2]) -> egui::Rect {
+fn artboard(ctx: &egui::Context, app: &mut PaperCraftApp, size: [f32; 2]) -> egui::Rect {
     let background = app.editor.document.background;
     let fill = egui::Color32::from_rgba_unmultiplied(
         background[0],
@@ -232,13 +252,13 @@ fn text_rect(output: &egui::FullOutput, text: &str) -> Option<egui::Rect> {
     text_rects(output, text).into_iter().next()
 }
 
-fn click(ctx: &egui::Context, app: &mut CrumbsApp, size: [f32; 2], at: egui::Pos2) {
+fn click(ctx: &egui::Context, app: &mut PaperCraftApp, size: [f32; 2], at: egui::Pos2) {
     pointer_drag(ctx, app, size, at, at);
 }
 
 fn pointer_drag(
     ctx: &egui::Context,
-    app: &mut CrumbsApp,
+    app: &mut PaperCraftApp,
     size: [f32; 2],
     start: egui::Pos2,
     end: egui::Pos2,
@@ -334,8 +354,8 @@ fn positioned_layers_are_rounded_clamped_and_single_history_steps() {
 fn drawing_with_the_text_tool_creates_the_dragged_geometry() {
     let size = [1380.0, 860.0];
     let ctx = egui::Context::default();
-    CrumbsApp::configure(&ctx);
-    let mut app = CrumbsApp::from_document(Document::default());
+    PaperCraftApp::configure(&ctx);
+    let mut app = PaperCraftApp::from_document(Document::default());
     let board = artboard(&ctx, &mut app, size);
     run(&ctx, &mut app, size, vec![key(egui::Key::T, true)]);
     assert_eq!(app.tool, Tool::Text);
@@ -378,8 +398,8 @@ fn side_panels_keep_their_width_across_frames() {
     for selected in [None, Some(4)] {
         for size in [[1380.0, 860.0], [960.0, 640.0]] {
             let ctx = egui::Context::default();
-            CrumbsApp::configure(&ctx);
-            let mut app = CrumbsApp::from_document(Document::example());
+            PaperCraftApp::configure(&ctx);
+            let mut app = PaperCraftApp::from_document(Document::example());
             app.editor.selected = selected;
             let width = |ctx: &egui::Context, id: &str| {
                 egui::PanelState::load(ctx, egui::Id::new(id)).map(|s| s.size().x)
@@ -409,8 +429,8 @@ fn dashboard_opens_recents_and_tabs_protect_unsaved_work() {
     recents.touch(&other_path).unwrap();
 
     let ctx = egui::Context::default();
-    CrumbsApp::configure(&ctx);
-    let mut app = CrumbsApp::from_document(Document::example()).with_recents(recents);
+    PaperCraftApp::configure(&ctx);
+    let mut app = PaperCraftApp::from_document(Document::example()).with_recents(recents);
     // Unsaved edit to the open starter document.
     let before = app.editor.document.clone();
     app.editor.document.nodes[0].x += 5.0;
@@ -474,8 +494,8 @@ fn dashboard_opens_recents_and_tabs_protect_unsaved_work() {
 fn page_color_field_edits_hex_and_records_one_history_step() {
     let size = [1380.0, 860.0];
     let ctx = egui::Context::default();
-    CrumbsApp::configure(&ctx);
-    let mut app = CrumbsApp::from_document(Document::example());
+    PaperCraftApp::configure(&ctx);
+    let mut app = PaperCraftApp::from_document(Document::example());
     let output = run(&ctx, &mut app, size, Vec::new());
     let field = text_rect(&output, "282828").expect("Page color field");
     click(&ctx, &mut app, size, field.center());

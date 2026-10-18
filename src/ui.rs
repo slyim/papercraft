@@ -1,4 +1,4 @@
-//! Shared colors, metrics and small painted controls for the Crumbs shell.
+//! Shared colors, metrics and small painted controls for the PaperCraft shell.
 
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Rect, Response, Sense, Stroke, StrokeKind, Ui,
@@ -29,6 +29,11 @@ pub const ROW: f32 = 28.0;
 pub const RADIUS: u8 = 6;
 /// Height of the window tab strip.
 pub const TAB_BAR: f32 = 41.0;
+
+pub fn app_icon() -> egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!("../assets/papercraft-icon.png"))
+        .expect("Bundled PaperCraft icon must be valid PNG")
+}
 
 pub fn font(size: f32) -> FontId {
     FontId::proportional(size)
@@ -467,6 +472,13 @@ pub fn number_field(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn application_icon_decodes_for_the_window_and_dashboard() {
+        let icon = app_icon();
+        assert_eq!([icon.width, icon.height], [256, 256]);
+        assert_eq!(icon.rgba.len(), 256 * 256 * 4);
+    }
 
     #[test]
     fn hexadecimal_colors_round_trip_and_reject_invalid_input() {

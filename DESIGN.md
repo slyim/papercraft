@@ -1,4 +1,4 @@
-# Crumbs desktop editor
+# PaperCraft desktop editor
 
 Mode: Operate. The user's explicit Paper reference fixes the surface structure: a central canvas, left layer list, right inspector, and a compact top toolbar. No new visual direction is being introduced.
 

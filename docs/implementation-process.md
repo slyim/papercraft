@@ -1,8 +1,8 @@
-# Crumbs implementation process
+# PaperCraft implementation process
 
 Date: 18 October 2026, Europe/Istanbul.
 
-Build an original, local design editor in Rust with egui. Paper research informs behavior; it does not supply application code. The first slice is one local artboard, rectangle/text layers, selection and ordering, an inspector, drag/resize, pan/zoom, undo/redo, `.crumbs` JSON save/open, and HTML export. This document defines acceptance checks, not a claim that they have passed.
+Build an original, local design editor in Rust with egui. Paper research informs behavior; it does not supply application code. The first slice is one local artboard, rectangle/text layers, selection and ordering, an inspector, drag/resize, pan/zoom, undo/redo, `.papercraft` JSON save/open (also accepting legacy `.crumbs` files), and HTML export. This document defines acceptance checks, not a claim that they have passed.
 
 The first slice is implemented. The [verification record](verification.md) lists completed checks and remaining manual/platform checks separately. The milestones below remain the acceptance checklist for further work.
 
@@ -39,16 +39,16 @@ The saved [analysis](../research/paper/analysis.md) and [compact evidence](../re
 | Artboard, rectangles, text | [Vendor documented](https://paper.design/docs/support); runtime unverified | Create and edit these primitives in an original model. Nested frames, rich text, images and vectors deferred. |
 | Layers and inspector | Selection, ordering, position and sizing [documented](https://paper.design/docs/support) | Canvas/layer-list selection agrees; inspector edits the selected layer; ordering determines drawing and hit testing. Paper's exact selection rules remain unknown. |
 | Drag/resize, pan/zoom | [Documented](https://paper.design/docs/support); runtime unverified | Pointer movement maps correctly between screen and artboard coordinates. Define zoom limits and minimum size locally. Paper transform/snapping rules remain unknown. |
-| Undo/redo | Present in public [build-log references](https://paper.design/build-log); batching unknown | One completed drag/resize is one history step; redo restores the result; a new edit clears redo. This is a Crumbs decision. |
+| Undo/redo | Present in public [build-log references](https://paper.design/build-log); batching unknown | One completed drag/resize is one history step; redo restores the result; a new edit clears redo. This is a PaperCraft decision. |
 | Save/open | E1 `src/lib/storage.ts:12–24,33–47,76–126` proves shell JSON storage only | Versioned `.crumbs` JSON stores the original document. Validate before replacing the open document; failed writes preserve existing files. Paper document compatibility is unknown and out of scope. |
 | HTML export | Code export [documented](https://paper.design/docs/support) | Export supported primitives, geometry, colors and escaped text as a standalone file. Browser typography may differ from egui; arbitrary CSS and import round trips deferred. |
-| Dashboard and editor chrome | User-supplied Paper screenshots (dashboard, empty editor), 18 October 2026; runtime behavior behind account/team/MCP controls unknown | Crumbs decisions: a Dashboard tab and one document tab; recents store local paths only and tolerate missing or invalid lists; opening, creating or closing via tabs/cards uses the unsaved-changes prompt; V/H/R/T tools place a layer by click or drag inside the artboard, as one history step, then return to Select; the page color is stored in the document (`canvas`, optional for earlier version 1 files) and exported as the HTML body background. Theme tokens and multiple pages are shown disabled; account, sharing, MCP, vector, frame, component and image-generation controls are omitted. |
+| Dashboard and editor chrome | User-supplied Paper screenshots (dashboard, empty editor), 18 October 2026; runtime behavior behind account/team/MCP controls unknown | PaperCraft decisions: a Dashboard tab and one document tab; recents store local paths only and tolerate missing or invalid lists; opening, creating or closing via tabs/cards uses the unsaved-changes prompt; V/H/R/T tools place a layer by click or drag inside the artboard, as one history step, then return to Select; the page color is stored in the document (`canvas`, optional for earlier version 1 files) and exported as the HTML body background. Theme tokens and multiple pages are shown disabled; account, sharing, MCP, vector, frame, component and image-generation controls are omitted. |
 | Agent interface | E1 bridge sources above; [public MCP behavior](https://paper.design/docs/mcp) | Later milestone only. First establish one authoritative document model; protocol, mutation batching and screenshot semantics remain undecided. |
 
 ## Change workflow
 
 1. **Evidence:** reuse the saved baseline. For a new Paper claim, record observation/inference/unknown, target hash, Evidence ID, exact source or public URL, coverage and limitations. Use the project REA skill only when shipped-artifact or requested runtime evidence is needed.
-2. **Behavior contract:** write the trigger, visible result, state change, invalid-input behavior and acceptance check. Identify whether each rule comes from evidence or a Crumbs design decision. Resolve only uncertainties that affect the current slice.
+2. **Behavior contract:** write the trigger, visible result, state change, invalid-input behavior and acceptance check. Identify whether each rule comes from evidence or a PaperCraft design decision. Resolve only uncertainties that affect the current slice.
 3. **Original implementation:** implement the smallest complete Rust change against the existing model. Canvas, inspector, history, persistence and export must use the same state. Never translate recovered Paper source into product code.
 4. **Verification:** exercise the contract with focused model tests and a rendered native-app check. Record commands/results and untested behavior separately. A successful build does not establish interaction correctness.
 5. **Stop:** complete the listed acceptance checks, document remaining gaps, and stop expanding scope. Add a later feature only with a new bounded contract.
@@ -64,4 +64,4 @@ The saved [analysis](../research/paper/analysis.md) and [compact evidence](../re
 
 Later planning may cover tokens, nested layouts, images/SVG, imports and local MCP. Each requires separate behavior proof and acceptance checks. Full CSS layout, Paper file compatibility and multiplayer remain outside this slice.
 
-The [ArtCraft interoperability plan](artcraft.md) defines proposed cross-application work separately from Paper parity. Crumbs now uses `MIT OR Apache-2.0`; license alignment does not imply implemented adapters or official suite membership.
+The [ArtCraft interoperability plan](artcraft.md) defines proposed cross-application work separately from Paper parity. PaperCraft uses MIT, an option also offered by the native Craft apps; license alignment does not imply implemented adapters or official suite membership. New files use `.papercraft`; legacy `.crumbs` documents remain compatible with the unchanged version 1 schema.

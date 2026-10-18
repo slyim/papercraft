@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "name": "A place to begin",
+  "width": 960.0,
+  "height": 640.0,
+  "background": [
+    248,
+    247,
+    243,
+    255
+  ],
+  "next_id": 7,
+  "nodes": [
+    {
+      "id": 1,
+      "name": "Surface",
+      "kind": "rectangle",
+      "x": 56.0,
+      "y": 56.0,
+      "width": 848.0,
+      "height": 528.0,
+      "fill": [
+        226,
+        233,
+        220,
+        255
+      ],
+      "radius": 20.0,
+      "text": "",
+      "font_size": 20.0,
+      "hidden": false,
+      "locked": false
+    },
+    {
+      "id": 2,
+      "name": "Heading",
+      "kind": "text",
+      "x": 96.0,
+      "y": 100.0,
+      "width": 720.0,
+      "height": 150.0,
+      "fill": [
+        30,
+        52,
+        40,
+        255
+      ],
+      "radius": 0.0,
+      "text": "A canvas for\nwhat comes next.",
+      "font_size": 58.0,
+      "hidden": false,
+      "locked": false
+    },
+    {
+      "id": 3,
+      "name": "Description",
+      "kind": "text",
+      "x": 100.0,
+      "y": 286.0,
+      "width": 640.0,
+      "height": 76.0,
+      "fill": [
+        64,
+        81,
+        67,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Shape an idea. Give it space.\nKeep the work on your own computer.",
+      "font_size": 23.0,
+      "hidden": false,
+      "locked": false
+    },
+    {
+      "id": 4,
+      "name": "Button background",
+      "kind": "rectangle",
+      "x": 100.0,
+      "y": 414.0,
+      "width": 196.0,
+      "height": 54.0,
+      "fill": [
+        39,
+        65,
+        48,
+        255
+      ],
+      "radius": 10.0,
+      "text": "",
+      "font_size": 20.0,
+      "hidden": false,
+      "locked": false
+    },
+    {
+      "id": 5,
+      "name": "Button label",
+      "kind": "text",
+      "x": 124.0,
+      "y": 430.0,
+      "width": 160.0,
+      "height": 30.0,
+      "fill": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Make something",
+      "font_size": 18.0,
+      "hidden": false,
+      "locked": false
+    },
+    {
+      "id": 6,
+      "name": "Footer",
+      "kind": "text",
+      "x": 100.0,
+      "y": 520.0,
+      "width": 600.0,
+      "height": 26.0,
+      "fill": [
+        64,
+        81,
+        67,
+        255
+      ],
+      "radius": 0.0,
+      "text": "An original starter document · Crumbs",
+      "font_size": 14.0,
+      "hidden": false,
+      "locked": false
+    }
+  ]
+}

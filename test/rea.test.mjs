@@ -12,8 +12,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 const root = fileURLToPath(new URL('../', import.meta.url));
 
 test('REA research tooling connects and the analysis command preserves scoped evidence', { timeout: 120_000 }, async () => {
-  const client = new Client({ name: 'crumbs-test', version: '0.1.0' });
-  const fixture = await mkdtemp(join(tmpdir(), 'crumbs-rea-'));
+  const client = new Client({ name: 'papercraft-test', version: '0.1.1' });
+  const fixture = await mkdtemp(join(tmpdir(), 'papercraft-rea-'));
   const outputs = [];
   try {
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(root, 'node_modules/rea-agents/scripts/rea.mjs'), 'mcp'], cwd: root }));

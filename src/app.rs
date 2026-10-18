@@ -63,7 +63,7 @@ struct Creation {
     current: Pos2,
 }
 
-pub struct CrumbsApp {
+pub struct PaperCraftApp {
     pub editor: Editor,
     saved: Document,
     path: Option<PathBuf>,
@@ -87,9 +87,10 @@ pub struct CrumbsApp {
     left_open: bool,
     pages_open: bool,
     layers_open: bool,
+    logo: Option<egui::TextureHandle>,
 }
 
-impl CrumbsApp {
+impl PaperCraftApp {
     pub fn from_document(document: Document) -> Self {
         Self {
             saved: document.clone(),
@@ -115,6 +116,7 @@ impl CrumbsApp {
             left_open: true,
             pages_open: true,
             layers_open: true,
+            logo: None,
         }
     }
 
@@ -254,8 +256,8 @@ impl CrumbsApp {
             self.path.clone()
         } else {
             rfd::FileDialog::new()
-                .add_filter("Crumbs document", &["crumbs"])
-                .set_file_name(format!("{}.crumbs", self.editor.document.name))
+                .add_filter("PaperCraft document", &["papercraft"])
+                .set_file_name(format!("{}.papercraft", self.editor.document.name))
                 .save_file()
         };
         let Some(path) = path else {
@@ -321,7 +323,7 @@ impl CrumbsApp {
             }
             Intent::Open => {
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Crumbs document", &["crumbs"])
+                    .add_filter("PaperCraft document", &["papercraft", "crumbs"])
                     .pick_file()
                 {
                     self.open_path(path);
@@ -490,12 +492,12 @@ impl CrumbsApp {
         }
         let title = if self.document_open {
             format!(
-                "{}{} — Crumbs",
+                "{}{} — PaperCraft",
                 self.editor.document.name,
                 if self.dirty() { " •" } else { "" }
             )
         } else {
-            "Crumbs".into()
+            "PaperCraft".into()
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
 
@@ -807,7 +809,7 @@ impl CrumbsApp {
             ui,
             "Pages",
             &mut self.pages_open,
-            Some((icon::PLUS, "Crumbs documents have one page", false)),
+            Some((icon::PLUS, "PaperCraft documents have one page", false)),
         );
         if self.pages_open
             && Row::new(icon::FILE, "Page 1")
@@ -1669,7 +1671,7 @@ fn tab(
     (response, close)
 }
 
-/// Design/Theme switch. Theme tokens are not part of the Crumbs model yet, so that
+/// Design/Theme switch. Theme tokens are not part of the PaperCraft model yet, so that
 /// segment is shown disabled.
 fn segmented(ui: &mut egui::Ui) {
     let width = ui.available_width() - 24.0;
@@ -1764,7 +1766,7 @@ fn section_toggle(
     })
 }
 
-impl eframe::App for CrumbsApp {
+impl eframe::App for PaperCraftApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
     }

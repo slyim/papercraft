@@ -3,19 +3,21 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Crumbs</string>
+    <string>PaperCraft</string>
     <key>CFBundleDisplayName</key>
-    <string>Crumbs</string>
+    <string>PaperCraft</string>
     <key>CFBundleIdentifier</key>
-    <string>io.github.slyim.crumbs</string>
+    <string>io.github.slyim.papercraft</string>
     <key>CFBundleExecutable</key>
-    <string>crumbs</string>
+    <string>papercraft</string>
+    <key>CFBundleIconFile</key>
+    <string>papercraft</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>0.1.1</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>

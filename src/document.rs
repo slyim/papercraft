@@ -146,7 +146,7 @@ impl Document {
                 600.0,
                 26.0,
                 [64, 81, 67, 255],
-                "An original starter document · Crumbs",
+                "An original starter document · PaperCraft",
                 14.0,
                 0.0,
             ),
@@ -221,8 +221,8 @@ impl Document {
         if data.len() as u64 > MAX_DOCUMENT_BYTES {
             return Err("Document exceeds the 16 MiB size limit.".into());
         }
-        let doc: Self =
-            serde_json::from_slice(&data).map_err(|e| format!("Invalid Crumbs document: {e}"))?;
+        let doc: Self = serde_json::from_slice(&data)
+            .map_err(|e| format!("Invalid PaperCraft document: {e}"))?;
         doc.validate()?;
         Ok(doc)
     }

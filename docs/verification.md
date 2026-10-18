@@ -52,3 +52,17 @@ Original Crumbs code and documentation, including original code in v0.1.0, are n
 Offline Cargo metadata, npm package/lockfile metadata, license texts and relative documentation links were checked. Application code, application dependencies and the existing release archive are unchanged. No additional application tests were run for this documentation and metadata change.
 
 The [integration plan](artcraft.md) cites checked upstream revisions and separates documented interfaces from proposed implementations. No cross-app editing, rendering, automation or installation was tested; adapters remain unimplemented.
+
+## PaperCraft rename (18 October 2026)
+
+Version 0.1.1 renames the app and Rust package to PaperCraft/papercraft. The current source, documentation and original generated paper-crane logo use MIT; the previously published v0.1.0 dual-license grant is retained with that release. Historical entries above describe the names and licenses at the time of each check.
+
+- Formatting, Clippy with warnings rejected, all 4 unit and 10 integration tests, the research integration test, and the optimized native build pass.
+- The legacy-file regression loads the original v0.1.0 starter fixture, saves it as `.papercraft`, verifies document equality, and confirms that the original `.crumbs` bytes remain unchanged. The schema stays at version 1. Existing Save keeps its path; Save As defaults to `.papercraft`. Both extensions are accepted by Open.
+- Recent-file storage deliberately retains the old Crumbs folders, avoiding a destructive migration or split history between application versions.
+- The embedded PNG decodes at 256×256 for window/dashboard use. The original generated logo and standard macOS ICNS sizes are retained in `assets/`, with the final generation prompt and MIT terms documented there.
+- Native editor and dashboard screenshots were inspected at 1380×860 and 960×640. The dashboard shows the new logo/name, and the starter artwork names PaperCraft. Save/reopen and HTML export assertions pass.
+- Native rendering, ICNS packaging and the research test require macOS services unavailable in the sandbox. Their checks pass outside it; those sandbox errors are separate from application failures.
+- The final `PaperCraft.app` bundle launches without diagnostics. Ad-hoc signature verification passes before and after ZIP extraction, and the extracted executable matches the staged app. The app includes the MIT license, generated ICNS icon and the retained 137 dependency notice sets. The archive's SHA-256 is published in `SHA256SUMS.txt`.
+
+Native file-dialog clicks and a full manual editing session remain unverified. Other-platform release builds, notarization and Craft app interoperability remain outside this rename.

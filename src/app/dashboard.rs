@@ -1,6 +1,6 @@
 //! Dashboard: recent local files, search, and file creation.
 
-use super::{CrumbsApp, Intent, View, color, paint_document};
+use super::{Intent, PaperCraftApp, View, color, paint_document};
 use crate::document::Document;
 use crate::recents::edited_label;
 use crate::ui::{self, BODY, BORDER, MAIN, ROW, Row, SHELL, TEXT, TEXT_DIM, TEXT_FAINT};
@@ -77,7 +77,7 @@ enum Action {
     Remove(PathBuf),
 }
 
-impl CrumbsApp {
+impl PaperCraftApp {
     pub(super) fn dashboard(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.cards.refresh(self.recents.files());
         egui::Panel::left("dashboard_sidebar")
@@ -110,18 +110,27 @@ impl CrumbsApp {
         // Application header.
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
         let mark = pos2(rect.left() + 26.0, rect.center().y);
-        ui.painter().circle_filled(mark, 11.0, ui::CONTROL);
-        ui.painter().text(
-            mark,
-            Align2::CENTER_CENTER,
-            icon::COOKIE,
-            ui::icon_font(14.0),
-            TEXT,
+        let logo = self.logo.get_or_insert_with(|| {
+            let icon = ui::app_icon();
+            ctx.load_texture(
+                "papercraft-logo",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [icon.width as usize, icon.height as usize],
+                    &icon.rgba,
+                ),
+                egui::TextureOptions::LINEAR,
+            )
+        });
+        ui.painter().image(
+            logo.id(),
+            Rect::from_center_size(mark, vec2(24.0, 24.0)),
+            Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0)),
+            Color32::WHITE,
         );
         ui.painter().text(
             pos2(rect.left() + 46.0, rect.center().y),
             Align2::LEFT_CENTER,
-            "Crumbs",
+            "PaperCraft",
             ui::font(BODY),
             TEXT,
         );
@@ -176,7 +185,7 @@ impl CrumbsApp {
         if Row::new(icon::FOLDER_OPEN, "Open file…")
             .indent(19.0)
             .show(ui)
-            .on_hover_text("Open a .crumbs document")
+            .on_hover_text("Open a .papercraft or legacy .crumbs document")
             .clicked()
         {
             self.request(Intent::Open, ctx);
@@ -368,7 +377,7 @@ impl CrumbsApp {
             let (title, detail) = if self.search.trim().is_empty() {
                 (
                     "No recent files",
-                    "Files you open or save appear here. Create a new file or open a .crumbs document.",
+                    "Files you open or save appear here. Create a new file or open a .papercraft or legacy .crumbs document.",
                 )
             } else {
                 ("No matching files", "Try another name or clear the search.")

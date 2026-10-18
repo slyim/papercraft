@@ -1,4 +1,4 @@
-# Crumbs
+# PaperCraft
 
 <!-- impeccable:product-schema 1 -->
 
@@ -24,7 +24,7 @@ Create a free alternative to Paper for visual interface design. Use observed beh
 
 ## Brand Commitments
 
-The name is Crumbs. Paper is the explicit functional and interface reference. Use original code and content; preserve no Paper source, branding, fonts or assets in application code. User-facing messages are concise and factual.
+The name is PaperCraft. Paper is the explicit functional and interface reference. Use original code and content; preserve no Paper source, branding, fonts or assets in application code. User-facing messages are concise and factual.
 
 ## Evidence on Hand
 
@@ -36,4 +36,4 @@ Audience beyond the requesting user, platform release targets, collaboration and
 
 ## Ecosystem and License
 
-Original Crumbs code and documentation use `MIT OR Apache-2.0`, matching the native Craft apps. Crumbs remains independently maintained. The phased plan in `docs/artcraft.md` targets open-format exchange, shared Rust utilities where needed, and command-based automation. No Craft app adapter or launcher enrollment is implemented yet.
+Original PaperCraft code, documentation and the generated paper-crane logo use MIT, an option also offered by the native Craft apps. PaperCraft remains independently maintained. The phased plan in `docs/artcraft.md` targets open-format exchange, shared Rust utilities where needed, and command-based automation. No Craft app adapter or launcher enrollment is implemented yet.

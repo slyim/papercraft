@@ -696,8 +696,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
-name = "crumbs"
-version = "0.1.0"
+name = "papercraft"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "egui-phosphor",

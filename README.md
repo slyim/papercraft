@@ -1,10 +1,12 @@
-# Crumbs
+# PaperCraft
+
+<img src="assets/papercraft-logo.png" alt="PaperCraft engraved paper-crane logo" width="128">
 
 An original, local design editor built entirely in Rust with egui/eframe and Phosphor Icons. Paper research informs the feature contracts; application code and starter artwork are original. Existing JavaScript is used only for REA research tooling.
 
 ## Download
 
-The [first prerelease](https://github.com/slyim/crumbs/releases/tag/v0.1.0) includes an Apple Silicon macOS build and SHA-256 checksums. Unzip it and move `Crumbs.app` to Applications. The app is ad-hoc signed and is not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt.
+The [PaperCraft prerelease](https://github.com/slyim/papercraft/releases/tag/v0.1.1) includes an Apple Silicon macOS build and SHA-256 checksums. Unzip it and move `PaperCraft.app` to Applications. The app is ad-hoc signed and is not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt.
 
 This is an early preview. Windows, Linux and Intel macOS downloads are not provided.
 
@@ -13,16 +15,18 @@ This is an early preview. Windows, Linux and Intel macOS downloads are not provi
 Install the stable Rust toolchain using [rustup](https://rustup.rs/), then run:
 
 ```sh
-git clone https://github.com/slyim/crumbs.git
-cd crumbs
+git clone https://github.com/slyim/papercraft.git
+cd papercraft
 cargo run --locked
 # Open an existing document:
-cargo run --locked -- /path/to/design.crumbs
+cargo run --locked -- /path/to/design.papercraft
 ```
 
 Verified locally on Apple Silicon macOS with Rust 1.99.1. A prior Linux aarch64 rendering check is recorded in the verification notes; Linux release builds, Windows and Intel macOS remain unverified. The first build downloads and compiles the locked dependencies; Node.js is unnecessary for the application.
 
-The first slice includes one artboard, rectangle/text layers, a layer list and property inspector, dragging, bottom-right resizing, pan/zoom, ordering, hide/lock, undo/redo, validated `.crumbs` JSON files, and standalone HTML export. New/Open/Close prompt before discarding unsaved changes. Save writes a temporary file before replacing the destination.
+The first slice includes one artboard, rectangle/text layers, a layer list and property inspector, dragging, bottom-right resizing, pan/zoom, ordering, hide/lock, undo/redo, validated `.papercraft` JSON files, and standalone HTML export. New/Open/Close prompt before discarding unsaved changes. Save writes a temporary file before replacing the destination.
+
+PaperCraft was previously named Crumbs. Existing `.crumbs` documents still open and save in place; Save As defaults to `.papercraft`. The document schema remains version 1, so both extensions contain the same format. Recent-file history continues to use the legacy Crumbs configuration folder so both versions retain access to it. The older v0.1.0 release remains available under its original name.
 
 The window has a Dashboard tab and one document tab. The dashboard lists recently opened and saved files (paths only, stored in a local `recents.json` under the platform configuration folder), with search, grid/list views, document thumbnails and New file. The editor has a file menu on the document name, a Pages/Layers panel, a tool rail, a zoom menu, Export, and an inspector with page color, artboard and layer properties.
 
@@ -50,13 +54,13 @@ The native verification example opens a real egui window, captures the renderer 
 
 ## ArtCraft interoperability
 
-Crumbs is an independently maintained companion project targeting interoperability with the [Craft app ecosystem](https://getartcraft.com/apps). It is not an official ArtCraft app or currently included in Craft Launcher.
+PaperCraft is an independently maintained companion project targeting interoperability with the [Craft app ecosystem](https://getartcraft.com/apps). It is not an official ArtCraft app or currently included in Craft Launcher.
 
 The [integration plan](docs/artcraft.md) starts with SVG exchange for VectorCraft and FigCraft, then PNG/image exchange for PhotoCraft and motion tools, followed by shared command-based automation. These integrations are planned; the current release exports HTML only. The plan records the upstream interfaces, shared Rust libraries, acceptance checks and launcher enrollment requirements.
 
 ## License
 
-Original Crumbs code and documentation are available under either the [MIT license](LICENSE-MIT) or [Apache License 2.0](LICENSE-APACHE), at your option. This grant also covers the original Crumbs code in the v0.1.0 release. This matches the native Craft apps' `MIT OR Apache-2.0` license choice.
+PaperCraft 0.1.1 and its original code, documentation and generated logo use the [MIT license](LICENSE-MIT). The native Craft apps offer MIT as one of their license options. The previously published v0.1.0 dual-license grant remains available with that release.
 
 Third-party tooling, fonts and icons retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). License alignment does not establish ArtCraft affiliation or file compatibility.
 

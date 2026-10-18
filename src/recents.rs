@@ -1,4 +1,4 @@
-//! Recently opened `.crumbs` files shown on the dashboard.
+//! Recently opened PaperCraft and legacy `.crumbs` files shown on the dashboard.
 //!
 //! The list is a small local JSON file. It stores paths only; documents stay where the
 //! user saved them. A missing or invalid list is treated as empty and never blocks editing.
@@ -57,7 +57,7 @@ impl Recents {
         recents
     }
 
-    /// Platform location for the list, derived from the user's home directory.
+    /// Legacy platform location, retained so both application versions share recent files.
     pub fn default_store() -> Option<PathBuf> {
         let home = std::env::var_os("HOME").map(PathBuf::from);
         if cfg!(target_os = "macos") {

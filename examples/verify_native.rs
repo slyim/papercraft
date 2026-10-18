@@ -1,13 +1,13 @@
-use crumbs::{
-    app::{CrumbsApp, Tool, View},
+use eframe::egui;
+use papercraft::{
+    app::{PaperCraftApp, Tool, View},
     document::{Document, atomic_write},
     recents::Recents,
 };
-use eframe::egui;
 use std::path::PathBuf;
 
 struct NativeCheck {
-    app: CrumbsApp,
+    app: PaperCraftApp,
     output: PathBuf,
     frames: usize,
     hover: Option<egui::Pos2>,
@@ -87,10 +87,10 @@ fn main() -> eframe::Result {
     std::fs::create_dir_all(&directory).expect("Cannot create verification directory");
     let document = Document::example();
     document
-        .save(&directory.join("starter.crumbs"))
+        .save(&directory.join("starter.papercraft"))
         .expect("Cannot save starter document");
     assert_eq!(
-        Document::load(&directory.join("starter.crumbs")).unwrap(),
+        Document::load(&directory.join("starter.papercraft")).unwrap(),
         document
     );
     atomic_write(
@@ -99,16 +99,16 @@ fn main() -> eframe::Result {
     )
     .expect("Cannot export starter HTML");
     let output = if scenario == "editor" && args.len() < 3 {
-        directory.join("crumbs-desktop.png")
+        directory.join("papercraft-desktop.png")
     } else {
         directory.join(format!(
-            "crumbs-{scenario}-{}x{}{}.png",
+            "papercraft-{scenario}-{}x{}{}.png",
             size[0],
             size[1],
             if hover.is_some() { "-hover" } else { "" }
         ))
     };
-    let mut app = CrumbsApp::from_document(document.clone());
+    let mut app = PaperCraftApp::from_document(document.clone());
     match scenario.as_str() {
         "selected" => app.editor.selected = document.nodes.get(3).map(|n| n.id),
         "tool" => app.tool = Tool::Rectangle,
@@ -125,10 +125,10 @@ fn main() -> eframe::Result {
                     background: [255, 255, 255, 255],
                     ..Default::default()
                 };
-                let mut editor = crumbs::document::Editor::new(second);
+                let mut editor = papercraft::document::Editor::new(second);
                 editor
                     .add_at(
-                        crumbs::document::NodeKind::Rectangle,
+                        papercraft::document::NodeKind::Rectangle,
                         60.0,
                         60.0,
                         840.0,
@@ -136,17 +136,29 @@ fn main() -> eframe::Result {
                     )
                     .unwrap();
                 editor
-                    .add_at(crumbs::document::NodeKind::Text, 80.0, 220.0, 600.0, 80.0)
+                    .add_at(
+                        papercraft::document::NodeKind::Text,
+                        80.0,
+                        220.0,
+                        600.0,
+                        80.0,
+                    )
                     .unwrap();
                 editor
                     .document
-                    .save(&directory.join("pricing.crumbs"))
+                    .save(&directory.join("pricing.papercraft"))
                     .unwrap();
-                recents.touch(&directory.join("pricing.crumbs")).unwrap();
-                recents.touch(&directory.join("starter.crumbs")).unwrap();
-                recents.touch(&directory.join("missing.crumbs")).unwrap();
+                recents
+                    .touch(&directory.join("pricing.papercraft"))
+                    .unwrap();
+                recents
+                    .touch(&directory.join("starter.papercraft"))
+                    .unwrap();
+                recents
+                    .touch(&directory.join("missing.papercraft"))
+                    .unwrap();
             }
-            app = CrumbsApp::from_document(Document::default()).with_recents(recents);
+            app = PaperCraftApp::from_document(Document::default()).with_recents(recents);
             app.view = View::Dashboard;
             if scenario == "list" {
                 app.set_list_view(true);
@@ -162,10 +174,10 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "Crumbs verification",
+        "PaperCraft verification",
         options,
         Box::new(move |cc| {
-            CrumbsApp::configure(&cc.egui_ctx);
+            PaperCraftApp::configure(&cc.egui_ctx);
             Ok(Box::new(NativeCheck {
                 app,
                 output,

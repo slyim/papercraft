@@ -1,6 +1,6 @@
-# Crumbs
+# PaperCraft
 
-- Current stage: implement the first native Crumbs editor from the recorded Paper research, then expand feature by feature using `docs/implementation-process.md`.
+- Current stage: implement the first native PaperCraft editor from the recorded Paper research, then expand feature by feature using `docs/implementation-process.md`.
 - All application code must be Rust. Use egui/eframe for the native interface and `egui-phosphor` for Phosphor Icons. Existing JavaScript is research tooling only.
 - REA 6.7.0 is installed as a development dependency. Run it with `npm run rea -- <command>`.
 - Use the project REA skill at `.agents/skills/reverse-engineer-anything/SKILL.md` for shipped-artifact analysis.
