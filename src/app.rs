@@ -2,6 +2,7 @@ use crate::document::{
     Align, Axis, ColorTarget, ColorToken, Document, Editor, IdSet, Node, NodeKind, atomic_write,
 };
 use crate::recents::Recents;
+use crate::snap::{self, Frame, Guide, Handle, SNAP_DISTANCE, Side, Snapper};
 use crate::ui::{self, ACCENT, BODY, BORDER, CONTROL, ROW, Row, SHELL, TEXT, TEXT_DIM};
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Painter, Pos2, Rect, RichText, Sense, Stroke,
@@ -17,6 +18,8 @@ mod dashboard;
 const TAB_INSET: f32 = if cfg!(target_os = "macos") { 80.0 } else { 8.0 };
 /// Default geometry for a layer placed with a single click.
 const CLICK_SIZE: Vec2 = vec2(220.0, 80.0);
+/// Snapping guide color; distinct from the selection accent.
+const GUIDE: Color32 = Color32::from_rgb(242, 78, 120);
 
 #[derive(Clone, Debug, PartialEq)]
 enum Intent {
@@ -64,7 +67,20 @@ struct Drag {
     nodes: IdSet,
     /// Positions of `nodes` in the document; layer order is fixed during a gesture.
     indices: Vec<usize>,
-    resize: bool,
+    /// Resize handle being dragged, or `None` when moving.
+    handle: Option<Handle>,
+    /// Bounds of `nodes` when the gesture started, in artboard units.
+    frame: Frame,
+    /// Edges and centers of the other visible layers and the artboard.
+    snapper: Snapper,
+}
+
+/// Marquee selection in progress, in artboard units.
+struct Marquee {
+    start: Pos2,
+    current: Pos2,
+    /// Selection kept when the marquee started with Shift.
+    base: Vec<u64>,
 }
 
 /// A token change requested by an inspector color control, applied after the panel.
@@ -134,7 +150,12 @@ pub struct PaperCraftApp {
     pan: Vec2,
     fit: bool,
     drag: Option<Drag>,
+    marquee: Option<Marquee>,
     creation: Option<Creation>,
+    /// Moving and resizing snap to layer and artboard edges and centers.
+    pub snapping: bool,
+    /// Shift was held when the primary button was last pressed on the canvas.
+    press_shift: bool,
     property_before: Option<Document>,
     pending: Option<Intent>,
     allow_close: bool,
@@ -172,7 +193,10 @@ impl PaperCraftApp {
             pan: Vec2::ZERO,
             fit: true,
             drag: None,
+            marquee: None,
             creation: None,
+            snapping: true,
+            press_shift: false,
             property_before: None,
             pending: None,
             allow_close: false,
@@ -342,6 +366,7 @@ impl PaperCraftApp {
         self.fit = true;
         self.property_before = None;
         self.drag = None;
+        self.marquee = None;
         self.creation = None;
         self.tool = Tool::Select;
     }
@@ -767,6 +792,13 @@ impl PaperCraftApp {
                             ("R / T", "Rectangle / text tool"),
                             ("Esc", "Select tool, then clear selection"),
                             ("Shift + click", "Add or remove a layer from the selection"),
+                            (
+                                "Drag empty canvas",
+                                "Select layers with a marquee (Shift: add)",
+                            ),
+                            ("Drag a handle", "Resize; several layers scale together"),
+                            ("Shift + corner drag", "Resize keeping proportions"),
+                            ("⌘ / Ctrl + drag", "Move or resize without snapping"),
                             ("⌘ / Ctrl + A", "Select visible, unlocked layers"),
                             ("Arrow keys", "Move selection (Shift: 10 px)"),
                             ("⌥ / Alt + A, H, D", "Align left, horizontal centers, right"),
@@ -1441,6 +1473,28 @@ impl PaperCraftApp {
                     }
                 }
             }
+            ui.add_space(10.0);
+            let (rect, _) = ui.allocate_exact_size(vec2(18.0, 1.0), Sense::hover());
+            ui.painter().rect_filled(rect, 0.0, BORDER);
+            ui.add_space(10.0);
+            let label = if self.snapping {
+                "Snapping on · hold ⌘/Ctrl while dragging to bypass"
+            } else {
+                "Snapping off"
+            };
+            if ui::icon_button(
+                ui,
+                icon::MAGNET,
+                vec2(32.0, 32.0),
+                20.0,
+                self.snapping,
+                true,
+                label,
+            )
+            .clicked()
+            {
+                self.snapping = !self.snapping;
+            }
         });
     }
 
@@ -1918,6 +1972,91 @@ impl PaperCraftApp {
         });
     }
 
+    /// Bounds and layers that resize handles act on: the visible, unlocked selected
+    /// layers. A single layer resizes alone; several scale together.
+    fn resize_target(&self) -> Option<(Frame, IdSet)> {
+        let frame = self.editor.selection_bounds()?;
+        Some((frame, self.editor.arrangeable().into_iter().collect()))
+    }
+
+    fn start_drag(&mut self, start: Pos2, nodes: IdSet, handle: Option<Handle>, frame: Frame) {
+        let document = &self.editor.document;
+        let indices = (document.nodes.iter().enumerate())
+            .filter(|(_, n)| nodes.contains(&n.id))
+            .map(|(index, _)| index)
+            .collect();
+        let others = (document.nodes.iter())
+            .filter(|n| !n.hidden && !nodes.contains(&n.id))
+            .map(node_frame);
+        let snapper = Snapper::new([0.0, 0.0, document.width, document.height], others);
+        self.drag = Some(Drag {
+            before: document.clone(),
+            start,
+            nodes,
+            indices,
+            handle,
+            frame,
+            snapper,
+        });
+    }
+
+    /// Moves or resizes the gesture's layers for the pointer at `pointer` and returns
+    /// the guides of any snapped edges or centers.
+    fn apply_drag(
+        &mut self,
+        drag: &Drag,
+        pointer: Pos2,
+        snapping: bool,
+        keep_aspect: bool,
+    ) -> Vec<Guide> {
+        let delta = (pointer - drag.start) / self.zoom;
+        let threshold = SNAP_DISTANCE / self.zoom;
+        let snapper = snapping.then_some(&drag.snapper);
+        let nodes = &mut self.editor.document.nodes;
+        let frame = if let Some(handle) = drag.handle {
+            let to = snap::resize_frame(
+                drag.frame,
+                handle,
+                [delta.x, delta.y],
+                keep_aspect,
+                snapper.map(|s| (s, threshold)),
+            );
+            for &index in &drag.indices {
+                let original = &drag.before.nodes[index];
+                let Some(node) = nodes.get_mut(index).filter(|n| n.id == original.id) else {
+                    continue;
+                };
+                let [left, top, right, bottom] =
+                    snap::map_rect(node_frame(original), drag.frame, to);
+                node.x = left.clamp(-100_000.0, 100_000.0);
+                node.y = top.clamp(-100_000.0, 100_000.0);
+                node.width = (right - left).clamp(1.0, 100_000.0);
+                node.height = (bottom - top).clamp(1.0, 100_000.0);
+            }
+            to
+        } else {
+            let mut offset = [delta.x.round(), delta.y.round()];
+            if let Some(snapper) = snapper {
+                let snapped = snapper.snap_move(drag.frame, [delta.x, delta.y], threshold);
+                for (offset, snapped) in offset.iter_mut().zip(snapped) {
+                    *offset = snapped.unwrap_or(*offset);
+                }
+            }
+            let [dx, dy] = drag.before.clamp_translation(&drag.nodes, offset);
+            for &index in &drag.indices {
+                let original = &drag.before.nodes[index];
+                let Some(node) = nodes.get_mut(index).filter(|n| n.id == original.id) else {
+                    continue;
+                };
+                node.x = original.x + dx;
+                node.y = original.y + dy;
+            }
+            let [l, t, r, b] = drag.frame;
+            [l + dx, t + dy, r + dx, b + dy]
+        };
+        snapper.map_or_else(Vec::new, |s| s.guides(frame))
+    }
+
     fn canvas(&mut self, ui: &mut egui::Ui) {
         let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         let canvas = response.rect;
@@ -2023,8 +2162,9 @@ impl PaperCraftApp {
                 origin + vec2(left, top) * self.zoom,
                 origin + vec2(right, bottom) * self.zoom,
             );
+            // On the bounds themselves, where the group's resize handles sit.
             painter.rect_stroke(
-                bounds.expand(3.0),
+                bounds,
                 0.0,
                 Stroke::new(1.0, ACCENT.gamma_multiply(0.7)),
                 StrokeKind::Outside,
@@ -2037,20 +2177,33 @@ impl PaperCraftApp {
                 ACCENT,
             );
         }
-        if let Some(node) = self.editor.selected_node().filter(|n| !n.hidden) {
-            let rect = screen(node);
-            if !node.locked {
-                let handle = Rect::from_center_size(rect.right_bottom(), vec2(7.0, 7.0));
-                painter.rect_filled(handle, 1.0, SHELL);
-                painter.rect_stroke(handle, 1.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
-                if response.hovered()
-                    && self.tool == Tool::Select
-                    && ui
-                        .input(|i| i.pointer.hover_pos())
-                        .is_some_and(|p| p.distance(rect.right_bottom()) < 12.0)
-                {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
-                }
+        let zoom = self.zoom;
+        let to_screen = move |frame: Frame| {
+            Rect::from_min_max(
+                origin + vec2(frame[0], frame[1]) * zoom,
+                origin + vec2(frame[2], frame[3]) * zoom,
+            )
+        };
+        let target = self.resize_target();
+        if let Some((frame, _)) = &target {
+            let rect = to_screen(*frame);
+            for handle in Handle::ALL.iter().filter(|h| h.is_corner()) {
+                let [x, y] = handle.point(*frame);
+                let center = origin + vec2(x, y) * self.zoom;
+                let square = Rect::from_center_size(center, vec2(7.0, 7.0));
+                painter.rect_filled(square, 1.0, SHELL);
+                painter.rect_stroke(square, 1.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
+            }
+            if self.tool == Tool::Select
+                && response.hovered()
+                && self.drag.is_none()
+                && let Some(handle) = ui
+                    .input(|i| i.pointer.hover_pos())
+                    .and_then(|p| handle_at(rect, p))
+            {
+                ui.ctx().set_cursor_icon(resize_cursor(handle));
+            }
+            if let Some(node) = self.editor.selected_node() {
                 painter.text(
                     rect.center_bottom() + vec2(0.0, 17.0),
                     Align2::CENTER_CENTER,
@@ -2060,7 +2213,6 @@ impl PaperCraftApp {
                 );
             }
         }
-        let zoom = self.zoom;
         let to_document = move |p: Pos2| ((p - origin) / zoom).to_pos2();
         if !panning
             && self.pending.is_none()
@@ -2129,8 +2281,16 @@ impl PaperCraftApp {
             }
         } else if !panning && self.pending.is_none() {
             let pointer = response.interact_pointer_pos();
-            // Shift adds to or removes from the selection.
-            let extend = ui.input(|i| i.modifiers.shift);
+            // Shift adds to or removes from the selection. A drag uses the modifiers of
+            // its press, so Shift pressed during the drag only constrains the resize.
+            if ui.input(|i| i.pointer.primary_pressed()) {
+                self.press_shift = ui.input(|i| i.modifiers.shift);
+            }
+            let extend = if response.drag_started() {
+                self.press_shift
+            } else {
+                ui.input(|i| i.modifiers.shift)
+            };
             if (response.clicked() || response.drag_started())
                 && let Some(pointer) = pointer
             {
@@ -2140,15 +2300,14 @@ impl PaperCraftApp {
                 } else {
                     pointer
                 };
-                let resize_id = (!extend)
-                    .then(|| self.editor.selected_node())
-                    .flatten()
-                    .filter(|n| !n.locked && !n.hidden)
-                    .and_then(|n| {
-                        let bottom = origin + vec2(n.x + n.width, n.y + n.height) * self.zoom;
-                        (bottom.distance(hit_point) < 12.0).then_some(n.id)
-                    });
-                let hit = resize_id.or_else(|| {
+                let handle =
+                    (!extend)
+                        .then_some(target.as_ref())
+                        .flatten()
+                        .and_then(|(frame, ids)| {
+                            Some((handle_at(to_screen(*frame), hit_point)?, *frame, ids))
+                        });
+                let hit = || {
                     if !artboard.contains(hit_point) {
                         return None;
                     }
@@ -2165,70 +2324,88 @@ impl PaperCraftApp {
                                     .contains(point)
                         })
                         .map(|n| n.id)
-                });
-                match hit {
-                    Some(id) if response.drag_started() => {
-                        // Dragging a selected layer moves the whole selection.
-                        if !self.editor.is_selected(id) {
-                            if extend {
-                                self.editor.toggle_selection(id);
-                            } else {
-                                self.editor.select(Some(id));
+                };
+                if let Some((handle, frame, ids)) = handle {
+                    // A click on a handle keeps the selection.
+                    if response.drag_started() {
+                        let ids = ids.clone();
+                        self.start_drag(hit_point, ids, Some(handle), frame);
+                    }
+                } else {
+                    match hit() {
+                        Some(id) if response.drag_started() => {
+                            // Dragging a selected layer moves the whole selection.
+                            if !self.editor.is_selected(id) {
+                                if extend {
+                                    self.editor.toggle_selection(id);
+                                } else {
+                                    self.editor.select(Some(id));
+                                }
+                            }
+                            let ids: IdSet = self.editor.arrangeable().into_iter().collect();
+                            if let Some(frame) = self.editor.selection_bounds() {
+                                self.start_drag(hit_point, ids, None, frame);
                             }
                         }
-                        let nodes: IdSet = if resize_id.is_some() {
-                            IdSet::from_iter([id])
-                        } else {
-                            self.editor.arrangeable().into_iter().collect()
-                        };
-                        let indices = (self.editor.document.nodes.iter().enumerate())
-                            .filter(|(_, n)| nodes.contains(&n.id))
-                            .map(|(index, _)| index)
-                            .collect();
-                        self.drag = Some(Drag {
-                            before: self.editor.document.clone(),
-                            start: hit_point,
-                            nodes,
-                            indices,
-                            resize: resize_id.is_some(),
-                        });
+                        Some(id) if extend => self.editor.toggle_selection(id),
+                        Some(id) => self.editor.select(Some(id)),
+                        None if response.drag_started() => {
+                            // Dragging on empty canvas selects with a marquee.
+                            let base = if extend {
+                                self.editor.selection().to_vec()
+                            } else {
+                                Vec::new()
+                            };
+                            self.editor.set_selection(base.iter().copied());
+                            self.marquee = Some(Marquee {
+                                start: to_document(hit_point),
+                                current: to_document(hit_point),
+                                base,
+                            });
+                        }
+                        None if !extend => self.editor.select(None),
+                        None => {}
                     }
-                    Some(id) if extend => self.editor.toggle_selection(id),
-                    Some(id) => self.editor.select(Some(id)),
-                    None if !extend => self.editor.select(None),
-                    None => {}
                 }
             }
             if (response.dragged() || response.drag_stopped())
-                && let (Some(drag), Some(pointer)) = (&self.drag, pointer)
+                && let Some(pointer) = pointer
             {
-                let delta = (pointer - drag.start) / self.zoom;
-                let translation = drag
-                    .before
-                    .clamp_translation(&drag.nodes, [delta.x.round(), delta.y.round()]);
-                for &index in &drag.indices {
-                    let original = &drag.before.nodes[index];
-                    let Some(node) = self
+                let snapping = self.snapping && !ui.input(|i| i.modifiers.command);
+                let keep_aspect = ui.input(|i| i.modifiers.shift);
+                if let Some(drag) = self.drag.take() {
+                    let guides = self.apply_drag(&drag, pointer, snapping, keep_aspect);
+                    paint_guides(&painter, &guides, origin, self.zoom);
+                    self.drag = Some(drag);
+                }
+                if let Some(marquee) = &mut self.marquee {
+                    marquee.current = to_document(pointer);
+                    let area = Rect::from_two_pos(marquee.start, marquee.current);
+                    let area = [area.min.x, area.min.y, area.max.x, area.max.y];
+                    let inside: Vec<u64> = self
                         .editor
                         .document
                         .nodes
-                        .get_mut(index)
-                        .filter(|n| n.id == original.id)
-                    else {
-                        continue;
-                    };
-                    if drag.resize {
-                        node.width = (original.width + delta.x).round().clamp(1.0, 100_000.0);
-                        node.height = (original.height + delta.y).round().clamp(1.0, 100_000.0);
-                    } else {
-                        node.x = original.x + translation[0];
-                        node.y = original.y + translation[1];
-                    }
+                        .iter()
+                        .filter(|n| !n.hidden && !n.locked && snap::intersects(node_frame(n), area))
+                        .map(|n| n.id)
+                        .collect();
+                    let ids = marquee.base.iter().copied().chain(inside);
+                    self.editor.set_selection(ids);
                 }
+            }
+            if let Some(marquee) = &self.marquee {
+                let area = Rect::from_two_pos(
+                    origin + marquee.start.to_vec2() * self.zoom,
+                    origin + marquee.current.to_vec2() * self.zoom,
+                );
+                painter.rect_filled(area, 0.0, ACCENT.gamma_multiply(0.08));
+                painter.rect_stroke(area, 0.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
             }
         }
         if response.drag_stopped() {
             self.creation = None;
+            self.marquee = None;
             if let Some(drag) = self.drag.take() {
                 let result = self.editor.commit(drag.before);
                 self.result(result);
@@ -2287,6 +2464,61 @@ fn paint_document(
                     .galley(rect.min, galley, fill);
             }
         }
+    }
+}
+
+fn node_frame(node: &Node) -> Frame {
+    [node.x, node.y, node.x + node.width, node.y + node.height]
+}
+
+/// Resize handle under `pointer` for the screen bounds `rect`. Corners take a radius
+/// that shrinks with small layers so they stay movable; edges respond along their
+/// length once long enough to leave room for both corners.
+fn handle_at(rect: Rect, pointer: Pos2) -> Option<Handle> {
+    let corner = (rect.width().min(rect.height()) / 3.0).clamp(4.0, 12.0);
+    let frame = [rect.min.x, rect.min.y, rect.max.x, rect.max.y];
+    let mut handles = Handle::ALL.iter().copied();
+    if let Some(handle) = handles.by_ref().take(4).find(|h| {
+        let [x, y] = h.point(frame);
+        pointer.distance(pos2(x, y)) < corner
+    }) {
+        return Some(handle);
+    }
+    handles.find(|h| {
+        let [x, y] = h.point(frame);
+        if h.x == Side::Fixed {
+            rect.width() >= 3.0 * corner
+                && (pointer.y - y).abs() < 5.0
+                && (rect.min.x + corner..=rect.max.x - corner).contains(&pointer.x)
+        } else {
+            rect.height() >= 3.0 * corner
+                && (pointer.x - x).abs() < 5.0
+                && (rect.min.y + corner..=rect.max.y - corner).contains(&pointer.y)
+        }
+    })
+}
+
+fn resize_cursor(handle: Handle) -> egui::CursorIcon {
+    match (handle.x, handle.y) {
+        (Side::Fixed, _) => egui::CursorIcon::ResizeVertical,
+        (_, Side::Fixed) => egui::CursorIcon::ResizeHorizontal,
+        (x, y) if x == y => egui::CursorIcon::ResizeNwSe,
+        _ => egui::CursorIcon::ResizeNeSw,
+    }
+}
+
+/// Snapping guides, drawn across the snapped geometry and its targets.
+fn paint_guides(painter: &Painter, guides: &[Guide], origin: Pos2, zoom: f32) {
+    for guide in guides {
+        let [a, b] = if guide.vertical {
+            [pos2(guide.value, guide.low), pos2(guide.value, guide.high)]
+        } else {
+            [pos2(guide.low, guide.value), pos2(guide.high, guide.value)]
+        };
+        painter.line_segment(
+            [origin + a.to_vec2() * zoom, origin + b.to_vec2() * zoom],
+            Stroke::new(1.0, GUIDE),
+        );
     }
 }
 

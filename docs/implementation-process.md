@@ -95,3 +95,17 @@ Shared moves retain relative and fractional offsets, stopping the whole selectio
 **Persistence.** See [document format](document-format.md): the lowest representable version is written; an in-place save that would upgrade a version 1 file asks first and defaults to Save As; older readers reject version 2 without modifying it.
 
 Acceptance and results: [verification](verification.md#color-tokens-and-arrangement-18-october-2026).
+
+## Canvas and performance increment — 18 October 2026
+
+Baseline: `1ecd3b8`. Evidence: Paper documents resizing and pixel snapping ([support](https://paper.design/docs/support), [workflow evidence](../research/paper/workflow-evidence.md)); its handles, marquee rules and snapping heuristics are undocumented. Every rule below is a PaperCraft decision.
+
+**Marquee.** Dragging from a point with no unlocked visible layer (Select tool) draws a marquee. The selection becomes the visible, unlocked layers whose bounds intersect or touch it, updated live; with Shift held at the press, the earlier selection is kept and the marquee adds to it. Selection changes are not history.
+
+**Resize.** Handles act on the arrangeable selection's bounds: one layer resizes alone, several scale together. Corners are hit within 4–12 screen points (smaller for small layers, so they stay movable); edges respond along their length when long enough. Moving edges advance by whole units and stop 1 unit from the opposite edge. Group resize maps each layer's bounds proportionally and rounds to whole units; text size is not scaled. Shift held after the press keeps a corner resize's starting proportions. Shift at the press keeps its existing meaning (extend the selection), so a Shift-press on a handle selects instead of resizing. One gesture is one history step.
+
+**Snapping.** On by default; the tool-rail magnet toggles it for the session and ⌘/Ctrl held during a drag bypasses it. Targets are the left/center/right and top/middle/bottom lines of the artboard and every visible layer outside the gesture; hidden layers are excluded, locked layers are targets. A move snaps the nearest of the moving bounds' three lines per axis; a resize snaps each moving edge. The tolerance is 5 screen points, so snapping behaves the same at every zoom; a snapped value lands exactly on its target instead of being rounded. Guides span the snapped bounds and their targets.
+
+**Performance.** Selection membership, gesture layer lookup and the unsaved-changes check are indexed (an `Editor` revision identifies each committed state, so undoing to the saved state is clean). The layer list builds only visible rows. Inspector and Theme panels snapshot only the fields they edit instead of cloning the document each frame. Selection outlines are one mesh. `examples/bench.rs` measures the result.
+
+Acceptance and results: [verification](verification.md#canvas-and-performance-18-october-2026).

@@ -109,6 +109,8 @@ fn native_editor_renders_at_supported_sizes_and_keyboard_actions_use_history() {
         let ctx = egui::Context::default();
         PaperCraftApp::configure(&ctx);
         let mut app = PaperCraftApp::from_document(Document::example());
+        // This checks exact pointer alignment; snapping is covered in tests/canvas.rs.
+        app.snapping = false;
         let frame = |events| egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,

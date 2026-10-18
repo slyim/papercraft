@@ -52,3 +52,14 @@ Remaining, re-ranked:
 5. Theme modes. Paper lists these as roadmap.
 
 PNG export, multiple artboards, layout and CLI/MCP keep their earlier ranks.
+
+## Outcome of the canvas and performance increment
+
+Implemented: marquee selection, eight-way and group resize, aspect-locked corner resize, and edge/center snapping with guides (remaining items 2 and 3 above). Per-frame work no longer grows with layers × selection; measurements are in [verification](verification.md#canvas-and-performance-18-october-2026). The document format is unchanged.
+
+Remaining, re-ranked:
+
+1. Grouping/hierarchy. Requires a schema and transform design.
+2. Typography controls, then typography/spacing/radius tokens.
+3. Snapping during layer creation, spacing (equal-gap) guides and a pixel grid. Paper's snapping heuristics remain undocumented.
+4. Theme modes.
