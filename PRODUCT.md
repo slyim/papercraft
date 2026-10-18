@@ -4,7 +4,7 @@
 
 ## Platform
 
-Native desktop. macOS is the initial development and verification host; other platforms are unverified.
+Native desktop. Release builds and automated Rust tests cover Linux x86_64/ARM64, macOS Apple Silicon/Intel and Windows x86_64. Native renderer checks cover Linux and macOS; Windows native-window interaction and physical-input checks remain unverified. See `docs/releasing.md` and `docs/verification.md`.
 
 ## Stack
 
