@@ -2117,6 +2117,9 @@ impl PaperCraftApp {
                 && let (Some(drag), Some(pointer)) = (&self.drag, pointer)
             {
                 let delta = (pointer - drag.start) / self.zoom;
+                let translation = drag
+                    .before
+                    .clamp_translation(&drag.nodes, [delta.x.round(), delta.y.round()]);
                 for original in drag
                     .before
                     .nodes
@@ -2136,8 +2139,8 @@ impl PaperCraftApp {
                         node.width = (original.width + delta.x).round().clamp(1.0, 100_000.0);
                         node.height = (original.height + delta.y).round().clamp(1.0, 100_000.0);
                     } else {
-                        node.x = (original.x + delta.x).round().clamp(-100_000.0, 100_000.0);
-                        node.y = (original.y + delta.y).round().clamp(-100_000.0, 100_000.0);
+                        node.x = original.x + translation[0];
+                        node.y = original.y + translation[1];
                     }
                 }
             }

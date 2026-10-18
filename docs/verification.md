@@ -2,7 +2,7 @@
 
 18 October 2026. Host: Apple Silicon macOS. Rust 1.99.1; eframe/egui 0.36.2; egui-phosphor 0.14.0; REA 6.7.0.
 
-Entries below retain the capability and verification state at each earlier change. The final **Reliability and SVG exchange** entry records the current increment; earlier statements that SVG was deferred describe the earlier code.
+Entries below retain the capability and verification state at each earlier change. **Review before landing** records the current review; the reliability/SVG and token/arrangement entries describe the two original increments. Earlier statements that SVG or tokens were deferred describe the earlier code.
 
 ## Passed
 
@@ -180,3 +180,7 @@ The two original commits, `5f004a9` and `0868ef3`, are reviewed separately and r
 
 - `version_1_rejects_every_token_field_even_when_empty` failed before correction: the loader accepted `tokens: []` in version 1, contrary to the documented format. The loader now checks field presence before deserializing, rejecting all version 2 keys in version 1, including empty arrays, default identifiers and null bindings. The regression passes and checks that rejected input bytes remain unchanged.
 - `unsupported_versions_cannot_be_saved_or_committed` failed before correction: save normalized version 0 into version 1 and replaced the destination. Normalization now retains unsupported versions for validation to reject. The passing regression covers version 0 and the next unsupported version, preservation of existing bytes, commit rollback and unchanged history. Supported version 1/2 normalization remains in place.
+
+### Arrangement correction
+
+Three `coordinate_limits_*` regressions failed before correction. Nudging and dragging previously clamped each layer separately, changing the spacing of a selection when one layer reached ±100,000. They now share one bounded translation; canvas movement rounds the delta instead of rounding each absolute position, retaining fractional offsets. Align/distribute previously clamped individual results and could report success with misaligned edges or unequal gaps. An out-of-range arrangement now fails validation and restores the whole document without adding history. The regressions pass, covering both coordinate limits, both nudge axes, a simulated canvas drag, fractional positions, rejection and undo.

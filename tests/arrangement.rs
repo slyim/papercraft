@@ -235,6 +235,82 @@ fn nudging_and_visibility_toggles_apply_to_the_selection_as_one_step() {
 
 // Simulated egui input.
 
+#[test]
+fn coordinate_limits_keep_shared_nudges_together() {
+    for sign in [-1.0, 1.0] {
+        let mut editor = layout();
+        editor.document.nodes.truncate(2);
+        let before = editor.document.clone();
+        for (node, position) in editor.document.nodes.iter_mut().zip([160.25, 99_990.25]) {
+            node.x = position * sign;
+            node.y = position * sign;
+        }
+        editor.commit(before).unwrap();
+        editor.select_all();
+        let original = editor.document.clone();
+        editor.nudge(40.0 * sign, 40.0 * sign).unwrap();
+        assert_eq!(
+            positions(&editor),
+            [
+                (170.0 * sign, 170.0 * sign),
+                (100_000.0 * sign, 100_000.0 * sign)
+            ]
+        );
+        editor.undo();
+        assert_eq!(editor.document, original);
+    }
+}
+
+#[test]
+fn coordinate_limits_reject_arrangements_that_cannot_fit() {
+    let mut editor = Editor::new(Document::default());
+    for width in [100_000.0, 1.0, 1.0] {
+        editor
+            .add_at(NodeKind::Rectangle, 100_000.0, 0.0, width, 10.0)
+            .unwrap();
+    }
+    editor.select_all();
+    let original = editor.document.clone();
+    assert!(editor.align(Align::Right).is_err());
+    assert_eq!(editor.document, original);
+    assert!(editor.distribute(Axis::Horizontal).is_err());
+    assert_eq!(editor.document, original);
+    editor.undo();
+    assert_eq!(
+        editor.document.nodes.len(),
+        2,
+        "Rejected operations add no history"
+    );
+}
+
+#[test]
+fn coordinate_limits_keep_shared_drags_together() {
+    let size = SIZES[0];
+    let ctx = egui::Context::default();
+    PaperCraftApp::configure(&ctx);
+    let mut editor = layout();
+    editor.document.nodes.truncate(2);
+    editor.document.nodes[0].x = 160.25;
+    editor.document.nodes[1].x = 99_990.25;
+    let mut app = PaperCraftApp::from_document(editor.document);
+    app.editor.select_all();
+    let original = app.editor.document.clone();
+    let board = artboard(&ctx, &mut app, size);
+    let zoom = board.width() / app.editor.document.width;
+    let start = board.min + egui::vec2(180.0, 30.0) * zoom;
+    gesture(
+        &ctx,
+        &mut app,
+        size,
+        egui::Modifiers::NONE,
+        start,
+        start + egui::vec2(40.0, 0.0) * zoom,
+    );
+    assert_eq!(positions(&app.editor), [(170.0, 10.0), (100_000.0, 50.0)]);
+    app.editor.undo();
+    assert_eq!(app.editor.document, original);
+}
+
 const SIZES: [[f32; 2]; 2] = [[1380.0, 860.0], [960.0, 640.0]];
 
 fn frame(

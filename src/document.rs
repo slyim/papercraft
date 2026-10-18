@@ -296,6 +296,19 @@ impl Document {
         self.resolve(self.canvas, self.canvas_token)
     }
 
+    /// Limits one shared translation so every layer position stays within range.
+    pub(crate) fn clamp_translation(&self, ids: &[u64], delta: [f32; 2]) -> [f32; 2] {
+        self.nodes
+            .iter()
+            .filter(|n| ids.contains(&n.id))
+            .fold(delta, |[dx, dy], node| {
+                [
+                    dx.clamp(-MAX_COORDINATE - node.x, MAX_COORDINATE - node.x),
+                    dy.clamp(-MAX_COORDINATE - node.y, MAX_COORDINATE - node.y),
+                ]
+            })
+    }
+
     pub fn binding(&self, target: ColorTarget) -> Option<u64> {
         match target {
             ColorTarget::Canvas => self.canvas_token,
@@ -929,10 +942,11 @@ impl Editor {
     /// Moves the arrangeable selection by `dx`, `dy` as one step.
     pub fn nudge(&mut self, dx: f32, dy: f32) -> Result<(), String> {
         let ids = self.arrangeable();
+        let [dx, dy] = self.document.clamp_translation(&ids, [dx, dy]);
         self.transaction(|doc| {
             for node in doc.nodes.iter_mut().filter(|n| ids.contains(&n.id)) {
-                node.x = clamp_coordinate(node.x + dx);
-                node.y = clamp_coordinate(node.y + dy);
+                node.x += dx;
+                node.y += dy;
             }
         })
     }
@@ -985,8 +999,6 @@ impl Editor {
                     Align::CenterY => node.y = (reference[1] + reference[3] - node.height) / 2.0,
                     Align::Bottom => node.y = reference[3] - node.height,
                 }
-                node.x = clamp_coordinate(node.x);
-                node.y = clamp_coordinate(node.y);
             }
         })
     }
@@ -1031,11 +1043,10 @@ impl Editor {
                 let node = &mut doc.nodes[index];
                 // The last layer keeps its position exactly.
                 if order + 1 < count {
-                    let value = clamp_coordinate(position);
                     if horizontal {
-                        node.x = value;
+                        node.x = position;
                     } else {
-                        node.y = value;
+                        node.y = position;
                     }
                 }
                 position += size + gap;
