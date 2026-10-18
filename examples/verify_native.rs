@@ -13,6 +13,7 @@ struct NativeCheck {
     hover: Option<egui::Pos2>,
     quit_check: bool,
     export_menu: bool,
+    expected_geometry: Option<(usize, [f32; 4])>,
     /// Input events sent on each frame, by frame index.
     script: Vec<Vec<egui::Event>>,
 }
@@ -72,6 +73,10 @@ impl eframe::App for NativeCheck {
             })
         });
         if let Some(screenshot) = screenshot {
+            if let Some((index, expected)) = self.expected_geometry {
+                let node = &self.app.editor.document.nodes[index];
+                assert_eq!([node.x, node.y, node.width, node.height], expected);
+            }
             let rgba: Vec<_> = screenshot
                 .pixels
                 .iter()
@@ -222,7 +227,15 @@ fn main() -> eframe::Result {
     .unwrap();
     println!("Model create/edit/undo/redo/save/reopen/HTML+SVG export verified.");
     let themed = token_workflow(&directory);
-    let document = if scenario == "exchange" {
+    let document = if matches!(scenario.as_str(), "resize" | "snapping") {
+        let mut editor = Editor::new(Document::default());
+        for x in [100.0, 300.0] {
+            editor
+                .add_at(NodeKind::Rectangle, x, 100.0, 100.0, 100.0)
+                .unwrap();
+        }
+        editor.document
+    } else if scenario == "exchange" {
         serde_json::from_str(include_str!("../tests/fixtures/svg-exchange.papercraft")).unwrap()
     } else if matches!(scenario.as_str(), "theme" | "bound" | "arranged") {
         themed.document.clone()
@@ -258,6 +271,7 @@ fn main() -> eframe::Result {
     };
     let mut app = PaperCraftApp::from_document(document.clone());
     match scenario.as_str() {
+        "resize" => app.editor.select(Some(document.nodes[0].id)),
         "selected" => app.editor.select(document.nodes.get(3).map(|n| n.id)),
         "tool" => app.tool = Tool::Rectangle,
         "theme" => {
@@ -348,6 +362,11 @@ fn main() -> eframe::Result {
                 hover,
                 quit_check: scenario == "quit",
                 export_menu: scenario == "export",
+                expected_geometry: match scenario.as_str() {
+                    "resize" => Some((0, [100.0, 100.0, 160.0, 140.0])),
+                    "snapping" => Some((1, [200.0, 100.0, 100.0, 100.0])),
+                    _ => None,
+                },
                 script: script(&scenario, size, &document),
             }))
         }),
@@ -371,7 +390,7 @@ fn artboard_point(size: [f32; 2], document: &Document, x: f32, y: f32) -> egui::
     canvas.center() - board / 2.0 + egui::vec2(x, y) * zoom
 }
 
-/// Scripted input for the `text` (place and type) and `marquee` (mid-drag) scenarios.
+/// Scripted creation, text, marquee, resize and snapped-move input.
 fn script(scenario: &str, size: [f32; 2], document: &Document) -> Vec<Vec<egui::Event>> {
     let at = |x, y| artboard_point(size, document, x, y);
     let button = |pos, pressed| egui::Event::PointerButton {
@@ -388,6 +407,22 @@ fn script(scenario: &str, size: [f32; 2], document: &Document) -> Vec<Vec<egui::
         modifiers: egui::Modifiers::NONE,
     };
     match scenario {
+        "resize" | "snapping" => {
+            let (start, end) = if scenario == "resize" {
+                (at(200.0, 200.0), at(260.0, 240.0))
+            } else {
+                (at(350.0, 150.0), at(253.0, 150.0))
+            };
+            vec![
+                vec![],
+                vec![egui::Event::PointerMoved(start), button(start, true)],
+                vec![egui::Event::PointerMoved(start + (end - start) * 0.5)],
+                vec![egui::Event::PointerMoved(end)],
+                vec![],
+                vec![],
+                vec![button(end, false)],
+            ]
+        }
         "text" => {
             let p = at(560.0, 440.0);
             vec![
