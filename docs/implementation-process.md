@@ -108,7 +108,7 @@ PaperCraft decisions:
 - **Shape drawing.** ⇧ while dragging constrains to equal sides; ⌥ draws outward from the press point; both combine. Modifiers are read live, so the preview and the result agree. A click still places a 220 × 80 rectangle.
 - **Text placement.** A click places "New text" sized to its content (plus 2 units of slack against glyph rounding at other zooms) and its width follows the content until that edit ends. A drag sets a fixed width; editing grows the height to fit and never shrinks it. Both start editing with the content selected.
 - **In-place editing.** Enter on one visible, unlocked text layer, or a double-click on it, edits it on the canvas. Escape, a click elsewhere or any other command ends the edit, which is one history step; placement is its own preceding step. The layer stays selected.
-- **Text style.** New text takes the font size, color and color token of the text layer most recently selected in this session; a deleted token is not bound.
+- **Text style.** New text takes the font size, color and color token of the text layer most recently selected in this document's session; a deleted token is not bound. Each tab retains its own style, so document-local token IDs do not cross tabs.
 - **Marquee.** Dragging from empty canvas with Select selects visible, unlocked layers intersecting or touching the rectangle, live; ⇧ at the press adds to the existing selection. Selection changes create no history.
 
 F still fits the view; the Frame tool (T2) will need that key, as in Paper (⇧1 fits there).
@@ -117,7 +117,7 @@ Results: [verification](verification.md#tool-rail-t1-18-october-2026).
 
 ## Document tabs and inspector — 18 October 2026
 
-PaperCraft decisions; no document schema change. Each tab retains its document, history, selection, path, saved state, format version, zoom and pan. New/Open create a tab; opening an existing path or filesystem alias activates its tab without reloading unsaved work. Save As refuses a destination held by another open tab. Closing a dirty tab offers Save/Discard/Cancel; Quit repeats this check for every dirty tab. Overflowing tabs scroll horizontally and leave New File accessible.
+PaperCraft decisions; no document schema change. Each tab retains its document, history, selection, path, saved state, format version, zoom, pan and last-used text style. New/Open create a tab; opening an existing path or filesystem alias activates its tab without reloading unsaved work. Save As refuses a destination held by another open tab. Closing a dirty tab offers Save/Discard/Cancel; Quit repeats this check for every dirty tab. Overflowing tabs scroll horizontally and leave New File accessible. Active dirty-state caches follow their document; inactive tabs cache their committed dirty status. In-place text changes count as unsaved before their history step commits.
 
 Double-clicking a layer name edits it. Enter, focus loss or a document command commits a valid nonempty name as one history step; Escape cancels. Switching tabs and closing flush pending names before checking for unsaved changes. Names retain the existing UTF-8 validation limit.
 
