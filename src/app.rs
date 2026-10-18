@@ -1866,8 +1866,8 @@ impl PaperCraftApp {
                 if ui::icon_button(
                     ui,
                     spec.glyph,
-                    vec2(32.0, 32.0),
-                    20.0,
+                    vec2(ui::SPACE_2XL, ui::SPACE_2XL),
+                    ICON,
                     self.tool == spec.tool,
                     true,
                     &label,
@@ -3476,7 +3476,7 @@ fn inspector_heading(ui: &mut egui::Ui, title: &str, active: bool, caret: bool) 
     );
     if caret {
         ui.painter().text(
-            pos2(rect.left() + INSPECTOR_PAD + width + 9.0, y),
+            pos2(rect.left() + INSPECTOR_PAD + width + SPACE_S, y),
             Align2::CENTER_CENTER,
             icon::CARET_DOWN,
             ui::icon_font(12.0),
@@ -3520,12 +3520,14 @@ fn trailing_slot(right: f32, y: f32, index: usize) -> Rect {
 
 /// Fill type selector. Solid is the only supported type.
 fn fill_kinds(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(vec2(84.0, ROW), Sense::hover());
-    let cell = (rect.width() - 4.0) / 3.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(3.0 * ROW + 2.0 * SPACE_XS, ROW), Sense::hover());
     let slot = |i: usize| {
         Rect::from_min_size(
-            pos2(rect.left() + 2.0 + i as f32 * cell, rect.top() + 2.0),
-            vec2(cell, ROW - 4.0),
+            pos2(
+                rect.left() + SPACE_XS + i as f32 * ROW,
+                rect.top() + SPACE_XS,
+            ),
+            vec2(ROW, ROW - 2.0 * SPACE_XS),
         )
     };
     let painter = ui.painter();
