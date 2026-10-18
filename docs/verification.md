@@ -229,3 +229,20 @@ Release source: `40765dfc92fb85e721dda0c4ecbc2e4875bb2cd7`. The [native build ru
 - The local Python installation initially failed CA verification for notice downloads. Using the operating system CA bundle resolved it without disabling TLS verification. GitHub runners use their configured Python trust stores. Native launch/signature checks use approved execution outside the sandbox.
 
 macOS apps are ad-hoc signed, not notarized; Windows binaries are unsigned. Linux downloads require glibc 2.35 or later, libxkbcommon-x11 and desktop graphics libraries; file dialogs use an XDG desktop portal. Physical keyboard/mouse input, native file-dialog choices, Windows native-window interaction, screen readers, large-document performance and compatibility with other OS/distribution versions remain unverified. No installer or automatic updater was added. Research tooling was unchanged and `npm test` was not rerun.
+
+## Tool rail T1 (18 October 2026)
+
+Contract: [implementation process](implementation-process.md#tool-rail-t1--18-october-2026) and [tool rail plan](toolbar-plan.md).
+
+- `tests/tools.rs` (9 tests): constrained/centered creation geometry; every rail entry's shortcut selects its tool; ⇧ and ⌥ drags at the fitted zoom; clicked text sized to content, typing replaces the placeholder, width follows, Escape ends editing and keeps the selection, two undo steps (edit, then placement); dragged text keeps its width and grows in height; Enter edits without inserting a newline and undo restores the document; new text inherits the last selected text style; marquee selects visible unlocked layers, ⇧ adds, no history entry; auto-width text renders on one line at four window sizes (different fit zooms).
+- Defects found while testing this increment's own code and fixed before recording: the inspector's idle commit ended an in-place edit before it took focus; egui withdraws focus from a widget that first appears on a click frame; egui's own Escape handling cleared the selection. Each had a failing test first.
+- `cargo fmt --check`, warnings-denied Clippy and the full suite pass locally on Apple Silicon (59 tests after tab/inspector integration checks).
+- Native rendering (`examples/verify_native.rs`, actual OpenGL window, scripted input, screenshots inspected): `text` at 1380×860 and 960×640 shows a click-placed layer typed in place at its content width (299 × 32 at 28 px), matching the inspector; `marquee` at both sizes shows the selection rectangle mid-drag and three intersected layers selected. Stored under `target/verification/tools/`.
+
+Not verified: physical keyboard/mouse input and IME composition; the caret is not drawn in captures because the test window is not focused. The constrained/centered drags were exercised in the model harness only, not in a native capture.
+
+### Document tabs and inspector integration preparation
+
+Before merging the remote canvas work, formatting, warnings-denied Clippy and all 59 tests pass. Additional checks cover independent tab history, New/Open/close behavior, Quit visiting every dirty tab, existing-file aliases activating one tab, refusal to overwrite another tab's file, pending names surviving tab commands, one-step rename/undo, Escape cancellation and New File remaining visible with 13 tabs at 960×640.
+
+Regression tests first reproduced duplicate file tabs, pending-name loss and offscreen New File controls. File identity checks now cover every open entry point and Save As; document commands flush pending names before switching or checking dirty state; excess tabs scroll. Native checks for the combined local and remote implementations are recorded separately after integration.

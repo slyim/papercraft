@@ -45,7 +45,7 @@ The saved [analysis](../research/paper/analysis.md) and [compact evidence](../re
 | Save/open | E1 `src/lib/storage.ts:12–24,33–47,76–126` proves shell JSON storage only | Versioned `.papercraft` JSON stores the original document; legacy `.crumbs` files remain accepted. Validate before replacing the open document; failed writes preserve existing files. Paper document compatibility is unknown and out of scope. |
 | HTML export | Code export [documented](https://paper.design/docs/support) | Export supported primitives, geometry, colors and escaped text as a standalone file. Browser typography may differ from egui; arbitrary CSS and import round trips deferred. |
 | SVG exchange | Paper's [SVG documentation](https://paper.design/docs/svg) and build log, plus inspected VectorCraft/FigCraft importers | Implemented: export the current artboard background and visible rectangle/text nodes, preserving order, alpha, clamped radii, explicit lines and clipping. Export button/file menu offer HTML and SVG. Reuse validation and atomic writes. XML-incompatible controls reject export before writing; fonts and automatic wrapping differ. Actual fixture imports are recorded separately in verification. |
-| Dashboard and editor chrome | User-supplied Paper screenshots (dashboard, empty editor), 18 October 2026; runtime behavior behind account/team/MCP controls unknown | PaperCraft decisions: a Dashboard tab and one document tab; recents store local paths only and tolerate missing or invalid lists; opening, creating or closing via tabs/cards uses the unsaved-changes prompt; V/H/R/T tools place a layer by click or drag inside the artboard, as one history step, then return to Select; the page color is stored in the document (`canvas`, optional for earlier version 1 files) and exported as the HTML body background. Multiple pages are shown disabled (the Theme tab became functional in the token increment below); account, sharing, MCP, vector, frame, component and image-generation controls are omitted. |
+| Dashboard and editor chrome | User-supplied Paper screenshots (dashboard, empty editor), 18 October 2026; runtime behavior behind account/team/MCP controls unknown | PaperCraft decisions: a Dashboard tab and independent document tabs; recents store local paths only and tolerate missing or invalid lists; New/Open preserve existing tabs, closing dirty tabs asks first, and Quit checks every dirty tab. V/H/R/T tools place a layer by click or drag inside the artboard, as one history step, then return to Select; the page color is stored in the document (`canvas`, optional for earlier version 1 files) and exported as the HTML body background. Multiple pages are shown disabled (the Theme tab became functional in the token increment below); account, sharing, MCP, vector, frame, component and image-generation controls are omitted. |
 | Color tokens | Paper [tokens docs](https://paper.design/docs/tokens) and build log, D1/D2 in [workflow evidence](../research/paper/workflow-evidence.md); token deletion semantics, undo and page/artboard binding are undocumented | Implemented: named color tokens with stable IDs; bind/detach layer fill/text color, artboard and page; propagation; delete detaches and keeps colors; one undo step per operation; format version 2 written only when tokens exist; HTML custom properties and SVG resolved colors. Other token types and theme modes deferred. |
 | Multi-selection and arrangement | Paper align/distribute shortcuts documented (D1/D2); multi-select modifiers, reference bounds and hidden/locked behavior undocumented | Implemented PaperCraft decisions: Shift-click (canvas/list), ⌘-click (list), shared drag, ⌘A, ⌥ align, ⌃⌥ distribute, hidden/locked excluded from arrangement, one undo step per operation. Marquee, group resize, hierarchy and snapping deferred. |
 | Agent interface | E1 bridge sources above; [public MCP behavior](https://paper.design/docs/mcp) | Later milestone only. First establish one authoritative document model; protocol, mutation batching and screenshot semantics remain undecided. |
@@ -66,6 +66,8 @@ The saved [analysis](../research/paper/analysis.md) and [compact evidence](../re
 | 2. Interaction and history | At multiple zoom levels, drag/resize retains pointer alignment; pan/zoom does not alter document geometry; dimensions stay valid. Undo/redo restores creation, deletion, ordering, inspector edits and complete gestures. New edits invalidate redo. |
 | 3. Local files and export | Save/open round trip preserves supported document values and ordering. Invalid/version-incompatible JSON leaves the current document intact. Write errors are visible and preserve prior files. Export text containing `<`, `&` and quotes safely; inspect the exported HTML in a browser. |
 | 4. Release check for this slice | Rust formatting, compilation and focused tests pass; launch the egui app and complete one create→edit→undo→save→reopen→export session. Record supported platform, check results and rendering differences. Confirm icons are Phosphor and required license notices are present. |
+
+The [tool rail plan](toolbar-plan.md) sequences the remaining tools (Frame, Pen, comments, images, shaders, generation) as milestones T1–T7.
 
 Later planning may cover non-color tokens, nested layouts, image/vector layers, HTML/SVG imports and local MCP. Each requires separate behavior proof and acceptance checks. Full CSS layout, Paper file compatibility and multiplayer remain outside this slice.
 
@@ -95,3 +97,28 @@ Shared moves retain relative and fractional offsets, stopping the whole selectio
 **Persistence.** See [document format](document-format.md): the lowest representable version is written; an in-place save that would upgrade a version 1 file asks first and defaults to Save As; older readers reject version 2 without modifying it.
 
 Acceptance and results: [verification](verification.md#color-tokens-and-arrangement-18-october-2026).
+
+## Tool rail T1 — 18 October 2026
+
+Scope: milestone T1 of the [tool rail plan](toolbar-plan.md). No document fields or format version change. Evidence: D3 in that plan (Paper documents T/Enter text editing, last-used text style, and ⌥/⇧ resize fixes; click/drag rules and marquee behavior are undocumented).
+
+PaperCraft decisions:
+
+- **Registry.** `TOOLS` in `src/app.rs` lists each implemented tool with its glyph, label, key and rail group. The rail, tooltips and single-key shortcuts read it; unimplemented tools are not listed.
+- **Shape drawing.** ⇧ while dragging constrains to equal sides; ⌥ draws outward from the press point; both combine. Modifiers are read live, so the preview and the result agree. A click still places a 220 × 80 rectangle.
+- **Text placement.** A click places "New text" sized to its content (plus 2 units of slack against glyph rounding at other zooms) and its width follows the content until that edit ends. A drag sets a fixed width; editing grows the height to fit and never shrinks it. Both start editing with the content selected.
+- **In-place editing.** Enter on one visible, unlocked text layer, or a double-click on it, edits it on the canvas. Escape, a click elsewhere or any other command ends the edit, which is one history step; placement is its own preceding step. The layer stays selected.
+- **Text style.** New text takes the font size, color and color token of the text layer most recently selected in this session; a deleted token is not bound.
+- **Marquee.** Dragging from empty canvas with Select selects visible, unlocked layers overlapping the rectangle within the artboard, live; ⇧ adds to the existing selection. Selection changes create no history.
+
+F still fits the view; the Frame tool (T2) will need that key, as in Paper (⇧1 fits there).
+
+Results: [verification](verification.md#tool-rail-t1-18-october-2026).
+
+## Document tabs and inspector — 18 October 2026
+
+PaperCraft decisions; no document schema change. Each tab retains its document, history, selection, path, saved state, format version, zoom and pan. New/Open create a tab; opening an existing path or filesystem alias activates its tab without reloading unsaved work. Save As refuses a destination held by another open tab. Closing a dirty tab offers Save/Discard/Cancel; Quit repeats this check for every dirty tab. Overflowing tabs scroll horizontally and leave New File accessible.
+
+Double-clicking a layer name edits it. Enter, focus loss or a document command commits a valid nonempty name as one history step; Escape cancels. Switching tabs and closing flush pending names before checking for unsaved changes. Names retain the existing UTF-8 validation limit.
+
+The inspector keeps position, dimensions, text, color tokens, radius, visibility and arrangement controls. Radius has a slider plus a numeric field. Rotation, flip, flex, clipping, blend modes, extra fills, effects and per-layer export remain disabled with explanatory tooltips; no corresponding document fields or behavior are claimed.
