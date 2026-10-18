@@ -1,10 +1,34 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::HashSet as StdHashSet,
     fs::File,
+    hash::{BuildHasherDefault, Hasher},
     io::{Read, Write},
     path::Path,
 };
+
+/// Hasher for layer and token identifiers. Identifiers are trusted integers, so a
+/// multiplicative hash is enough and much cheaper than the default SipHash on the
+/// per-layer selection checks made every frame.
+#[derive(Default)]
+pub struct IdHasher(u64);
+
+impl Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 = (self.0.rotate_left(8) ^ u64::from(*byte)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+    }
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0 ^ value).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+/// Set of layer or token identifiers.
+pub type IdSet = StdHashSet<u64, BuildHasherDefault<IdHasher>>;
 
 pub const MAX_DOCUMENT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_NODES: usize = 10_000;
@@ -297,7 +321,7 @@ impl Document {
     }
 
     /// Limits one shared translation so every layer position stays within range.
-    pub(crate) fn clamp_translation(&self, ids: &[u64], delta: [f32; 2]) -> [f32; 2] {
+    pub(crate) fn clamp_translation(&self, ids: &IdSet, delta: [f32; 2]) -> [f32; 2] {
         self.nodes
             .iter()
             .filter(|n| ids.contains(&n.id))
@@ -396,7 +420,7 @@ impl Document {
         if self.tokens.len() > MAX_TOKENS {
             return Err("Document exceeds the 1,000 token limit.".into());
         }
-        let mut token_ids = HashSet::new();
+        let mut token_ids = StdHashSet::new();
         for token in &self.tokens {
             if token.id == 0 || token.id >= self.next_token_id || !token_ids.insert(token.id) {
                 return Err(
@@ -420,7 +444,7 @@ impl Document {
         if !valid_size(self.width) || !valid_size(self.height) {
             return Err("Artboard dimensions must be between 1 and 100,000.".into());
         }
-        let mut ids = HashSet::new();
+        let mut ids = StdHashSet::new();
         for node in &self.nodes {
             if node.id == 0 || node.id >= self.next_id || !ids.insert(node.id) {
                 return Err(
@@ -662,8 +686,13 @@ pub struct Editor {
     pub document: Document,
     /// Selected layer identifiers in selection order, without duplicates.
     selection: Vec<u64>,
-    past: Vec<Document>,
-    future: Vec<Document>,
+    /// Membership index of `selection`, so per-layer checks stay constant time.
+    selected: IdSet,
+    past: Vec<(Document, u64)>,
+    future: Vec<(Document, u64)>,
+    /// Identifies the committed state; restored by undo and redo.
+    revision: u64,
+    next_revision: u64,
 }
 
 fn clamp_coordinate(value: f32) -> f32 {
@@ -679,9 +708,18 @@ impl Editor {
         Self {
             document,
             selection: Vec::new(),
+            selected: IdSet::default(),
             past: Vec::new(),
             future: Vec::new(),
+            revision: 0,
+            next_revision: 1,
         }
+    }
+    /// Identifier of the committed document state. Every committed change gets a new
+    /// value; undo and redo restore the value of the state they return to. Direct edits
+    /// to `document` do not change it until they are committed.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
     pub fn can_undo(&self) -> bool {
         !self.past.is_empty()
@@ -694,7 +732,7 @@ impl Editor {
         &self.selection
     }
     pub fn is_selected(&self, id: u64) -> bool {
-        self.selection.contains(&id)
+        self.selected.contains(&id)
     }
     /// The selected layer when exactly one is selected.
     pub fn selected(&self) -> Option<u64> {
@@ -715,17 +753,24 @@ impl Editor {
     /// Replaces the selection; unknown and repeated identifiers are ignored.
     pub fn set_selection(&mut self, ids: impl IntoIterator<Item = u64>) {
         self.selection.clear();
+        self.selected.clear();
+        let mut ids = ids.into_iter().peekable();
+        if ids.peek().is_none() {
+            return;
+        }
+        let existing: IdSet = self.document.nodes.iter().map(|n| n.id).collect();
         for id in ids {
-            if !self.selection.contains(&id) && self.document.nodes.iter().any(|n| n.id == id) {
+            if existing.contains(&id) && self.selected.insert(id) {
                 self.selection.push(id);
             }
         }
     }
     /// Adds `id` to the selection, or removes it when already selected.
     pub fn toggle_selection(&mut self, id: u64) {
-        if let Some(index) = self.selection.iter().position(|s| *s == id) {
-            self.selection.remove(index);
+        if self.selected.remove(&id) {
+            self.selection.retain(|s| *s != id);
         } else if self.document.nodes.iter().any(|n| n.id == id) {
+            self.selected.insert(id);
             self.selection.push(id);
         }
     }
@@ -780,8 +825,10 @@ impl Editor {
             if self.past.len() == 100 {
                 self.past.remove(0);
             }
-            self.past.push(before);
+            self.past.push((before, self.revision));
             self.future.clear();
+            self.revision = self.next_revision;
+            self.next_revision += 1;
         }
         Ok(())
     }
@@ -795,22 +842,29 @@ impl Editor {
     }
 
     pub fn undo(&mut self) {
-        if let Some(doc) = self.past.pop() {
-            self.future.push(std::mem::replace(&mut self.document, doc));
+        if let Some((doc, revision)) = self.past.pop() {
+            let current = std::mem::replace(&mut self.document, doc);
+            self.future
+                .push((current, std::mem::replace(&mut self.revision, revision)));
             self.check_selection();
         }
     }
     pub fn redo(&mut self) {
-        if let Some(doc) = self.future.pop() {
-            self.past.push(std::mem::replace(&mut self.document, doc));
+        if let Some((doc, revision)) = self.future.pop() {
+            let current = std::mem::replace(&mut self.document, doc);
+            self.past
+                .push((current, std::mem::replace(&mut self.revision, revision)));
             self.check_selection();
         }
     }
     /// Drops selected identifiers that no longer exist.
     fn check_selection(&mut self) {
-        let nodes = &self.document.nodes;
-        self.selection
-            .retain(|id| nodes.iter().any(|n| n.id == *id));
+        if self.selection.is_empty() {
+            return;
+        }
+        let existing: IdSet = self.document.nodes.iter().map(|n| n.id).collect();
+        self.selection.retain(|id| existing.contains(id));
+        self.selected.retain(|id| existing.contains(id));
     }
 
     pub fn add(&mut self, kind: NodeKind) -> Result<(), String> {
@@ -874,7 +928,7 @@ impl Editor {
 
     /// Deletes every selected unlocked layer (hidden ones included) as one step.
     pub fn delete(&mut self) -> Result<(), String> {
-        let selection = self.selection.clone();
+        let selection = self.selected.clone();
         self.transaction(|doc| doc.nodes.retain(|n| !selection.contains(&n.id) || n.locked))?;
         self.check_selection();
         Ok(())
@@ -941,7 +995,7 @@ impl Editor {
 
     /// Moves the arrangeable selection by `dx`, `dy` as one step.
     pub fn nudge(&mut self, dx: f32, dy: f32) -> Result<(), String> {
-        let ids = self.arrangeable();
+        let ids: IdSet = self.arrangeable().into_iter().collect();
         let [dx, dy] = self.document.clamp_translation(&ids, [dx, dy]);
         self.transaction(|doc| {
             for node in doc.nodes.iter_mut().filter(|n| ids.contains(&n.id)) {
@@ -953,7 +1007,7 @@ impl Editor {
 
     /// Shows all selected layers when any is hidden; otherwise hides them. One step.
     pub fn toggle_hidden(&mut self) -> Result<(), String> {
-        let selection = self.selection.clone();
+        let selection = self.selected.clone();
         self.transaction(|doc| {
             let selected = |n: &&mut Node| selection.contains(&n.id);
             let hide = doc.nodes.iter_mut().filter(selected).all(|n| !n.hidden);
@@ -967,7 +1021,7 @@ impl Editor {
     /// Unlocks all selected layers when every one is locked; otherwise locks them all.
     /// One step.
     pub fn toggle_locked(&mut self) -> Result<(), String> {
-        let selection = self.selection.clone();
+        let selection = self.selected.clone();
         self.transaction(|doc| {
             let selected = |n: &&mut Node| selection.contains(&n.id);
             let lock = !doc.nodes.iter_mut().filter(selected).all(|n| n.locked);
@@ -981,7 +1035,7 @@ impl Editor {
     /// Aligns the arrangeable selection. Two or more layers align to their shared
     /// bounds; a single layer aligns to the artboard. One step.
     pub fn align(&mut self, align: Align) -> Result<(), String> {
-        let ids = self.arrangeable();
+        let ids: IdSet = self.arrangeable().into_iter().collect();
         let reference = match ids.len() {
             0 => return Ok(()),
             1 => [0.0, 0.0, self.document.width, self.document.height],
@@ -1007,7 +1061,7 @@ impl Editor {
     /// by their leading edge (paint order breaks ties); the first and last stay in place.
     /// Overlapping layers can produce negative gaps. One step.
     pub fn distribute(&mut self, axis: Axis) -> Result<(), String> {
-        let ids = self.arrangeable();
+        let ids: IdSet = self.arrangeable().into_iter().collect();
         if ids.len() < 3 {
             return Ok(());
         }

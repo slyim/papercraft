@@ -1,5 +1,5 @@
 use crate::document::{
-    Align, Axis, ColorTarget, ColorToken, Document, Editor, NodeKind, atomic_write,
+    Align, Axis, ColorTarget, ColorToken, Document, Editor, IdSet, Node, NodeKind, atomic_write,
 };
 use crate::recents::Recents;
 use crate::ui::{self, ACCENT, BODY, BORDER, CONTROL, ROW, Row, SHELL, TEXT, TEXT_DIM};
@@ -61,7 +61,9 @@ struct Drag {
     before: Document,
     start: Pos2,
     /// Layers moved together, or the single resized layer.
-    nodes: Vec<u64>,
+    nodes: IdSet,
+    /// Positions of `nodes` in the document; layer order is fixed during a gesture.
+    indices: Vec<usize>,
     resize: bool,
 }
 
@@ -70,6 +72,47 @@ struct Drag {
 enum TokenChoice {
     Bind(ColorTarget, Option<u64>),
     CreateFrom(ColorTarget),
+}
+
+/// The parts of a document that a panel edits in place during one frame: every field
+/// except the layers, plus at most one layer. Taking it is much cheaper than cloning a
+/// large document every frame.
+struct Snapshot {
+    header: Document,
+    node: Option<(usize, Node)>,
+}
+
+impl Snapshot {
+    fn take(document: &mut Document, node: Option<usize>) -> Self {
+        let nodes = std::mem::take(&mut document.nodes);
+        let header = document.clone();
+        document.nodes = nodes;
+        let node = node.and_then(|i| Some((i, document.nodes.get(i)?.clone())));
+        Self { header, node }
+    }
+
+    /// The document as it was when the snapshot was taken, or `None` when the panel
+    /// changed nothing.
+    fn before(self, document: &mut Document) -> Option<Document> {
+        let nodes = std::mem::take(&mut document.nodes);
+        let header_changed = self.header != *document;
+        document.nodes = nodes;
+        let node_changed = self
+            .node
+            .as_ref()
+            .is_some_and(|(i, node)| document.nodes.get(*i) != Some(node));
+        if !header_changed && !node_changed {
+            return None;
+        }
+        let mut before = self.header;
+        before.nodes = document.nodes.clone();
+        if let Some((i, node)) = self.node
+            && let Some(slot) = before.nodes.get_mut(i)
+        {
+            *slot = node;
+        }
+        Some(before)
+    }
 }
 
 /// A layer being drawn with the rectangle or text tool, in artboard coordinates.
@@ -82,6 +125,9 @@ struct Creation {
 pub struct PaperCraftApp {
     pub editor: Editor,
     saved: Document,
+    /// Result of comparing the committed document with `saved`, keyed by the editor
+    /// revision it was computed for. Comparing a large document every frame is costly.
+    dirty_cache: std::cell::Cell<Option<(u64, bool)>>,
     path: Option<PathBuf>,
     status: String,
     zoom: f32,
@@ -118,6 +164,7 @@ impl PaperCraftApp {
     pub fn from_document(document: Document) -> Self {
         Self {
             saved: document.clone(),
+            dirty_cache: Default::default(),
             editor: Editor::new(document),
             path: None,
             status: "Starter document · local and editable".into(),
@@ -242,7 +289,27 @@ impl PaperCraftApp {
     }
 
     fn dirty(&self) -> bool {
-        self.document_open && self.editor.document != self.saved
+        if !self.document_open {
+            return false;
+        }
+        // Uncommitted edits change the document without a new revision.
+        if self.property_before.is_some() || self.drag.is_some() {
+            return self.editor.document != self.saved;
+        }
+        let revision = self.editor.revision();
+        match self.dirty_cache.get() {
+            Some((cached, dirty)) if cached == revision => dirty,
+            _ => {
+                let dirty = self.editor.document != self.saved;
+                self.dirty_cache.set(Some((revision, dirty)));
+                dirty
+            }
+        }
+    }
+
+    fn set_saved(&mut self, document: Document) {
+        self.saved = document;
+        self.dirty_cache.set(None);
     }
 
     fn result(&mut self, result: Result<(), String>) {
@@ -269,7 +336,7 @@ impl PaperCraftApp {
         self.file_version = document.version;
         self.selected_token = None;
         self.upgrade_prompt = false;
-        self.saved = document.clone();
+        self.set_saved(document.clone());
         self.editor = Editor::new(document);
         self.path = path;
         self.fit = true;
@@ -311,7 +378,7 @@ impl PaperCraftApp {
         match self.editor.document.save(&path) {
             Ok(()) => {
                 self.file_version = self.editor.document.required_version();
-                self.saved = self.editor.document.clone();
+                self.set_saved(self.editor.document.clone());
                 self.status = format!("Saved {}", path.display());
                 self.remember(&path);
                 self.path = Some(path);
@@ -378,7 +445,7 @@ impl PaperCraftApp {
             Intent::OpenPath(path) => self.open_path(path),
             Intent::CloseDocument => {
                 // Unsaved changes were confirmed or discarded before reaching here.
-                self.saved = self.editor.document.clone();
+                self.set_saved(self.editor.document.clone());
                 self.close_document();
             }
             Intent::Close => {
@@ -988,9 +1055,11 @@ impl PaperCraftApp {
         if !self.layers_open {
             return;
         }
+        let total = self.editor.document.nodes.len();
+        // Only visible rows are built, so long layer lists cost the same as short ones.
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| {
+            .show_rows(ui, ROW, total, |ui, rows| {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
                 let nodes: Vec<_> = self
                     .editor
@@ -998,6 +1067,8 @@ impl PaperCraftApp {
                     .nodes
                     .iter()
                     .rev()
+                    .skip(rows.start)
+                    .take(rows.len())
                     .map(|n| (n.id, n.name.clone(), n.kind, n.hidden, n.locked))
                     .collect();
                 for (id, name, kind, hidden, locked) in nodes {
@@ -1117,7 +1188,7 @@ impl PaperCraftApp {
     /// Theme tab: the document's color tokens. Names and values edit in place as one
     /// history step per completed edit; add, delete and binding changes are one step each.
     fn theme_panel(&mut self, ui: &mut egui::Ui) {
-        let before = self.editor.document.clone();
+        let snapshot = Snapshot::take(&mut self.editor.document, None);
         let mut add = false;
         let section = section_toggle(
             ui,
@@ -1261,6 +1332,7 @@ impl PaperCraftApp {
                     }
                 });
         }
+        let before = snapshot.before(&mut self.editor.document);
         self.track_properties(before, finish, ui.ctx());
         if let Some((id, name)) = rename {
             self.flush_properties();
@@ -1285,10 +1357,13 @@ impl PaperCraftApp {
         }
     }
 
-    /// Opens a property transaction when `before` differs from the document and commits
-    /// it when an edit finished or no field is being edited.
-    fn track_properties(&mut self, before: Document, finish: bool, ctx: &egui::Context) {
-        if before != self.editor.document && self.property_before.is_none() {
+    /// Opens a property transaction with `before`, the document before this frame's
+    /// edits (`None` when unchanged), and commits it when an edit finished or no field is
+    /// being edited.
+    fn track_properties(&mut self, before: Option<Document>, finish: bool, ctx: &egui::Context) {
+        if let Some(before) = before
+            && self.property_before.is_none()
+        {
             self.property_before = Some(before);
         }
         if finish || (!ctx.egui_wants_keyboard_input() && !ctx.egui_is_using_pointer()) {
@@ -1436,7 +1511,12 @@ impl PaperCraftApp {
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
-        let before = self.editor.document.clone();
+        // The inspector edits document fields and, with one selected layer, that layer.
+        let edited = self
+            .editor
+            .selected()
+            .and_then(|id| self.editor.document.nodes.iter().position(|n| n.id == id));
+        let snapshot = Snapshot::take(&mut self.editor.document, edited);
         let mut finish = false;
         let mut choice = None;
         let tokens = self.editor.document.tokens.clone();
@@ -1649,6 +1729,7 @@ impl PaperCraftApp {
                     );
                 });
         }
+        let before = snapshot.before(&mut self.editor.document);
         self.track_properties(before, finish, ui.ctx());
         if let Some(choice) = choice {
             self.flush_properties();
@@ -1923,21 +2004,20 @@ impl PaperCraftApp {
             )
         };
         let multiple = self.editor.selection().len() > 1;
-        for node in self
+        let outlines = self
             .editor
             .document
             .nodes
             .iter()
             .filter(|n| self.editor.is_selected(n.id) && !n.hidden)
-        {
-            let width = if multiple { 1.0 } else { 1.5 };
-            painter.rect_stroke(
-                screen(node),
-                0.0,
-                Stroke::new(width, ACCENT),
-                StrokeKind::Outside,
-            );
-        }
+            .map(screen)
+            .filter(|r| r.intersects(canvas));
+        painter.add(outline_mesh(
+            outlines,
+            if multiple { 1.0 } else { 1.5 },
+            ACCENT,
+            ui.ctx().pixels_per_point(),
+        ));
         if multiple && let Some([left, top, right, bottom]) = self.editor.selection_bounds() {
             let bounds = Rect::from_min_max(
                 origin + vec2(left, top) * self.zoom,
@@ -2096,14 +2176,20 @@ impl PaperCraftApp {
                                 self.editor.select(Some(id));
                             }
                         }
+                        let nodes: IdSet = if resize_id.is_some() {
+                            IdSet::from_iter([id])
+                        } else {
+                            self.editor.arrangeable().into_iter().collect()
+                        };
+                        let indices = (self.editor.document.nodes.iter().enumerate())
+                            .filter(|(_, n)| nodes.contains(&n.id))
+                            .map(|(index, _)| index)
+                            .collect();
                         self.drag = Some(Drag {
                             before: self.editor.document.clone(),
                             start: hit_point,
-                            nodes: if resize_id.is_some() {
-                                vec![id]
-                            } else {
-                                self.editor.arrangeable()
-                            },
+                            nodes,
+                            indices,
                             resize: resize_id.is_some(),
                         });
                     }
@@ -2120,18 +2206,14 @@ impl PaperCraftApp {
                 let translation = drag
                     .before
                     .clamp_translation(&drag.nodes, [delta.x.round(), delta.y.round()]);
-                for original in drag
-                    .before
-                    .nodes
-                    .iter()
-                    .filter(|n| drag.nodes.contains(&n.id))
-                {
+                for &index in &drag.indices {
+                    let original = &drag.before.nodes[index];
                     let Some(node) = self
                         .editor
                         .document
                         .nodes
-                        .iter_mut()
-                        .find(|n| n.id == original.id)
+                        .get_mut(index)
+                        .filter(|n| n.id == original.id)
                     else {
                         continue;
                     };
@@ -2206,6 +2288,40 @@ fn paint_document(
             }
         }
     }
+}
+
+/// Outside outlines of axis-aligned rectangles as one mesh. Large selections would
+/// otherwise tessellate one anti-aliased stroke per layer every frame. Edges snap to
+/// physical pixels, so the outlines stay crisp without feathering.
+fn outline_mesh(
+    rects: impl Iterator<Item = Rect>,
+    width: f32,
+    color: Color32,
+    pixels_per_point: f32,
+) -> egui::Mesh {
+    let snap = |v: f32| (v * pixels_per_point).round() / pixels_per_point;
+    let mut mesh = egui::Mesh::default();
+    let mut quad = |min: Pos2, max: Pos2| {
+        mesh.add_colored_rect(Rect::from_min_max(min, max), color);
+    };
+    for rect in rects {
+        let inner = Rect::from_min_max(
+            pos2(snap(rect.min.x), snap(rect.min.y)),
+            pos2(snap(rect.max.x), snap(rect.max.y)),
+        );
+        let outer = inner.expand(width);
+        quad(outer.min, pos2(outer.max.x, inner.min.y));
+        quad(pos2(outer.min.x, inner.max.y), outer.max);
+        quad(
+            pos2(outer.min.x, inner.min.y),
+            pos2(inner.min.x, inner.max.y),
+        );
+        quad(
+            pos2(inner.max.x, inner.min.y),
+            pos2(outer.max.x, inner.max.y),
+        );
+    }
+    mesh
 }
 
 fn color(c: [u8; 4]) -> Color32 {
