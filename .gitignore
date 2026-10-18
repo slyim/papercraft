@@ -1,0 +1,8 @@
+node_modules/
+target/
+.npm-cache/
+.rea/
+.codex/
+research/private/
+.DS_Store
+*.log

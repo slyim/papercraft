@@ -1,0 +1,19 @@
+{
+  "name": "crumbs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "REA research tooling for the original Rust/egui Crumbs design editor.",
+  "type": "module",
+  "engines": {
+    "node": "^22.19.0 || ^24.11.0 || >=26.0.0"
+  },
+  "scripts": {
+    "rea": "rea",
+    "rea:mcp": "rea mcp",
+    "paper:analyze": "node scripts/analyze-paper.mjs",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "rea-agents": "6.7.0"
+  }
+}

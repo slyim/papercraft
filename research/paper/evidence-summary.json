@@ -1,0 +1,2366 @@
+{
+  "evidence_id": "ev_1c175b88e83c79b3e8dcd0af6431ff71727231ad23616097a7247f60b36ef3f2",
+  "artifact": {
+    "name": "app.asar",
+    "digest": {
+      "sha256": "912bad3fe41e226c67fd4e27352e2b4456d69d19589f4583cba5944932fb78b2"
+    },
+    "local_path": "/Applications/Paper.app/Contents/Resources/app.asar",
+    "format": "asar",
+    "architecture": null
+  },
+  "operation": "analyze_javascript_application",
+  "rea_version": "6.7.0",
+  "paper_version": "0.5.16",
+  "paper_build": "261015tx3mukqib",
+  "selected_file_count": 60,
+  "source_selection": {
+    "requested_paths": [
+      "package.json",
+      "src/app-bar/layout.ts",
+      "src/app-bar/main.ts",
+      "src/app-bar/preload.ts",
+      "src/auth/auth-through-mcp.ts",
+      "src/auth/auth-through-ui.ts",
+      "src/auth/auth.ts",
+      "src/cli/cli-path.ts",
+      "src/cli/install.ts",
+      "src/deep-links/assets.ts",
+      "src/deep-links/init.ts",
+      "src/deep-links/parse.ts",
+      "src/deep-links/url-to-file-path.ts",
+      "src/exports/pdf-export.ts",
+      "src/exports/pdf-stream.ts",
+      "src/icon/index.ts",
+      "src/icon/startup.ts",
+      "src/lib/cloudflare-pages-branch-alias.ts",
+      "src/lib/download.ts",
+      "src/lib/environment.ts",
+      "src/lib/logging.ts",
+      "src/lib/patch-version-when-dev.ts",
+      "src/lib/render-health.ts",
+      "src/lib/resolve-environment.ts",
+      "src/lib/storage.ts",
+      "src/lib/swallow-epipe-errors.ts",
+      "src/lib/tab-update-availability.ts",
+      "src/lib/telemetry.ts",
+      "src/lib/update-message.ts",
+      "src/lib/updater.ts",
+      "src/main.ts",
+      "src/mcp/bridge.ts",
+      "src/mcp/claude-resolver/linux.ts",
+      "src/mcp/claude-resolver/macos.ts",
+      "src/mcp/claude-resolver/types.ts",
+      "src/mcp/claude-resolver/windows.ts",
+      "src/mcp/index.ts",
+      "src/mcp/install-claude-extension.ts",
+      "src/mcp/mcp-body-schema.ts",
+      "src/mcp/self-capture-hold.ts",
+      "src/mcp/server.ts",
+      "src/mcp/spawn-detached.ts",
+      "src/mcp/update-harness-config.ts",
+      "src/menu/application-menu.ts",
+      "src/preload.ts",
+      "src/test-preload.ts",
+      "src/window/lib/background-throttling.ts",
+      "src/window/lib/close-tabs.ts",
+      "src/window/lib/migrate-legacy-window-state.ts",
+      "src/window/lib/next-paint.ts",
+      "src/window/lib/screenshot-tab.ts",
+      "src/window/lib/tab-session-router.ts",
+      "src/window/lib/url-rules.ts",
+      "src/window/lib/window-bounds.ts",
+      "src/window/lib/window-state.ts",
+      "src/window/load-url.ts",
+      "src/window/paper-tab.ts",
+      "src/window/paper-window.ts",
+      "src/window/types.ts",
+      "src/window/window-manager.ts"
+    ],
+    "unselected_files": 4627
+  },
+  "statistics": {
+    "relevant_files": 4687,
+    "nested_asar_containers": 0,
+    "text_bytes_read": 288416,
+    "invalid_utf8_files": 0,
+    "parsed_javascript_files": 59,
+    "skipped_javascript_files": 0,
+    "visited_ast_nodes": 33089,
+    "findings": 847,
+    "modules": 0,
+    "parse_failures": 0
+  },
+  "electron_summary": {
+    "browser_windows": 1,
+    "explicit_web_preferences": 0,
+    "preload_entrypoints": 0,
+    "context_bridge_apis": 2,
+    "exposed_api_members": 2,
+    "ipc": {
+      "operations": 75,
+      "literal_channels": 43,
+      "dynamic_channel_operations": 0,
+      "renderer_transmissions": 32,
+      "renderer_listeners": 11,
+      "main_handlers": 32,
+      "paired_renderer_transmissions": 32,
+      "ambiguous_renderer_transmissions": 0,
+      "unpaired_literal_renderer_transmissions": 0
+    },
+    "sender_validation_observations": 0,
+    "utility_processes": 0,
+    "resolved_utility_entrypoints": 0,
+    "native_addon_bindings": 0,
+    "resolved_native_addon_bindings": 0
+  },
+  "graph_counts": {
+    "nodes": 14071,
+    "edges": 14861
+  },
+  "coverage": {
+    "status": "partial",
+    "truncated": false,
+    "omitted_count": null,
+    "limits": []
+  },
+  "integrity_contradictions": [
+    {
+      "contradiction_id": "ic_9f70d25552318ef4fd70b4c52d00f5309aa318e2e6ae4e12537b00704d8cfa05",
+      "occurrence_id": "occ_add5f5fd0d05116097e014adcdafa89be23f8566030e4d4657fb10376bbdc01e",
+      "parent_artifact_id": "art_ec4099f8a9c4b6da028720c11de51a788dd077cbdf4b58484658751d7c9b6572",
+      "logical_path": "dist/cli-bin/darwin-arm64/paper",
+      "declared_sha256": "22e877603d71e7e1b346a8180cef2c95a6b890ff1cefb41ec955af73b95914ad",
+      "observed_sha256": "40726a1a91821189ccbfe270977a9cc888fc9544bf28f3d88f68aabb41de418d",
+      "entry_kind": "file",
+      "unpacked": true,
+      "trust": "observed-untrusted",
+      "provenance": "container-integrity-metadata-versus-observed-bytes",
+      "limitations": [
+        "Observed bytes contradict declared integrity metadata and cannot support equivalence."
+      ]
+    }
+  ],
+  "limitations": [
+    "Artifact integrity metadata contradicts observed bytes at dist/cli-bin/darwin-arm64/paper; the observed bytes are untrusted.",
+    "Caller-selected source analysis leaves 4627 inventoried files outside analysis scope. Inventory identity covers the complete artifact; relationships through unselected sources remain unknown.",
+    "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+    "Electron API identity follows proven lexical module aliases and structurally verified module-namespace interop. Other reassignments, dynamic selections, and visibly overwritten namespace members are unresolved; missing findings do not establish absence. Arbitrary call side effects and runtime registration are not evaluated.",
+    "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
+    "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
+    "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+    "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+    "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+  ],
+  "ipc_channels": [
+    {
+      "channel": "app-bar:blur",
+      "node_id": "jag_node_13773cb8f04af4891708428de8b5e43462ceb9b282dc293cf4901748bdb09480",
+      "observations": [
+        {
+          "observation_id": "jag_observation_5abddeaaac4ba5da5a79828e4770959eb3a8f3192246bca4792b2f841e553e42",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "app-bar:blur",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 236,
+                "column": 4
+              },
+              "end": {
+                "line": 236,
+                "column": 112
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_66ab315664771fe36d5b49756b1125ca4837327a18ba0afb95e97e64ef0f3101",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "app-bar:blur",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 54,
+                "column": 16
+              },
+              "end": {
+                "line": 54,
+                "column": 48
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "app-bar:focus",
+      "node_id": "jag_node_0c3c0a81cc4b37bfd6d2951e063d45f22689bc00c5d94521f44ce700f31ba5f4",
+      "observations": [
+        {
+          "observation_id": "jag_observation_47347feaf43db71822012945520fd4b79fe5415d108319bdf8f5e9752ca0384e",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "app-bar:focus",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 235,
+                "column": 4
+              },
+              "end": {
+                "line": 235,
+                "column": 64
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_49d839fabcfcadf8c715b2d05b5707d0040698990e30db6c8c75c9c0e6e43072",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "app-bar:focus",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 53,
+                "column": 17
+              },
+              "end": {
+                "line": 53,
+                "column": 50
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "check-for-updates",
+      "node_id": "jag_node_8a77b8081906d7b4738f904d55dc7432ce12f0dd9ce576420e7a462ad251e685",
+      "observations": [
+        {
+          "observation_id": "jag_observation_2ada80fc0ecfdc9e2d17d3f4a6c12bff945b388bc69058fb34034678f20851cb",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "check-for-updates",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 210,
+                "column": 27
+              },
+              "end": {
+                "line": 210,
+                "column": 66
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_b088745b8f99e0ca149c9c962cbcfac4418be48a449757d9aa276ea1168dbbb8",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "check-for-updates",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 178,
+                "column": 4
+              },
+              "end": {
+                "line": 189,
+                "column": 6
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "context-menu:show",
+      "node_id": "jag_node_fe95c0279c1b137ddd3b5a040825f2171dbed354f10d564146add20624e1dc29",
+      "observations": [
+        {
+          "observation_id": "jag_observation_45e7a5617b46c590d639b9d116d098dc506e655835a0490a6e8e5337fdb06f37",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "context-menu:show",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 57,
+                "column": 6
+              },
+              "end": {
+                "line": 57,
+                "column": 62
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_7ee75fcdac07b6f98307c571bf7c55e9c9c9c871f7a67908d1f988ba7e75d9f9",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "context-menu:show",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 357,
+                "column": 4
+              },
+              "end": {
+                "line": 401,
+                "column": 5
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "create-new-file",
+      "node_id": "jag_node_eb0f17424f4fac8173b2ba64f30753b00dbbd7430ede1fad56e923b0b9b9c778",
+      "observations": [
+        {
+          "observation_id": "jag_observation_58f32c5b04027cfd092e6aa352d3c81c31cf57dda955054cda6e0f5e34015de3",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "create-new-file",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 85,
+                "column": 6
+              },
+              "end": {
+                "line": 85,
+                "column": 48
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "desktop-debug-gpu",
+      "node_id": "jag_node_319eff8ed6970ddcd40d12b5355a2b7396a94c4917695cdeb7a27d15ff13339f",
+      "observations": [
+        {
+          "observation_id": "jag_observation_382d6f4dece2464f82873a4a8280ffb8abc01c2cfcbd12eec05831979d3def9c",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "desktop-debug-gpu",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 237,
+                "column": 27
+              },
+              "end": {
+                "line": 237,
+                "column": 66
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_416b8c74e2f313babdf1811f90232990105e6c7f9d8a87f0136c51d5a3105858",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "desktop-debug-gpu",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 210,
+                "column": 4
+              },
+              "end": {
+                "line": 220,
+                "column": 7
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "desktop:cli-status",
+      "node_id": "jag_node_ce92dd89febb30b05eeecfd24aa2abea7232aaf1fdb4d0ed649bd8a1cf7f4b85",
+      "observations": [
+        {
+          "observation_id": "jag_observation_6542f5a269797291d0c0a7a63b211d4b297b9d700fc1752aeedbc0a532e3142a",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "desktop:cli-status",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 257,
+                "column": 20
+              },
+              "end": {
+                "line": 257,
+                "column": 60
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_d7176e2babe2959a7fcca5bc1c0b62642e3cc3e47019d53b5c25e7855bfe3912",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "desktop:cli-status",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 298,
+                "column": 4
+              },
+              "end": {
+                "line": 298,
+                "column": 65
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "desktop:get-open-files",
+      "node_id": "jag_node_3da3b6e1e77e1daa10051133bdf2beea25e7623beb4b331b14bc57bcfac70ce7",
+      "observations": [
+        {
+          "observation_id": "jag_observation_a5a9bf8f25761a25df214dd348579de37b74926de58cd787b1aa526601972b31",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "desktop:get-open-files",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 68,
+                "column": 24
+              },
+              "end": {
+                "line": 68,
+                "column": 68
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_ea81b0e8377559ffb5cb34cfc23f6b47a9bde73d00557ba4665781c949121070",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "desktop:get-open-files",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 297,
+                "column": 4
+              },
+              "end": {
+                "line": 297,
+                "column": 80
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "desktop:install-claude-extension",
+      "node_id": "jag_node_8c95d4e91fbc6bd273cf009c7b4700455262feacce22c2a32714e751486449d3",
+      "observations": [
+        {
+          "observation_id": "jag_observation_203e046885c12635da5dbe513dfc4c67e687d81fbbeafeb4f1af89f8810ac54c",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "desktop:install-claude-extension",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 299,
+                "column": 4
+              },
+              "end": {
+                "line": 299,
+                "column": 93
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_9aa8b1ec629741f58566fa97731682b5439d54a412a8c661720c70af13d7cf35",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "desktop:install-claude-extension",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 259,
+                "column": 41
+              },
+              "end": {
+                "line": 259,
+                "column": 95
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "desktop:nudge",
+      "node_id": "jag_node_7dfb405b4f98822aa18f844698f9ec66e931f975bbee4e96111493cecf2e3b56",
+      "observations": [
+        {
+          "observation_id": "jag_observation_18b1952b6f289441b5410fec73f5d3094401107afde947689e284747587c2a0e",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "desktop:nudge",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 301,
+                "column": 4
+              },
+              "end": {
+                "line": 301,
+                "column": 104
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_7e52ff60f0244f386831e2d7451da3ff970a968d8e3c6ff5de34618d861e69b0",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "desktop:nudge",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 261,
+                "column": 17
+              },
+              "end": {
+                "line": 261,
+                "column": 50
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "desktop:refresh-all-windows",
+      "node_id": "jag_node_3868e264dccec2b845c186cc224d860983af07e6d49d3139f3fa4826d3c0fdbb",
+      "observations": [
+        {
+          "observation_id": "jag_observation_664be14be626cd8b651aeb8e3c3a9134cb5823c8fd9f5ba901180787edad978f",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "desktop:refresh-all-windows",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 38,
+                "column": 61
+              },
+              "end": {
+                "line": 38,
+                "column": 114
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_cae139d5d4972dbf2c79a7f75d8958afff3f84d4d5dd99745102c61a9463647c",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "desktop:refresh-all-windows",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 288,
+                "column": 4
+              },
+              "end": {
+                "line": 290,
+                "column": 5
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "desktop:resource-renamed",
+      "node_id": "jag_node_4b55840af77f1e1bcb83317a44874e6814b9cb683f63d4b38aed200c99a48eff",
+      "observations": [
+        {
+          "observation_id": "jag_observation_5fbb473aeaf42b385d97819619b4e5c0eb5ad59c31a19af65adb1f13dce51f3b",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "desktop:resource-renamed",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 291,
+                "column": 4
+              },
+              "end": {
+                "line": 293,
+                "column": 5
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_fecfbbfec3ff1b8a32685da3b33c63fd4ac0d5c2fe4ffec0e19d80384706ebdb",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "desktop:resource-renamed",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 40,
+                "column": 6
+              },
+              "end": {
+                "line": 40,
+                "column": 56
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "desktop:resources-changed",
+      "node_id": "jag_node_b82e99fe247e51c82e88e30298de7a8bc0c79d0343b407c36b1a564cfcea3712",
+      "observations": [
+        {
+          "observation_id": "jag_observation_0ad5405c51f3c3e305e17233672db2410d47bebc3416386352ea8f777fa7a6d0",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "desktop:resources-changed",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 41,
+                "column": 62
+              },
+              "end": {
+                "line": 41,
+                "column": 113
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_b88011539e3f47d4b9aba7a340c26fccbf31152b4a8f03fad309cfa088336459",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "desktop:resources-changed",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 294,
+                "column": 4
+              },
+              "end": {
+                "line": 296,
+                "column": 5
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "desktop:set-tab-state",
+      "node_id": "jag_node_83725e324f4484fafc42c0cc7a661dddbb8d06e44e1639f9f36c20286639d75c",
+      "observations": [
+        {
+          "observation_id": "jag_observation_1e4e51ba0f07d731542a80ae6ed9c71e13ec5d0f4af56f56eae94ae090ba4854",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "desktop:set-tab-state",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 37,
+                "column": 6
+              },
+              "end": {
+                "line": 37,
+                "column": 54
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_506240637220ae17b4e527866300e0d09f680d53cfb0df082ee47c80fcb160dc",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "desktop:set-tab-state",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 283,
+                "column": 4
+              },
+              "end": {
+                "line": 287,
+                "column": 5
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "desktop:update-mcp-config",
+      "node_id": "jag_node_705e6af76a47f5036da3c3d7208a810d4022a60a66c607424e6821bd5170d885",
+      "observations": [
+        {
+          "observation_id": "jag_observation_4ee7e9a71e34e3d04c13a0f405f6730840e914c2fc75b7d4fcfda2e606318cbb",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "desktop:update-mcp-config",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 260,
+                "column": 53
+              },
+              "end": {
+                "line": 260,
+                "column": 109
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_65d7d60f8b26700827f587552d49f14968bd8e025584b3e4811afe7ee48c99c2",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "desktop:update-mcp-config",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 300,
+                "column": 4
+              },
+              "end": {
+                "line": 300,
+                "column": 103
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "download-complete",
+      "node_id": "jag_node_7fa98048f669752326fcf8d0b7d8542c1bcfc188c7e6dd063a9f0c7672cbe0aa",
+      "observations": [
+        {
+          "observation_id": "jag_observation_ca45c298011a3c8e6f8fa055313ebd65a0c99d6eeccb573f95ca9ca9b5c0978f",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "download-complete",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 186,
+                "column": 8
+              },
+              "end": {
+                "line": 186,
+                "column": 69
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "download-started",
+      "node_id": "jag_node_cc6da5ebb8380ea7db9f3d00620e514d65e77d8b05607be08230df15670d0b2d",
+      "observations": [
+        {
+          "observation_id": "jag_observation_be8535f49dc2e3cb77685bb66e0bd4f210bff90f4ba4075b48256ae136c4c27e",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "download-started",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 185,
+                "column": 8
+              },
+              "end": {
+                "line": 185,
+                "column": 66
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "edit-command",
+      "node_id": "jag_node_e998cac5f71a4792a96e12f053f2c9a0f52f612c9a4898ba58b2d08e41921e6f",
+      "observations": [
+        {
+          "observation_id": "jag_observation_c9ec1c1f45341dbb4deeac950efa6135b33419e8e664e39e62277f18e1a8abbb",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "edit-command",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 96,
+                "column": 6
+              },
+              "end": {
+                "line": 96,
+                "column": 45
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "export-pdf",
+      "node_id": "jag_node_3fab479db2304b07b8bea63904e4e4a0fddd7f763cbe24556c5d7a558af97be1",
+      "observations": [
+        {
+          "observation_id": "jag_observation_001ffe67bd2b21a6533194e1161aa52bab3e4ccb5ff21acae513a3e46a217a40",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "export-pdf",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 107,
+                "column": 10
+              },
+              "end": {
+                "line": 107,
+                "column": 48
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_cd04bad2d8cd90597dfbf2d1e87657d6686a28a4a5bcfeee283e87da5d35b5e7",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "export-pdf",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 176,
+                "column": 4
+              },
+              "end": {
+                "line": 176,
+                "column": 91
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "figma-oauth-result",
+      "node_id": "jag_node_bdde3d52d0748a553d3264211b6765e318e6ecfc989815fae5c602f4f596c009",
+      "observations": [
+        {
+          "observation_id": "jag_observation_0b60a1de6fdfbb131cd5f826a720566acaa42f3022846b7d7229568bd5e8fe23",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "figma-oauth-result",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 230,
+                "column": 6
+              },
+              "end": {
+                "line": 230,
+                "column": 51
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "fullscreen:state",
+      "node_id": "jag_node_0b249ff89a4cbeceef9e6990a03a1776559c91614aca814b640eb782ba8ba5a5",
+      "observations": [
+        {
+          "observation_id": "jag_observation_062266d7716456ca8d54915d9cb757214b5110af08dfc6326aafbd20c3aa8ac6",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "fullscreen:state",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 23,
+                "column": 0
+              },
+              "end": {
+                "line": 29,
+                "column": 2
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "get-app-icon",
+      "node_id": "jag_node_dc849c5d806900307b9107a474d2d87602c87132f295db273837e0a2a65c9468",
+      "observations": [
+        {
+          "observation_id": "jag_observation_6a8c71cd3c292768fb162da473fcbb2d1cdaad6f185543a403871473d14b866b",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "get-app-icon",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 162,
+                "column": 4
+              },
+              "end": {
+                "line": 162,
+                "column": 54
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_a029b0ed9bb83ecd9668c388d56d742872919d2f62bf2aaef2b03acb25fb57ee",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "get-app-icon",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 66,
+                "column": 17
+              },
+              "end": {
+                "line": 66,
+                "column": 51
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "get-available-update",
+      "node_id": "jag_node_a6d030034db3ac6bc57387d80ed9adac5775781aa29fba0cb0be83183ac2b2b4",
+      "observations": [
+        {
+          "observation_id": "jag_observation_34f1a351bd2560148a105e86a183d04c360d6b379804d6619cf775a6ad12b2ce",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "get-available-update",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 211,
+                "column": 30
+              },
+              "end": {
+                "line": 211,
+                "column": 72
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_d3dec62ce34b4db09b351ecf97bbcc5806f12f032fa002c2401ba84dd2216333",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "get-available-update",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 194,
+                "column": 4
+              },
+              "end": {
+                "line": 201,
+                "column": 6
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "menu:popup",
+      "node_id": "jag_node_b77d9578a783ffe2b83bd8c813bb005861c889e29d9963fc7d2d38b707c1ca53",
+      "observations": [
+        {
+          "observation_id": "jag_observation_0cc8e7f8c32b7e48a79143492cc9d6a7fc6cb28a4793a21e3536a07f2c04c386",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "menu:popup",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 55,
+                "column": 43
+              },
+              "end": {
+                "line": 55,
+                "column": 85
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_9af93513c7bb0e4c4f19cd93900abdf5be5ad2c4559c5004fdd9b7244df8d0be",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "menu:popup",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 343,
+                "column": 4
+              },
+              "end": {
+                "line": 353,
+                "column": 6
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "navigate",
+      "node_id": "jag_node_fac048d3a579b534269930cbf97f78c31761540a7387496605790570d3b90b80",
+      "observations": [
+        {
+          "observation_id": "jag_observation_7e4ca99454f199571010cb08fd5cef89601e93a25deade4a67e842c5f48c9c35",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "navigate",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 74,
+                "column": 6
+              },
+              "end": {
+                "line": 74,
+                "column": 41
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "open-figma-oauth",
+      "node_id": "jag_node_710f7213a9a2a22dffeaa92ca3460444f7091a6fa4626b36008826dc14013530",
+      "observations": [
+        {
+          "observation_id": "jag_observation_5663ac46e0f39b06667eb43fde032ea99b8fa13c09b55b10577e45b5f70c7665",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "open-figma-oauth",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 224,
+                "column": 67
+              },
+              "end": {
+                "line": 224,
+                "column": 111
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_b1de37193dd205e1911ef8c7f6e34a90273dad1b6eebbb9782af98da36163522",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "open-figma-oauth",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 163,
+                "column": 4
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "quit-and-install-update",
+      "node_id": "jag_node_8837b840ed510ac30c5e22da44b5cf0b62556db81596bed8b9b50c8f1d0eae3c",
+      "observations": [
+        {
+          "observation_id": "jag_observation_e2cb13b4cb15df7675ab3eaac90ee8c780ede904b0b89fe41ad8527d0fc84e54",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "quit-and-install-update",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 205,
+                "column": 4
+              },
+              "end": {
+                "line": 207,
+                "column": 6
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_f5a9f39d035fc574fa4e2a385fe6e01bda4110a1b5e310a08e1aae2d1c508fe6",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "quit-and-install-update",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 212,
+                "column": 32
+              },
+              "end": {
+                "line": 212,
+                "column": 77
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "rename-file",
+      "node_id": "jag_node_2ef51f30a91d11e10614ec604a73e37d70b905a3a0b103ea75d3cca5768d03ea",
+      "observations": [
+        {
+          "observation_id": "jag_observation_c955c8cce57118ddb3ed2be3cd987a6bdddfd74db9f621faaddfd61f13b18095",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "rename-file",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 58,
+                "column": 6
+              },
+              "end": {
+                "line": 58,
+                "column": 44
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "resources-changed",
+      "node_id": "jag_node_88be9a01e4fadacd5c3f0c1dfb2ddbb7f477760f3e5d77a0feb48ae69d1e62a8",
+      "observations": [
+        {
+          "observation_id": "jag_observation_cb1d71596c2fd1466ab8014140dd15b7f7f69b62ffaf07e84294e099c793f9aa",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "resources-changed",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 47,
+                "column": 6
+              },
+              "end": {
+                "line": 47,
+                "column": 50
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "set-app-icon",
+      "node_id": "jag_node_1a81e524d513f2165181f5a35a54462d6e4f376a51d6a14d6dd888ce085c5cbf",
+      "observations": [
+        {
+          "observation_id": "jag_observation_0a780668ad388fe4f4c41756e4a214854d117027d4acf9780f9ed8096c56809f",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "set-app-icon",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 65,
+                "column": 30
+              },
+              "end": {
+                "line": 65,
+                "column": 68
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_7177ae701534339a7156735c4b3fab045fd1727ff402cca4c00d31ac5bbcf045",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "set-app-icon",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 161,
+                "column": 4
+              },
+              "end": {
+                "line": 161,
+                "column": 75
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:activate",
+      "node_id": "jag_node_676b732ec98fa4d10b96e7c42299b3715a68700937f3dab59e449ea94e6021bc",
+      "observations": [
+        {
+          "observation_id": "jag_observation_60d8d5cb2165b49cce9f2a1bf034d3bacc3edb0f2cae939afa709023b3825055",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "tabs:activate",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 231,
+                "column": 4
+              },
+              "end": {
+                "line": 233,
+                "column": 5
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_e78a8fe9643a5874e0189a177901ffb24c29023b89791db449bed940b57c145e",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "tabs:activate",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 52,
+                "column": 33
+              },
+              "end": {
+                "line": 52,
+                "column": 70
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:close",
+      "node_id": "jag_node_dce53a27454eff9ca015bc544ee5df22767c80a7723769a8fed4eed6e409d9d0",
+      "observations": [
+        {
+          "observation_id": "jag_observation_66a12464090a95aa08e5163f917c00dcfb86f41e919f58383d04f6748b4103f4",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "tabs:close",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 51,
+                "column": 30
+              },
+              "end": {
+                "line": 51,
+                "column": 64
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_81f75d4344863eb5dbae27f65248e9d39844d0868e47bd29ea90785842fc2fc9",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "tabs:close",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 230,
+                "column": 4
+              },
+              "end": {
+                "line": 230,
+                "column": 118
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:close-multiple",
+      "node_id": "jag_node_5cd845274a15fa4f7a8f5f6c78f91683a874fe08ea1ea2364d9be3c0a33199a0",
+      "observations": [
+        {
+          "observation_id": "jag_observation_1e5e2427b6ccedf283f72499bca5be5169739dfae4330dddd3c1f32e049e4571",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "tabs:close-multiple",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 237,
+                "column": 4
+              },
+              "end": {
+                "line": 239,
+                "column": 5
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_ed23d442eb2436ef4b2f09254574a7f63c0bba7af7782fa363d817b7c9a28586",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "tabs:close-multiple",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 64,
+                "column": 60
+              },
+              "end": {
+                "line": 64,
+                "column": 113
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:copy-link",
+      "node_id": "jag_node_ce23530e4c40ec5b061ccdfa77d88689dd4699cf521a00695430fbbb8b2adcbf",
+      "observations": [
+        {
+          "observation_id": "jag_observation_38b41ee95619bec8a6b273538e824a567482b4925b0af4b308d75a7c8d2832f6",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "tabs:copy-link",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 59,
+                "column": 33
+              },
+              "end": {
+                "line": 59,
+                "column": 73
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_8ead2869ef4fe99b05796e96f8cb1a97c8eff6aa30cf56f1f1b28e5d8d0850d2",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "tabs:copy-link",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 243,
+                "column": 4
+              },
+              "end": {
+                "line": 248,
+                "column": 6
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:get-url",
+      "node_id": "jag_node_4d758aae980fe6c687e34104ceccd3b0f63549c2de14459abc2f68119694a514",
+      "observations": [
+        {
+          "observation_id": "jag_observation_8f34937eb04ad7b8324388824a38c1bf8798e9c3b6c4ed599fd2440dc7accb0e",
+          "properties": {
+            "side": "renderer",
+            "operation": "invoke",
+            "mode": "invoke",
+            "channel": "tabs:get-url",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 58,
+                "column": 31
+              },
+              "end": {
+                "line": 58,
+                "column": 69
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_f539e48f9268eaac4c3190ff34c29daee1dfed8035372f9ef37df81da7ad1e23",
+          "properties": {
+            "side": "main",
+            "operation": "handle",
+            "mode": "handle",
+            "channel": "tabs:get-url",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 240,
+                "column": 4
+              },
+              "end": {
+                "line": 242,
+                "column": 6
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:move",
+      "node_id": "jag_node_f054c489041448718457cab3aa8a137b69ac9fb6956bac024f22797942f7ff7f",
+      "observations": [
+        {
+          "observation_id": "jag_observation_8b40ae03eb1fdd598cc62759570233479541f7f4b9ece87ab083b9b115022e4a",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "tabs:move",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 63,
+                "column": 46
+              },
+              "end": {
+                "line": 63,
+                "column": 92
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_e163a7ea84e83ac3a7befe2b7d392c55014baa96126cb19c86798b1f4a197474",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "tabs:move",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 255,
+                "column": 4
+              },
+              "end": {
+                "line": 257,
+                "column": 5
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:move-to-new-window",
+      "node_id": "jag_node_bcedbef0f972a8a7c4e6b114b89d7e4f4cdbe1185108f946c77c682837c926a2",
+      "observations": [
+        {
+          "observation_id": "jag_observation_c6195bc4fffbd446b54d08cfa1891640940dcfa6e27d4e0d4776559de38c5af9",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "tabs:move-to-new-window",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 62,
+                "column": 40
+              },
+              "end": {
+                "line": 62,
+                "column": 87
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_f0113caa72321f2ad9f3479b7bd588063ffc121e95334af81fb5602d4e371171",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "tabs:move-to-new-window",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 258,
+                "column": 4
+              },
+              "end": {
+                "line": 282,
+                "column": 6
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:new",
+      "node_id": "jag_node_b92acef2f4bfa06d89afcf9bf4c5e45103f876cffa8220beda933b99ce2f9e78",
+      "observations": [
+        {
+          "observation_id": "jag_observation_7b252ffc21fa1c9725637a95426af7cc932f3dd7c7b8dddf5ffe445771c335ec",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "tabs:new",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 49,
+                "column": 18
+              },
+              "end": {
+                "line": 49,
+                "column": 46
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_b7e28a774c05f37c01b9e0aa1f91f5847cb09f91d25dd8e1be43d895721e5c33",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "tabs:new",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 226,
+                "column": 4
+              },
+              "end": {
+                "line": 226,
+                "column": 46
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:preload",
+      "node_id": "jag_node_03d35c187513834e105c9e939c700a647508c04dae9153dd63bc6c4cb8d1a5a4",
+      "observations": [
+        {
+          "observation_id": "jag_observation_ecd9e57a5d6c6a1585db6610fb80ae2ad043b2bb6824050b521a7ba930a94c1f",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "tabs:preload",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 50,
+                "column": 35
+              },
+              "end": {
+                "line": 50,
+                "column": 74
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_f6c59e6e126598a808694ca684fbaf74fbbf8a8d7b0c753b51fa90a71e68bf58",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "tabs:preload",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 227,
+                "column": 4
+              },
+              "end": {
+                "line": 229,
+                "column": 5
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:reload",
+      "node_id": "jag_node_d4e9c89e5ba925429407a40a6ced1b2f22dffd471b8a7dcdefe8663592cb1531",
+      "observations": [
+        {
+          "observation_id": "jag_observation_12e1f0d45f84761620d490a61384a52ed47338bf306a48ee04114e28bffe61eb",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "tabs:reload",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 252,
+                "column": 4
+              },
+              "end": {
+                "line": 254,
+                "column": 5
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_3ae22f9d59cc3dcd97387dbadee2fe7037d8c72b58cbd2283ed231b4d0acc83d",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "tabs:reload",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 61,
+                "column": 31
+              },
+              "end": {
+                "line": 61,
+                "column": 66
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:rename-resource",
+      "node_id": "jag_node_c8426cb018649be91bcb77e916c5d32f2730f6c46c9284cfd9ebf926c3c2df7b",
+      "observations": [
+        {
+          "observation_id": "jag_observation_3e1195410faa5df12f955607401848dbbdf64ca4b2424a17afcacc0d25694cba",
+          "properties": {
+            "side": "main",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "tabs:rename-resource",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/main.ts",
+              "start": {
+                "line": 249,
+                "column": 4
+              },
+              "end": {
+                "line": 251,
+                "column": 5
+              }
+            }
+          }
+        },
+        {
+          "observation_id": "jag_observation_ba0524f862ad32e7c72c2615f98ba142dd44cff7e41f87154e36334f6c11d5fc",
+          "properties": {
+            "side": "renderer",
+            "operation": "send",
+            "mode": "send",
+            "channel": "tabs:rename-resource",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 60,
+                "column": 50
+              },
+              "end": {
+                "line": 60,
+                "column": 104
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "tabs:state",
+      "node_id": "jag_node_823a698a98024d9b7ba1b528e3fd7ce5fd283d0f7a1b9de4559cdcfe3a417591",
+      "observations": [
+        {
+          "observation_id": "jag_observation_2dab6e5b9e52364a26d185dafbf1c08a99e441d80fdb0145fe2760c2c8f3f717",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "tabs:state",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/app-bar/preload.ts",
+              "start": {
+                "line": 12,
+                "column": 0
+              },
+              "end": {
+                "line": 18,
+                "column": 2
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "channel": "update-availability-request",
+      "node_id": "jag_node_dbe2dd5ec858aece1e4c47e2248dabf23f38cb17edee75177a272dd453ab9bc6",
+      "observations": [
+        {
+          "observation_id": "jag_observation_390393bad2e6ce175f508ff22fa032dee15aa0dcae9e1b4bdea424707cbf119a",
+          "properties": {
+            "side": "renderer",
+            "operation": "on",
+            "mode": "listen",
+            "channel": "update-availability-request",
+            "channel_expression": null,
+            "resolution": "literal"
+          },
+          "location": {
+            "available": true,
+            "value": {
+              "kind": "source-range",
+              "source": "src/preload.ts",
+              "start": {
+                "line": 218,
+                "column": 6
+              },
+              "end": {
+                "line": 218,
+                "column": 60
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
