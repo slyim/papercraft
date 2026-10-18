@@ -193,6 +193,27 @@ fn version_1_rejects_every_token_field_even_when_empty() {
 }
 
 #[test]
+fn unsupported_versions_cannot_be_saved_or_committed() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("keep.papercraft");
+    let original = Document::example();
+    original.save(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    for version in [0, papercraft::document::CURRENT_VERSION + 1] {
+        let mut editor = Editor::new(original.clone());
+        editor.document.version = version;
+        assert!(
+            editor.document.save(&path).is_err(),
+            "Saved version {version}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert!(editor.commit(original.clone()).is_err());
+        assert_eq!(editor.document, original);
+        assert!(!editor.can_undo());
+    }
+}
+
+#[test]
 fn deleting_a_token_detaches_bindings_and_preserves_their_colors() {
     let directory = tempfile::tempdir().unwrap();
     let mut editor = Editor::new(Document::load(&fixture(directory.path())).unwrap());

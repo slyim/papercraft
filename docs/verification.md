@@ -179,3 +179,4 @@ The two original commits, `5f004a9` and `0868ef3`, are reviewed separately and r
 ### Persistence corrections
 
 - `version_1_rejects_every_token_field_even_when_empty` failed before correction: the loader accepted `tokens: []` in version 1, contrary to the documented format. The loader now checks field presence before deserializing, rejecting all version 2 keys in version 1, including empty arrays, default identifiers and null bindings. The regression passes and checks that rejected input bytes remain unchanged.
+- `unsupported_versions_cannot_be_saved_or_committed` failed before correction: save normalized version 0 into version 1 and replaced the destination. Normalization now retains unsupported versions for validation to reject. The passing regression covers version 0 and the next unsupported version, preservation of existing bytes, commit rollback and unchanged history. Supported version 1/2 normalization remains in place.

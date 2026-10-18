@@ -265,7 +265,10 @@ impl Document {
         for node in &mut self.nodes {
             resolve(&self.tokens, &mut node.fill, node.fill_token);
         }
-        self.version = self.required_version();
+        // Preserve unsupported versions so validation rejects them instead of downgrading.
+        if (1..=CURRENT_VERSION).contains(&self.version) {
+            self.version = self.required_version();
+        }
         if self.tokens.is_empty() {
             self.next_token_id = 1;
         }
