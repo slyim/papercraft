@@ -2,7 +2,7 @@
 
 18 October 2026. Host: Apple Silicon macOS. Rust 1.99.1; eframe/egui 0.36.2; egui-phosphor 0.14.0; REA 6.7.0.
 
-Entries below retain the capability and verification state at each earlier change. **Review before landing** records the current review; the reliability/SVG and token/arrangement entries describe the two original increments. Earlier statements that SVG or tokens were deferred describe the earlier code.
+Entries below retain the capability and verification state at each earlier change. **Release downloads v0.1.2** records the current packaging checks; earlier entries describe their own revisions and platforms. Earlier statements that SVG, tokens or other-platform builds were deferred describe the earlier code.
 
 ## Passed
 
@@ -202,6 +202,34 @@ Three `coordinate_limits_*` regressions failed before correction. Nudging and dr
 
 Physical native keyboard/mouse input, native file dialogs, screen-reader interaction, other-platform builds and large-document performance remain unverified. Version 2 documents require a token-capable build or the documented downgrade procedure.
 
+## Release downloads v0.1.2 (18 October 2026)
+
+Release source: `40765dfc92fb85e721dda0c4ecbc2e4875bb2cd7`. The [native build run](https://github.com/slyim/papercraft/actions/runs/39155293943) uses the manually dispatched, read-only repository workflow in `.github/workflows/release.yml`. Original application logic remains Rust; the archive/notice helper uses Python's standard library only during packaging. Package version is 0.1.2; macOS bundle build number is 3.
+
+| Target / native runner | Formatting, 44 Rust tests, Clippy, release build | Native renderer | Archive checks |
+|---|---|---|---|
+| Linux x86_64 / Ubuntu 22.04 | Pass | Pass, Xvfb/Mesa software OpenGL | Pass, tar.gz |
+| Linux ARM64 / Ubuntu 22.04 ARM64 | Pass | Pass, Xvfb/Mesa software OpenGL | Pass, tar.gz |
+| macOS Apple Silicon / macOS 15 ARM64 | Pass | Pass | Pass, ZIP and tar.gz |
+| macOS Intel / macOS 15 Intel | Pass | Pass | Pass, ZIP and tar.gz |
+| Windows x86_64 / Windows Server 2022 | Pass | Not exercised | Pass, ZIP with GUI subsystem and static MSVC runtime |
+
+### Corrections established during release checks
+
+- The first Windows run failed the existing recent-file unit test because `/x.crumbs` is not an absolute Windows path. `16e9f17` replaces that Unix-only fixture with the native temporary path already used by the test, serialized through JSON. Production recent-file path validation is unchanged; the Windows test suite now passes.
+- The first Linux rendering runs failed loading `libxkbcommon-x11.so`. `40765df` installs the missing runner runtime and documents the dependency for Linux downloads. Both Linux native rendering checks now pass. These were missing runtime-library failures, not compiler or document-model defects.
+- Local archive assembly reproduced Python ZIP's rejection of pre-1980 timestamps preserved from dependency notices. ZIP creation now uses the standard library's timestamp normalization. Both actual macOS archive checks pass with those same notice files.
+
+### Packaging and local checks
+
+- `cargo fmt --check`, 4 unit plus 40 integration tests, warnings-denied Clippy and the release build pass locally on Apple Silicon. The portable recent-file correction also passes its focused local regression before the native CI rerun.
+- Every archive is checked against the actual built executable bytes, executable architecture, required notices and safe member paths. ZIP integrity and tar executable permissions are checked. All seven downloaded CI archives independently pass their platform SHA-256 manifests before publication; dependency records include 278 packages on each Linux target, 170 on each Mac target and 158 on Windows.
+- Notices include exact Cargo-resolved normal/build dependency metadata, locally shipped notices, pinned upstream notices where crates omit them, Rust library notices and bundled font/icon terms. The retained Sheldon MIT notice covers the objc2 family and the MIT-declared dispatch package. No research, agent settings or Git metadata appears in the application archives.
+- The local macOS bundle passes ad-hoc signature verification before and after ZIP extraction, uses only system frameworks/libraries, and its extracted executable launched without diagnostics; only that owned process was stopped. Both downloaded CI Mac ZIPs also pass signature verification after extraction.
+- The local Python installation initially failed CA verification for notice downloads. Using the operating system CA bundle resolved it without disabling TLS verification. GitHub runners use their configured Python trust stores. Native launch/signature checks use approved execution outside the sandbox.
+
+macOS apps are ad-hoc signed, not notarized; Windows binaries are unsigned. Linux downloads require glibc 2.35 or later, libxkbcommon-x11 and desktop graphics libraries; file dialogs use an XDG desktop portal. Physical keyboard/mouse input, native file-dialog choices, Windows native-window interaction, screen readers, large-document performance and compatibility with other OS/distribution versions remain unverified. No installer or automatic updater was added. Research tooling was unchanged and `npm test` was not rerun.
+
 ## Canvas and performance (18 October 2026)
 
 Contract: [canvas and performance increment](implementation-process.md#canvas-and-performance-increment--18-october-2026). Baseline `1ecd3b8`. Environment: Linux x86_64 cloud container, Rust 1.97.0, Xvfb with Mesa; not the macOS reference platform.
@@ -224,6 +252,7 @@ The baseline drag column already includes snapping work in the current build (sn
 - `tests/performance.rs`: revisions through undo/redo and no-op commits; undoing to the saved state needs no unsaved-changes prompt; a 10,000-layer document builds fewer than 100 layer rows, and select-all, toggle, delete and undo keep the selection consistent.
 - `tests/canvas.rs`, simulated egui input at 1380×860 and 960×640: marquee selection with hidden/locked exclusion, Shift-add and no history; top-left, right-edge, top-edge, minimum-size and aspect-locked resize, each one undo step; group scaling of two layers with hidden/locked layers unchanged; snapped move and resize land exactly on a target edge and draw a guide; ⌘/Ctrl and the toggle bypass snapping; a hidden layer is not a target while the same layer visible is. Geometry unit checks cover the snapping, resize and mapping helpers.
 - `tests/editor.rs` `native_editor_renders_at_supported_sizes_and_keyboard_actions_use_history` checks exact pointer alignment; it now turns snapping off because its drag ends within 5 points of another layer's edge, which snapping intentionally changes.
+- After merging `main` at `7220e9d` (release packaging, portable recent-file fixture), formatting, warnings-denied Clippy, all 53 tests, the release build and native `editor`/`selected`/`arranged` renders were rerun on the merged tree and pass.
 - Native rendering: `xvfb-run cargo run --locked --release --example verify_native -- target/verification/canvas selected|arranged 1380x860` rendered through OpenGL (Mesa). Screenshots were inspected: four corner handles on the single selection and on the group bounds, handles on the group outline, crisp per-layer outlines, the magnet toggle in the tool rail. The example's model workflows pass.
 
 ### Not verified

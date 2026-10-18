@@ -174,14 +174,21 @@ mod tests {
         assert!(Recents::load(store.clone()).files().is_empty());
         std::fs::write(
             &store,
-            br#"{"version":1,"files":["relative.crumbs","/x.crumbs"]}"#,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1, "files": ["relative.crumbs", a]
+            }))
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(
             Recents::load(store.clone()).files(),
-            [PathBuf::from("/x.crumbs")]
+            std::slice::from_ref(&a)
         );
-        std::fs::write(&store, br#"{"version":2,"files":["/x.crumbs"]}"#).unwrap();
+        std::fs::write(
+            &store,
+            serde_json::to_vec(&serde_json::json!({"version": 2, "files": [a]})).unwrap(),
+        )
+        .unwrap();
         assert!(Recents::load(store).files().is_empty());
     }
 
