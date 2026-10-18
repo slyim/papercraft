@@ -5,6 +5,7 @@ use papercraft::{
     app::{PaperCraftApp, View},
     document::{Align, Axis, ColorTarget, Document, Editor, NodeKind},
     recents::Recents,
+    ui,
 };
 
 /// Three 40×40 rectangles at x = 0, 100, 300 (y = 10, 50, 30) plus one hidden and one
@@ -713,7 +714,11 @@ fn inspector_width_is_stable_for_bound_and_multiple_selections() {
             }
             let width =
                 egui::PanelState::load(&ctx, egui::Id::new("inspector")).map(|s| s.size().x);
-            assert_eq!(width, Some(280.0), "{size:?} selection {selection:?}");
+            assert_eq!(
+                width,
+                Some(ui::INSPECTOR),
+                "{size:?} selection {selection:?}"
+            );
         }
         // Theme tab with the token editor open keeps the left panel width.
         let ctx = egui::Context::default();
@@ -725,6 +730,6 @@ fn inspector_width_is_stable_for_bound_and_multiple_selections() {
             frame(&ctx, &mut app, size, egui::Modifiers::NONE, Vec::new());
         }
         let width = egui::PanelState::load(&ctx, egui::Id::new("layers")).map(|s| s.size().x);
-        assert_eq!(width, Some(180.0), "{size:?} theme tab");
+        assert_eq!(width, Some(ui::SIDEBAR), "{size:?} theme tab");
     }
 }

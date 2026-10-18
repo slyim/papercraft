@@ -3,7 +3,10 @@ use crate::document::{
 };
 use crate::recents::Recents;
 use crate::snap::{self, Frame, Guide, Handle, SNAP_DISTANCE, Side, Snapper};
-use crate::ui::{self, ACCENT, BODY, BORDER, CONTROL, ROW, Row, SHELL, TEXT, TEXT_DIM};
+use crate::ui::{
+    self, ACCENT, BODY, BORDER, CAPTION, CONTROL, ICON, ICON_SMALL, ROW, Row, SHELL, SPACE_L,
+    SPACE_M, SPACE_S, SPACE_XS, TEXT, TEXT_DIM,
+};
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Painter, Pos2, Rect, RichText, Sense, Stroke,
     StrokeKind, Vec2, pos2, vec2,
@@ -15,7 +18,7 @@ mod dashboard;
 
 /// Left inset of the tab strip. On macOS the strip shares the title bar with the window
 /// controls.
-const TAB_INSET: f32 = if cfg!(target_os = "macos") { 80.0 } else { 8.0 };
+const TAB_INSET: f32 = if cfg!(target_os = "macos") { 72.0 } else { 8.0 };
 /// Default geometry for a layer placed with a single click.
 const CLICK_SIZE: Vec2 = vec2(220.0, 80.0);
 /// Snapping guide color; distinct from the selection accent.
@@ -234,15 +237,15 @@ impl PaperCraftApp {
         ctx.set_visuals(egui::Visuals::dark());
         ctx.global_style_mut(|s| {
             s.spacing.item_spacing = vec2(8.0, 8.0);
-            s.spacing.button_padding = vec2(10.0, 6.0);
+            s.spacing.button_padding = vec2(SPACE_S, SPACE_XS);
             s.spacing.interact_size.y = ROW;
-            s.spacing.menu_margin = egui::Margin::same(6);
+            s.spacing.menu_margin = egui::Margin::same(4);
             let v = &mut s.visuals;
             v.panel_fill = SHELL;
             v.window_fill = SHELL;
             v.window_stroke = Stroke::new(1.0, BORDER);
-            v.window_corner_radius = egui::CornerRadius::same(10);
-            v.menu_corner_radius = egui::CornerRadius::same(8);
+            v.window_corner_radius = egui::CornerRadius::same(ui::RADIUS_LARGE);
+            v.menu_corner_radius = egui::CornerRadius::same(ui::RADIUS_LARGE);
             v.extreme_bg_color = Color32::from_rgb(30, 30, 30);
             v.faint_bg_color = Color32::from_rgb(46, 46, 46);
             v.override_text_color = None;
@@ -271,9 +274,9 @@ impl PaperCraftApp {
             s.text_styles
                 .insert(egui::TextStyle::Button, FontId::proportional(BODY));
             s.text_styles
-                .insert(egui::TextStyle::Small, FontId::proportional(12.0));
+                .insert(egui::TextStyle::Small, FontId::proportional(CAPTION));
             s.text_styles
-                .insert(egui::TextStyle::Heading, FontId::proportional(17.0));
+                .insert(egui::TextStyle::Heading, FontId::proportional(SPACE_L));
         });
     }
 
@@ -838,7 +841,7 @@ impl PaperCraftApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
         }
         ui.horizontal_centered(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.spacing_mut().item_spacing.x = SPACE_XS;
             ui.add_space(TAB_INSET);
             if tab(
                 ui,
@@ -855,20 +858,13 @@ impl PaperCraftApp {
                 self.cards.invalidate();
             }
             if self.document_open {
-                let (rect, _) = ui.allocate_exact_size(vec2(9.0, 18.0), Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(vec2(SPACE_S, SPACE_L), Sense::hover());
                 ui.painter()
                     .vline(rect.center().x, rect.y_range(), Stroke::new(1.0, BORDER));
                 let name = self.editor.document.name.clone();
                 let (response, close) = tab(ui, icon::FILE, &name, self.view == View::Editor, true);
+                // Unsaved changes show in the tooltip and window title, not as a tab marker.
                 let dirty = self.dirty();
-                if dirty {
-                    // Unsaved marker before the close control.
-                    ui.painter().circle_filled(
-                        pos2(response.rect.right() - 34.0, response.rect.center().y),
-                        3.0,
-                        TEXT_DIM,
-                    );
-                }
                 let response = response.on_hover_text(match (&self.path, dirty) {
                     (Some(path), true) => format!("{} · unsaved changes", path.display()),
                     (Some(path), false) => path.display().to_string(),
@@ -880,12 +876,12 @@ impl PaperCraftApp {
                     self.view = View::Editor;
                 }
             }
-            ui.add_space(6.0);
+            ui.add_space(SPACE_XS);
             if ui::icon_button(
                 ui,
                 icon::PLUS,
-                vec2(26.0, 26.0),
-                17.0,
+                vec2(ROW, ROW),
+                ICON,
                 false,
                 true,
                 "New file",
@@ -901,20 +897,20 @@ impl PaperCraftApp {
         let side = egui::Frame::NONE.fill(SHELL);
         if self.left_open {
             egui::Panel::left("layers")
-                .default_size(180.0)
-                .size_range(180.0..=320.0)
+                .default_size(ui::SIDEBAR)
+                .size_range(ui::SIDEBAR..=320.0)
                 .resizable(true)
                 .frame(side)
                 .show(ui, |ui| self.left_panel(ui, ctx));
         }
         egui::Panel::left("tools")
-            .exact_size(40.0)
+            .exact_size(ui::RAIL)
             .resizable(false)
             .frame(side)
             .show(ui, |ui| self.tool_rail(ui));
         egui::Panel::right("inspector")
-            .default_size(280.0)
-            .size_range(260.0..=360.0)
+            .default_size(ui::INSPECTOR)
+            .size_range(ui::INSPECTOR..=320.0)
             .resizable(true)
             .frame(side)
             .show(ui, |ui| self.right_panel(ui));
@@ -990,28 +986,32 @@ impl PaperCraftApp {
 
     /// File name with the file menu, as shown at the top of the layer panel.
     fn file_name_button(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, width: f32) {
-        let (rect, response) = ui.allocate_exact_size(vec2(width, ROW + 4.0), Sense::click());
+        let (rect, response) = ui.allocate_exact_size(vec2(width, ROW), Sense::click());
         response
             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "File menu"));
         if response.hovered() || egui::Popup::is_id_open(ctx, egui::Id::new("file_menu")) {
             ui.painter().rect_filled(rect, ui::RADIUS, ui::HOVER);
         }
         ui.painter().text(
-            pos2(rect.left() + 12.0, rect.center().y),
+            pos2(rect.left() + SPACE_S + ICON_SMALL / 2.0, rect.center().y),
             Align2::CENTER_CENTER,
             icon::COOKIE,
-            ui::icon_font(17.0),
+            ui::icon_font(ICON_SMALL),
             TEXT_DIM,
         );
+        let text_x = SPACE_S + ICON_SMALL + SPACE_S;
         let galley = ui::truncated(
             ui,
             &self.editor.document.name,
-            15.0,
+            BODY,
             TEXT,
-            rect.width() - 36.0,
+            rect.width() - text_x - SPACE_S,
         );
         ui.painter().galley(
-            pos2(rect.left() + 32.0, rect.center().y - galley.size().y / 2.0),
+            pos2(
+                rect.left() + text_x,
+                rect.center().y - galley.size().y / 2.0,
+            ),
             galley,
             TEXT,
         );
@@ -1026,17 +1026,17 @@ impl PaperCraftApp {
         let width = ui.available_width();
         // File header.
         ui.allocate_ui_with_layout(
-            vec2(width, 42.0),
+            vec2(width, ui::SPACE_2XL + SPACE_S),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-                ui.add_space(8.0);
-                self.file_name_button(ui, ctx, width - 52.0);
-                ui.add_space(4.0);
+                ui.add_space(SPACE_S);
+                self.file_name_button(ui, ctx, width - 3.0 * SPACE_S - ROW);
+                ui.add_space(SPACE_XS);
                 if ui::icon_button(
                     ui,
                     icon::SIDEBAR_SIMPLE,
-                    vec2(28.0, 28.0),
-                    18.0,
+                    vec2(ROW, ROW),
+                    ICON,
                     false,
                     true,
                     "Hide sidebar",
@@ -1048,12 +1048,12 @@ impl PaperCraftApp {
             },
         );
         ui::hline(ui);
-        ui.add_space(14.0);
+        ui.add_space(SPACE_M);
         if segmented(ui, self.theme) {
             self.flush_properties();
             self.theme = !self.theme;
         }
-        ui.add_space(10.0);
+        ui.add_space(SPACE_S);
         if self.theme {
             self.status_footer(ui);
             self.theme_panel(ui);
@@ -1068,7 +1068,6 @@ impl PaperCraftApp {
         );
         if self.pages_open
             && Row::new(icon::FILE, "Page 1")
-                .indent(17.0)
                 .right(Some(icon::CHECK))
                 .show(ui)
                 .on_hover_text("Current page · select the artboard")
@@ -1117,7 +1116,6 @@ impl PaperCraftApp {
                         icon::SQUARE
                     };
                     Row::new(glyph, &name)
-                        .indent(17.0)
                         .selected(selected)
                         .dim(hidden)
                         .reserve(if hovered || hidden || locked {
@@ -1125,18 +1123,18 @@ impl PaperCraftApp {
                         } else {
                             0.0
                         })
-                        .paint(ui, rect, &response, 8.0);
+                        .paint(ui, rect, &response, SPACE_S);
                     let mut toggle = |offset: f32, glyph: &str, label: &str| {
                         let button = Rect::from_center_size(
                             pos2(rect.right() - offset, rect.center().y),
-                            vec2(22.0, 22.0),
+                            vec2(20.0, 20.0),
                         );
                         ui::icon_button_at(
                             ui,
                             button,
                             egui::Id::new(("layer_toggle", id, offset as i32)),
                             glyph,
-                            15.0,
+                            ICON_SMALL,
                             false,
                             true,
                             label,
@@ -1146,7 +1144,7 @@ impl PaperCraftApp {
                     let mut changed = None;
                     if (hovered || hidden)
                         && toggle(
-                            42.0,
+                            40.0,
                             if hidden { icon::EYE_SLASH } else { icon::EYE },
                             if hidden { "Show layer" } else { "Hide layer" },
                         )
@@ -1155,7 +1153,7 @@ impl PaperCraftApp {
                     }
                     if (hovered || locked)
                         && toggle(
-                            20.0,
+                            SPACE_L + SPACE_XS,
                             if locked { icon::LOCK } else { icon::LOCK_OPEN },
                             if locked { "Unlock layer" } else { "Lock layer" },
                         )
@@ -1188,9 +1186,9 @@ impl PaperCraftApp {
                     }
                 }
                 if self.editor.document.nodes.is_empty() {
-                    ui.add_space(8.0);
+                    ui.add_space(SPACE_S);
                     egui::Frame::NONE
-                        .inner_margin(egui::Margin::symmetric(17, 0))
+                        .inner_margin(egui::Margin::symmetric(16, 0))
                         .show(ui, |ui| {
                             ui.label(
                                 RichText::new(
@@ -1213,7 +1211,7 @@ impl PaperCraftApp {
             }))
             .show_separator_line(false)
             .show(ui, |ui| {
-                ui.label(RichText::new(&self.status).size(12.0).color(TEXT_DIM));
+                ui.label(RichText::new(&self.status).size(CAPTION).color(TEXT_DIM));
             });
     }
 
@@ -1259,14 +1257,14 @@ impl PaperCraftApp {
                             )
                         });
                         Row::new("", &token.name)
-                            .indent(42.0)
+                            .indent(SPACE_L + ICON_SMALL + SPACE_S)
                             .selected(selected)
-                            .paint(ui, rect, &response, 8.0);
+                            .paint(ui, rect, &response, SPACE_S);
                         swatch(
                             ui.painter(),
                             Rect::from_center_size(
-                                pos2(rect.left() + 28.0, rect.center().y),
-                                vec2(14.0, 14.0),
+                                pos2(rect.left() + SPACE_L + ICON_SMALL / 2.0, rect.center().y),
+                                vec2(ICON_SMALL, ICON_SMALL),
                             ),
                             token.value,
                         );
@@ -1282,11 +1280,11 @@ impl PaperCraftApp {
                             .inner_margin(egui::Margin {
                                 left: 16,
                                 right: 12,
-                                top: 6,
-                                bottom: 10,
+                                top: 8,
+                                bottom: 12,
                             })
                             .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                                ui.spacing_mut().item_spacing = vec2(SPACE_S, SPACE_S);
                                 let name_id = egui::Id::new(("token_name", token.id));
                                 let mut name = ui
                                     .data(|d| d.get_temp::<String>(name_id))
@@ -1299,9 +1297,9 @@ impl PaperCraftApp {
                                                 egui::Frame::NONE
                                                     .fill(CONTROL)
                                                     .corner_radius(ui::RADIUS)
-                                                    .inner_margin(egui::Margin::symmetric(8, 6)),
+                                                    .inner_margin(egui::Margin::symmetric(8, 4)),
                                             )
-                                            .margin(egui::Margin::symmetric(8, 6))
+                                            .margin(egui::Margin::symmetric(8, 4))
                                             .char_limit(64)
                                             .desired_width(f32::INFINITY),
                                     )
@@ -1334,7 +1332,7 @@ impl PaperCraftApp {
                                         1 => "Used by 1 property".to_string(),
                                         n => format!("Used by {n} properties"),
                                     })
-                                    .size(12.0)
+                                    .size(CAPTION)
                                     .color(TEXT_DIM),
                                 );
                                 if ui
@@ -1351,7 +1349,7 @@ impl PaperCraftApp {
                     if tokens.is_empty() {
                         ui.add_space(8.0);
                         egui::Frame::NONE
-                            .inner_margin(egui::Margin::symmetric(17, 0))
+                            .inner_margin(egui::Margin::symmetric(16, 0))
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new(
@@ -1404,7 +1402,7 @@ impl PaperCraftApp {
     }
 
     fn floating_file_header(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let anchor = ui.max_rect().left_top() + vec2(10.0, 10.0);
+        let anchor = ui.max_rect().left_top() + vec2(SPACE_S, SPACE_S);
         egui::Area::new(egui::Id::new("floating_file"))
             .fixed_pos(anchor)
             .order(egui::Order::Foreground)
@@ -1412,17 +1410,17 @@ impl PaperCraftApp {
                 egui::Frame::NONE
                     .fill(SHELL)
                     .stroke(Stroke::new(1.0, BORDER))
-                    .corner_radius(8)
+                    .corner_radius(ui::RADIUS_LARGE)
                     .inner_margin(egui::Margin::same(4))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            self.file_name_button(ui, ctx, 168.0);
+                            ui.spacing_mut().item_spacing.x = SPACE_XS;
+                            self.file_name_button(ui, ctx, ui::SIDEBAR - 2.0 * SPACE_S - ROW);
                             if ui::icon_button(
                                 ui,
                                 icon::SIDEBAR_SIMPLE,
-                                vec2(28.0, 28.0),
-                                18.0,
+                                vec2(ROW, ROW),
+                                ICON,
                                 false,
                                 true,
                                 "Show sidebar",
@@ -1437,8 +1435,8 @@ impl PaperCraftApp {
     }
 
     fn tool_rail(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
-        ui.add_space(6.0);
+        ui.spacing_mut().item_spacing = vec2(0.0, SPACE_XS);
+        ui.add_space(SPACE_XS);
         ui.vertical_centered(|ui| {
             let groups: [&[(Tool, &str, &str)]; 2] = [
                 &[
@@ -1452,17 +1450,14 @@ impl PaperCraftApp {
             ];
             for (index, group) in groups.into_iter().enumerate() {
                 if index > 0 {
-                    ui.add_space(10.0);
-                    let (rect, _) = ui.allocate_exact_size(vec2(18.0, 1.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 0.0, BORDER);
-                    ui.add_space(10.0);
+                    rail_separator(ui);
                 }
                 for &(tool, glyph, label) in group {
                     if ui::icon_button(
                         ui,
                         glyph,
-                        vec2(32.0, 32.0),
-                        20.0,
+                        vec2(ui::SPACE_2XL, ui::SPACE_2XL),
+                        ICON,
                         self.tool == tool,
                         true,
                         label,
@@ -1473,10 +1468,7 @@ impl PaperCraftApp {
                     }
                 }
             }
-            ui.add_space(10.0);
-            let (rect, _) = ui.allocate_exact_size(vec2(18.0, 1.0), Sense::hover());
-            ui.painter().rect_filled(rect, 0.0, BORDER);
-            ui.add_space(10.0);
+            rail_separator(ui);
             let label = if self.snapping {
                 "Snapping on · hold ⌘/Ctrl while dragging to bypass"
             } else {
@@ -1485,8 +1477,8 @@ impl PaperCraftApp {
             if ui::icon_button(
                 ui,
                 icon::MAGNET,
-                vec2(32.0, 32.0),
-                20.0,
+                vec2(ui::SPACE_2XL, ui::SPACE_2XL),
+                ICON,
                 self.snapping,
                 true,
                 label,
@@ -1502,16 +1494,16 @@ impl PaperCraftApp {
         ui.spacing_mut().item_spacing = Vec2::ZERO;
         let width = ui.available_width();
         ui.allocate_ui_with_layout(
-            vec2(width, 49.0),
+            vec2(width, ui::SPACE_2XL + SPACE_S),
             egui::Layout::right_to_left(egui::Align::Center),
             |ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                ui.add_space(12.0);
+                ui.spacing_mut().item_spacing.x = SPACE_XS;
+                ui.add_space(SPACE_S);
                 let export = ui
                     .add(
                         egui::Button::new(RichText::new("Export").size(BODY).color(TEXT))
                             .fill(CONTROL)
-                            .min_size(vec2(52.0, ROW)),
+                            .min_size(vec2(0.0, ROW)),
                     )
                     .on_hover_text("Export artboard as HTML or SVG");
                 egui::Popup::menu(&export).show(|ui| self.export_menu(ui));
@@ -1531,7 +1523,7 @@ impl PaperCraftApp {
                     )
                     .on_hover_text("Zoom");
                 egui::Popup::menu(&zoom).show(|ui| {
-                    ui.set_min_width(170.0);
+                    ui.set_min_width(168.0);
                     let item = |ui: &mut egui::Ui, label: &str, key: &str| {
                         ui.add(
                             egui::Button::new(label)
@@ -1559,7 +1551,7 @@ impl PaperCraftApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                ui.spacing_mut().item_spacing = vec2(SPACE_S, SPACE_S);
                 self.inspector(ui);
             });
     }
@@ -1581,13 +1573,13 @@ impl PaperCraftApp {
                     left: 12,
                     right: 12,
                     top: 0,
-                    bottom: 14,
+                    bottom: 12,
                 })
                 .show(ui, |ui| add(ui));
             ui::hline(ui);
         };
         // TextEdit sizes its text from `margin`, so the frame margin must match it.
-        let text_margin = egui::Margin::symmetric(8, 6);
+        let text_margin = egui::Margin::symmetric(8, 4);
         let text_frame = egui::Frame::NONE
             .fill(CONTROL)
             .corner_radius(ui::RADIUS)
@@ -1622,13 +1614,13 @@ impl PaperCraftApp {
                                 "layers are"
                             }
                         ))
-                        .size(12.0)
+                        .size(CAPTION)
                         .color(TEXT_DIM),
                     );
                 }
                 ui.label(
                     RichText::new("Select one layer to edit its properties.")
-                        .size(12.0)
+                        .size(CAPTION)
                         .color(TEXT_DIM),
                 );
             });
@@ -1664,7 +1656,7 @@ impl PaperCraftApp {
             );
             ui.add_enabled_ui(!locked, |ui| {
                 section(ui, "Position and size", &mut |ui| {
-                    let half = (ui.available_width() - 8.0) / 2.0;
+                    let half = (ui.available_width() - SPACE_S) / 2.0;
                     let range = -100_000.0..=100_000.0;
                     ui.horizontal(|ui| {
                         let r = ui::number_field(ui, "X", &mut node.x, range.clone(), half);
@@ -1754,7 +1746,7 @@ impl PaperCraftApp {
                     )
                     .on_hover_text("Document name")
                     .lost_focus();
-                let half = (ui.available_width() - 8.0) / 2.0;
+                let half = (ui.available_width() - SPACE_S) / 2.0;
                 ui.horizontal(|ui| {
                     let r = ui::number_field(ui, "W", &mut document.width, 1.0..=100_000.0, half);
                     finish |= r.drag_stopped() || r.lost_focus();
@@ -1772,7 +1764,7 @@ impl PaperCraftApp {
                 );
             });
             egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(16, 14))
+                .inner_margin(egui::Margin::same(12))
                 .show(ui, |ui| {
                     ui.label(
                         RichText::new(
@@ -1811,13 +1803,13 @@ impl PaperCraftApp {
         let mut distribute = None;
         egui::Frame::NONE
             .inner_margin(egui::Margin {
-                left: 10,
+                left: 12,
                 right: 12,
                 top: 0,
-                bottom: 14,
+                bottom: 12,
             })
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = vec2(2.0, 8.0);
+                ui.spacing_mut().item_spacing = vec2(SPACE_XS, SPACE_S);
                 let reason = match arrangeable {
                     0 => "Hidden and locked layers are not arranged",
                     1 => "One layer aligns to the artboard",
@@ -1844,8 +1836,8 @@ impl PaperCraftApp {
                         if ui::icon_button(
                             ui,
                             glyph,
-                            vec2(30.0, 30.0),
-                            18.0,
+                            vec2(ROW, ROW),
+                            ICON,
                             false,
                             arrangeable >= 1,
                             &label,
@@ -1873,8 +1865,8 @@ impl PaperCraftApp {
                         if ui::icon_button(
                             ui,
                             glyph,
-                            vec2(30.0, 30.0),
-                            18.0,
+                            vec2(ROW, ROW),
+                            ICON,
                             false,
                             arrangeable >= 3,
                             &label,
@@ -1911,10 +1903,10 @@ impl PaperCraftApp {
         let any_hidden = selected.iter().any(|(_, hidden)| *hidden);
         ui::section_title(ui, if single { "Layer" } else { "Layers" });
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_space(10.0);
+            ui.spacing_mut().item_spacing.x = SPACE_XS;
+            ui.add_space(SPACE_M);
             let action = |ui: &mut egui::Ui, glyph: &str, label: &str, enabled: bool| {
-                ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, false, enabled, label).clicked()
+                ui::icon_button(ui, glyph, vec2(ROW, ROW), ICON, false, enabled, label).clicked()
             };
             let order = single && any_unlocked;
             let order_label = |label: &str| {
@@ -1945,7 +1937,7 @@ impl PaperCraftApp {
                 self.result(r);
             }
             let toggle = |ui: &mut egui::Ui, glyph, label, on| {
-                ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, on, true, label).clicked()
+                ui::icon_button(ui, glyph, vec2(ROW, ROW), ICON, on, true, label).clicked()
             };
             let hide_label = if any_hidden { "Show" } else { "Hide" };
             let hide_glyph = if any_hidden {
@@ -2061,8 +2053,10 @@ impl PaperCraftApp {
         let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         let canvas = response.rect;
         if self.fit {
-            self.zoom = ((canvas.width() - 110.0) / self.editor.document.width)
-                .min((canvas.height() - 130.0) / self.editor.document.height)
+            // Leave a 64 pt margin around the fitted artboard.
+            let margin = 2.0 * ui::SPACE_3XL;
+            self.zoom = ((canvas.width() - margin) / self.editor.document.width)
+                .min((canvas.height() - margin) / self.editor.document.height)
                 .clamp(0.05, 2.0);
             self.pan = Vec2::ZERO;
             self.fit = false;
@@ -2119,13 +2113,13 @@ impl PaperCraftApp {
         let origin = canvas.center() - size * self.zoom / 2.0 + self.pan;
         let artboard = Rect::from_min_size(origin, size * self.zoom);
         painter.text(
-            artboard.min - vec2(0.0, 14.0),
+            artboard.min - vec2(0.0, SPACE_M),
             Align2::LEFT_CENTER,
             format!(
                 "{}   {} × {}",
                 self.editor.document.name, self.editor.document.width, self.editor.document.height
             ),
-            FontId::proportional(12.0),
+            FontId::proportional(CAPTION),
             TEXT_DIM,
         );
         paint_document(
@@ -2170,10 +2164,10 @@ impl PaperCraftApp {
                 StrokeKind::Outside,
             );
             painter.text(
-                bounds.center_bottom() + vec2(0.0, 20.0),
+                bounds.center_bottom() + vec2(0.0, SPACE_L),
                 Align2::CENTER_CENTER,
                 format!("{:.0} × {:.0}", right - left, bottom - top),
-                FontId::proportional(11.0),
+                FontId::proportional(CAPTION),
                 ACCENT,
             );
         }
@@ -2190,7 +2184,7 @@ impl PaperCraftApp {
             for handle in Handle::ALL.iter().filter(|h| h.is_corner()) {
                 let [x, y] = handle.point(*frame);
                 let center = origin + vec2(x, y) * self.zoom;
-                let square = Rect::from_center_size(center, vec2(7.0, 7.0));
+                let square = Rect::from_center_size(center, vec2(SPACE_S, SPACE_S));
                 painter.rect_filled(square, 1.0, SHELL);
                 painter.rect_stroke(square, 1.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
             }
@@ -2205,10 +2199,10 @@ impl PaperCraftApp {
             }
             if let Some(node) = self.editor.selected_node() {
                 painter.text(
-                    rect.center_bottom() + vec2(0.0, 17.0),
+                    rect.center_bottom() + vec2(0.0, SPACE_L),
                     Align2::CENTER_CENTER,
                     format!("{:.0} × {:.0}", node.width, node.height),
-                    FontId::proportional(11.0),
+                    FontId::proportional(CAPTION),
                     ACCENT,
                 );
             }
@@ -2569,9 +2563,11 @@ fn tab(
     closable: bool,
 ) -> (egui::Response, Option<egui::Response>) {
     let text = ui::truncated(ui, label, BODY, TEXT, 180.0);
-    let close_space = if closable { 44.0 } else { 0.0 };
-    let width = (34.0 + text.size().x + 12.0 + close_space).max(if closable { 150.0 } else { 0.0 });
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 27.0), Sense::click());
+    let text_x = SPACE_S + ICON_SMALL + SPACE_S;
+    let close_space = if closable { ROW } else { 0.0 };
+    let width =
+        (text_x + text.size().x + SPACE_M + close_space).max(if closable { 120.0 } else { 0.0 });
+    let (rect, response) = ui.allocate_exact_size(vec2(width, ROW), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
     });
@@ -2584,26 +2580,29 @@ fn tab(
     }
     let color = if selected || hovered { TEXT } else { TEXT_DIM };
     ui.painter().text(
-        pos2(rect.left() + 17.0, rect.center().y),
+        pos2(rect.left() + SPACE_S + ICON_SMALL / 2.0, rect.center().y),
         Align2::CENTER_CENTER,
         glyph,
-        ui::icon_font(17.0),
+        ui::icon_font(ICON_SMALL),
         color,
     );
     ui.painter().galley(
-        pos2(rect.left() + 34.0, rect.center().y - text.size().y / 2.0),
+        pos2(rect.left() + text_x, rect.center().y - text.size().y / 2.0),
         text,
         color,
     );
-    let close = closable.then(|| {
-        let button =
-            Rect::from_center_size(pos2(rect.right() - 16.0, rect.center().y), vec2(20.0, 20.0));
+    // Like the other tabs, the close control appears while the tab is hovered.
+    let close = (closable && hovered).then(|| {
+        let button = Rect::from_center_size(
+            pos2(rect.right() - SPACE_M, rect.center().y),
+            vec2(SPACE_L, SPACE_L),
+        );
         ui::icon_button_at(
             ui,
             button,
             egui::Id::new("close_file_tab"),
             icon::X,
-            14.0,
+            ICON_SMALL,
             false,
             true,
             "Close file",
@@ -2614,18 +2613,19 @@ fn tab(
 
 /// Design/Theme switch. Returns `true` when the inactive segment was clicked.
 fn segmented(ui: &mut egui::Ui, theme: bool) -> bool {
-    let width = ui.available_width() - 24.0;
+    let width = ui.available_width() - 2.0 * SPACE_S;
     ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), Sense::hover());
-        ui.painter().rect_filled(rect, 7, Color32::from_gray(53));
+        ui.add_space(SPACE_S);
+        let (rect, _) = ui.allocate_exact_size(vec2(width, ROW), Sense::hover());
+        ui.painter()
+            .rect_filled(rect, ui::RADIUS, Color32::from_gray(53));
         let (left, right) = rect.split_left_right_at_fraction(0.5);
         let selected = if theme { right } else { left }.shrink(1.0);
         ui.painter()
-            .rect_filled(selected, 6, Color32::from_gray(63));
+            .rect_filled(selected, ui::RADIUS, Color32::from_gray(63));
         ui.painter().rect_stroke(
             selected,
-            6,
+            ui::RADIUS,
             Stroke::new(1.0, Color32::from_gray(72)),
             StrokeKind::Inside,
         );
@@ -2672,8 +2672,8 @@ fn color_property(
     let width = ui.available_width();
     let bound = binding.and_then(|id| tokens.iter().find(|t| t.id == id));
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let field_width = width - 32.0;
+        ui.spacing_mut().item_spacing.x = SPACE_XS;
+        let field_width = width - ROW - SPACE_XS;
         ui.allocate_ui_with_layout(
             vec2(field_width, ROW),
             egui::Layout::left_to_right(egui::Align::Center),
@@ -2682,18 +2682,21 @@ fn color_property(
                 match bound {
                     Some(token) => {
                         ui::field_frame().show(ui, |ui| {
-                            ui.set_width(field_width - 16.0);
+                            ui.set_width(field_width - SPACE_L);
                             ui.set_height(ROW);
                             ui.horizontal_centered(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-                                let (rect, _) =
-                                    ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                                ui.spacing_mut().item_spacing.x = SPACE_S;
+                                let (rect, _) = ui.allocate_exact_size(
+                                    vec2(ICON_SMALL, ICON_SMALL),
+                                    Sense::hover(),
+                                );
                                 swatch(ui.painter(), rect, token.value);
-                                // Leave room for the spacing and the 22 pt detach button.
-                                let name_width = (ui.available_width() - 30.0).max(0.0);
+                                // Leave room for the spacing and the 16 pt detach button.
+                                let name_width =
+                                    (ui.available_width() - SPACE_L - SPACE_S).max(0.0);
                                 let galley = ui::truncated(ui, &token.name, BODY, TEXT, name_width);
                                 let (rect, _) = ui.allocate_exact_size(
-                                    vec2(name_width, ROW - 6.0),
+                                    vec2(name_width, ROW - SPACE_S),
                                     Sense::hover(),
                                 );
                                 ui.painter().galley(
@@ -2704,8 +2707,8 @@ fn color_property(
                                 if ui::icon_button(
                                     ui,
                                     icon::LINK_BREAK,
-                                    vec2(22.0, 22.0),
-                                    15.0,
+                                    vec2(SPACE_L, SPACE_L),
+                                    ICON_SMALL,
                                     false,
                                     enabled,
                                     "Detach token · keeps the current color",
@@ -2724,20 +2727,21 @@ fn color_property(
         let menu = ui::icon_button(
             ui,
             icon::CIRCLES_FOUR,
-            vec2(28.0, 28.0),
-            17.0,
+            vec2(ROW, ROW),
+            ICON,
             bound.is_some(),
             enabled,
             "Color tokens",
         );
         egui::Popup::menu(&menu).id(id.with("tokens")).show(|ui| {
-            ui.set_min_width(210.0);
+            ui.set_min_width(208.0);
             if tokens.is_empty() {
                 ui.label(RichText::new("No color tokens yet").color(TEXT_DIM));
             }
             for token in tokens {
                 ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                    let (rect, _) =
+                        ui.allocate_exact_size(vec2(ICON_SMALL, ICON_SMALL), Sense::hover());
                     swatch(ui.painter(), rect, token.value);
                     let current = binding == Some(token.id);
                     if ui
@@ -2767,10 +2771,10 @@ fn color_property(
 
 /// Color swatch with a faint outline so light and transparent colors stay visible.
 fn swatch(painter: &Painter, rect: Rect, value: [u8; 4]) {
-    painter.rect_filled(rect, 3, color(value));
+    painter.rect_filled(rect, 2, color(value));
     painter.rect_stroke(
         rect,
-        3,
+        2,
         Stroke::new(1.0, Color32::from_white_alpha(46)),
         StrokeKind::Inside,
     );
@@ -2794,37 +2798,50 @@ fn section_toggle(
     }
     let hovered = response.hovered();
     ui.painter().text(
-        pos2(rect.left() + 9.0, rect.center().y),
+        pos2(rect.left() + SPACE_S + ICON_SMALL / 2.0, rect.center().y),
         Align2::CENTER_CENTER,
         if *open {
             icon::CARET_DOWN
         } else {
             icon::CARET_RIGHT
         },
-        ui::icon_font(12.0),
+        ui::icon_font(ICON_SMALL),
         if hovered { TEXT } else { TEXT_DIM },
     );
     ui.painter().text(
-        pos2(rect.left() + 20.0, rect.center().y),
+        pos2(
+            rect.left() + SPACE_S + ICON_SMALL + SPACE_XS,
+            rect.center().y,
+        ),
         Align2::LEFT_CENTER,
         title,
         ui::font(BODY),
         TEXT,
     );
     trailing.map(|(glyph, label, enabled)| {
-        let slot =
-            Rect::from_center_size(pos2(rect.right() - 19.0, rect.center().y), vec2(24.0, 24.0));
+        let slot = Rect::from_center_size(
+            pos2(rect.right() - SPACE_S - SPACE_M, rect.center().y),
+            vec2(ROW, ROW),
+        );
         ui::icon_button_at(
             ui,
             slot,
             egui::Id::new(("section_control", title)),
             glyph,
-            16.0,
+            ICON_SMALL,
             false,
             enabled,
             label,
         )
     })
+}
+
+/// Hairline between tool rail groups.
+fn rail_separator(ui: &mut egui::Ui) {
+    ui.add_space(SPACE_S);
+    let (rect, _) = ui.allocate_exact_size(vec2(SPACE_L, 1.0), Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, BORDER);
+    ui.add_space(SPACE_S);
 }
 
 impl eframe::App for PaperCraftApp {

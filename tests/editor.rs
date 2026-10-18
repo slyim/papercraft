@@ -3,6 +3,7 @@ use papercraft::{
     app::{PaperCraftApp, Tool, View},
     document::{DEFAULT_CANVAS, Document, Editor, NodeKind},
     recents::Recents,
+    ui,
 };
 
 #[test]
@@ -411,7 +412,7 @@ fn side_panels_keep_their_width_across_frames() {
             for _ in 0..8 {
                 run(&ctx, &mut app, size, Vec::new());
             }
-            assert_eq!(first, (Some(180.0), Some(280.0)));
+            assert_eq!(first, (Some(ui::SIDEBAR), Some(ui::INSPECTOR)));
             assert_eq!((width(&ctx, "layers"), width(&ctx, "inspector")), first);
         }
     }
@@ -479,6 +480,19 @@ fn dashboard_opens_recents_and_tabs_protect_unsaved_work() {
     assert_eq!(app.view, View::Editor);
 
     // Closing a clean document returns to the dashboard; the file stays in recents.
+    // The close control appears while the tab is hovered.
+    let output = run(&ctx, &mut app, size, Vec::new());
+    let tab = text_rect(&output, "Second document").expect("Document tab");
+    assert!(
+        text_rect(&output, egui_phosphor::regular::X).is_none(),
+        "Close appears only on hover"
+    );
+    run(
+        &ctx,
+        &mut app,
+        size,
+        vec![egui::Event::PointerMoved(tab.center())],
+    );
     let output = run(&ctx, &mut app, size, Vec::new());
     let close = text_rect(&output, egui_phosphor::regular::X).expect("Close tab button");
     click(&ctx, &mut app, size, close.center());

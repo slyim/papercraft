@@ -24,11 +24,39 @@ pub const TEXT_FAINT: Color32 = gray(112);
 /// Selection outlines on the canvas and focus.
 pub const ACCENT: Color32 = Color32::from_rgb(134, 178, 255);
 
-pub const BODY: f32 = 13.5;
-pub const ROW: f32 = 28.0;
-pub const RADIUS: u8 = 6;
+// Layout scale. Every inset, gap and control size in the shell sits on a 4-point grid
+// and is normally one of these steps; 1-point hairlines are the only exception.
+pub const SPACE_XS: f32 = 4.0;
+pub const SPACE_S: f32 = 8.0;
+pub const SPACE_M: f32 = 12.0;
+pub const SPACE_L: f32 = 16.0;
+pub const SPACE_XL: f32 = 24.0;
+pub const SPACE_2XL: f32 = 32.0;
+pub const SPACE_3XL: f32 = 64.0;
+
+/// Type scale: captions and metadata, body text, page headings.
+pub const CAPTION: f32 = 11.0;
+pub const BODY: f32 = 12.0;
+pub const HEADING: f32 = 20.0;
+/// Icons inside rows, tabs and fields.
+pub const ICON_SMALL: f32 = 12.0;
+/// Icons on standalone buttons and the tool rail.
+pub const ICON: f32 = 16.0;
+
+/// Height of rows, fields and buttons.
+pub const ROW: f32 = 24.0;
+/// Rows, fields and buttons.
+pub const RADIUS: u8 = 4;
+/// Cards, menus and windows.
+pub const RADIUS_LARGE: u8 = 8;
 /// Height of the window tab strip.
-pub const TAB_BAR: f32 = 41.0;
+pub const TAB_BAR: f32 = 28.0;
+/// Dashboard sidebar and editor layer panel.
+pub const SIDEBAR: f32 = 208.0;
+/// Editor property inspector.
+pub const INSPECTOR: f32 = 240.0;
+/// Editor tool rail.
+pub const RAIL: f32 = 40.0;
 
 pub fn app_icon() -> egui::IconData {
     eframe::icon_data::from_png_bytes(include_bytes!("../assets/papercraft-icon.png"))
@@ -166,7 +194,7 @@ impl<'a> Row<'a> {
             label,
             selected: false,
             dim: false,
-            indent: 12.0,
+            indent: SPACE_L,
             right: None,
             reserve: 0.0,
         }
@@ -208,15 +236,23 @@ impl<'a> Row<'a> {
         let x = rect.left() + self.indent;
         if !self.glyph.is_empty() {
             ui.painter().text(
-                egui::pos2(x + 8.0, rect.center().y),
+                egui::pos2(x + ICON_SMALL / 2.0, rect.center().y),
                 Align2::CENTER_CENTER,
                 self.glyph,
-                icon_font(16.0),
+                icon_font(ICON_SMALL),
                 if self.selected { TEXT } else { glyph_color },
             );
         }
-        let text_x = if self.glyph.is_empty() { x } else { x + 24.0 };
-        let right_space = if self.right.is_some() { 30.0 } else { 12.0 } + self.reserve;
+        let text_x = if self.glyph.is_empty() {
+            x
+        } else {
+            x + ICON_SMALL + SPACE_S
+        };
+        let right_space = if self.right.is_some() {
+            SPACE_2XL
+        } else {
+            SPACE_L
+        } + self.reserve;
         let max_width = (rect.right() - right_space - text_x).max(8.0);
         let galley = ui
             .painter()
@@ -233,10 +269,10 @@ impl<'a> Row<'a> {
         );
         if let Some(right) = self.right {
             ui.painter().text(
-                egui::pos2(rect.right() - inset - 14.0, rect.center().y),
+                egui::pos2(rect.right() - inset - SPACE_M, rect.center().y),
                 Align2::CENTER_CENTER,
                 right,
-                icon_font(15.0),
+                icon_font(ICON_SMALL),
                 TEXT,
             );
         }
@@ -249,7 +285,7 @@ impl<'a> Row<'a> {
         let selected = self.selected;
         response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, &label));
         if ui.is_rect_visible(rect) {
-            self.paint(ui, rect, &response, 8.0);
+            self.paint(ui, rect, &response, SPACE_S);
         }
         response
     }
@@ -270,12 +306,12 @@ pub fn truncated(
 
 /// Section title used in the editor side panels.
 pub fn section_title(ui: &mut Ui, title: &str) {
-    ui.add_space(14.0);
+    ui.add_space(SPACE_M);
     ui.horizontal(|ui| {
-        ui.add_space(16.0);
+        ui.add_space(SPACE_M);
         ui.label(egui::RichText::new(title).size(BODY).color(TEXT));
     });
-    ui.add_space(8.0);
+    ui.add_space(SPACE_S);
 }
 
 /// Filled field container matching the inspector controls.
@@ -319,17 +355,18 @@ pub fn color_field(ui: &mut Ui, id: egui::Id, color: &mut [u8; 4]) -> bool {
     let mut finished = false;
     let width = ui.available_width();
     field_frame().show(ui, |ui| {
-        ui.set_width(width - 16.0);
+        ui.set_width(width - SPACE_L);
         ui.set_height(ROW);
         ui.horizontal_centered(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            let (swatch, response) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::click());
+            ui.spacing_mut().item_spacing.x = SPACE_S;
+            let (swatch, response) =
+                ui.allocate_exact_size(vec2(ICON_SMALL, ICON_SMALL), Sense::click());
             response.widget_info(|| WidgetInfo::labeled(WidgetType::ColorButton, true, "Color"));
             let shown = Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
-            ui.painter().rect_filled(swatch, 3, shown);
+            ui.painter().rect_filled(swatch, 2, shown);
             ui.painter().rect_stroke(
                 swatch,
-                3,
+                2,
                 Stroke::new(1.0, Color32::from_white_alpha(46)),
                 StrokeKind::Inside,
             );
@@ -360,8 +397,8 @@ pub fn color_field(ui: &mut Ui, id: egui::Id, color: &mut [u8; 4]) -> bool {
             } else {
                 hex(*color)
             };
-            let opacity_width = 44.0;
-            let hex_width = (ui.available_width() - opacity_width - 8.0).max(48.0);
+            let opacity_width = 40.0;
+            let hex_width = (ui.available_width() - opacity_width - SPACE_S).max(48.0);
             let edit = ui.add(
                 egui::TextEdit::singleline(&mut text)
                     .id(edit_id)
@@ -387,9 +424,9 @@ pub fn color_field(ui: &mut Ui, id: egui::Id, color: &mut [u8; 4]) -> bool {
             let mut percent = (color[3] as f32 / 255.0 * 100.0).round();
             let drag = ui.scope(|ui| {
                 plain_drag_style(ui);
-                ui.spacing_mut().button_padding = vec2(2.0, 0.0);
+                ui.spacing_mut().button_padding = Vec2::ZERO;
                 ui.add_sized(
-                    [opacity_width, ROW - 6.0],
+                    [opacity_width, ROW - SPACE_S],
                     egui::DragValue::new(&mut percent)
                         .range(0.0..=100.0)
                         .max_decimals(0)
@@ -409,8 +446,8 @@ pub fn color_field(ui: &mut Ui, id: egui::Id, color: &mut [u8; 4]) -> bool {
 
 /// Removes the frame from drag values inside an existing field container.
 pub fn plain_drag_style(ui: &mut Ui) {
-    // Keep the value centered inside the 22 px slot of a 28 px field.
-    ui.spacing_mut().interact_size.y = ROW - 6.0;
+    // Keep the value centered inside the 16 pt slot of a 24 pt field.
+    ui.spacing_mut().interact_size.y = ROW - SPACE_S;
     let visuals = &mut ui.visuals_mut().widgets;
     for w in [
         &mut visuals.inactive,
@@ -436,15 +473,15 @@ pub fn number_field(
 ) -> Response {
     field_frame()
         .show(ui, |ui| {
-            ui.set_width(width - 16.0);
+            ui.set_width(width - SPACE_L);
             ui.set_height(ROW);
             ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.spacing_mut().item_spacing.x = SPACE_XS;
                 let galley = ui
                     .painter()
                     .layout_no_wrap(label.to_owned(), font(BODY), TEXT_DIM);
                 let (slot, _) =
-                    ui.allocate_exact_size(vec2(galley.size().x, ROW - 6.0), Sense::hover());
+                    ui.allocate_exact_size(vec2(galley.size().x, ROW - SPACE_S), Sense::hover());
                 ui.painter().galley(
                     egui::pos2(slot.left(), slot.center().y - galley.size().y / 2.0),
                     galley,
@@ -452,10 +489,10 @@ pub fn number_field(
                 );
                 plain_drag_style(ui);
                 ui.visuals_mut().widgets.inactive.fg_stroke.color = TEXT;
-                ui.spacing_mut().button_padding = vec2(2.0, 0.0);
+                ui.spacing_mut().button_padding = Vec2::ZERO;
                 let value_width = ui.available_width();
                 ui.allocate_ui_with_layout(
-                    vec2(value_width, ROW - 6.0),
+                    vec2(value_width, ROW - SPACE_S),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.add(egui::DragValue::new(value).speed(1.0).range(range))

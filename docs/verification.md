@@ -260,3 +260,13 @@ The baseline drag column already includes snapping work in the current build (sn
 - Guides and the marquee in a native window: covered by simulated input only, as the native example captures a static frame.
 - Physical mouse and trackpad input, macOS rendering, GPU upload cost and large documents with long text.
 - Paper's own handle, marquee and snapping behavior; the rules above are PaperCraft decisions.
+
+## Compact layout scale (18 October 2026)
+
+Contract: [layout scale](../DESIGN.md#layout-scale). Environment: Linux x86_64 container, Xvfb with Mesa.
+
+**Reference measurement.** A user-supplied screenshot of the Paper dashboard (2000×1248 px) was measured. The macOS window controls are 31 px apart (20 pt on macOS), giving about 1.55 px per point; 38 px rows (≈24 pt) agree. Measured in points: tab strip ≈29, tabs and sidebar rows 24, sidebar ≈211 wide with ≈10 pt insets, search field 24, content side padding ≈70, title row ≈32 tall starting ≈32 below the strip, cards ≈292×240 with a ≈48 header, ≈4 pt preview inset and ≈22 pt gaps, body text ≈11–12 pt. Values were rounded to the nearest grid step. The earlier panel-width reference (240/180/40/280 pt) was not reproduced by this screenshot and was replaced. The editor was not visible in it; editor panels reuse the same scale and remain to be checked against a Paper editor screenshot.
+
+**Checks.** `cargo fmt --check`, warnings-denied Clippy and `cargo test --locked` (4 unit + 51 integration) pass. `tests/design_grid.rs` scans `src/ui.rs`, `src/app.rs` and `src/app/dashboard.rs` and fails on any off-grid layout literal. The panel-width tests now assert the shared constants. The tab test checks that the close control is hidden until the tab is hovered. Native renders of `dashboard`, `editor`, `selected` and `theme` at 1290×805 were inspected: no clipped or wrapped controls after sizing the New file button from its label.
+
+**Not verified.** macOS rendering and the title-bar inset (72 pt beside the window controls), physical input, and a side-by-side comparison of the editor with Paper.
