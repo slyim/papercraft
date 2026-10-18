@@ -1,6 +1,8 @@
-use crate::document::{Document, Editor, NodeKind, atomic_write};
+use crate::document::{
+    Align, Axis, ColorTarget, ColorToken, Document, Editor, NodeKind, atomic_write,
+};
 use crate::recents::Recents;
-use crate::ui::{self, ACCENT, BODY, BORDER, CONTROL, ROW, Row, SHELL, TEXT, TEXT_DIM, TEXT_FAINT};
+use crate::ui::{self, ACCENT, BODY, BORDER, CONTROL, ROW, Row, SHELL, TEXT, TEXT_DIM};
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Painter, Pos2, Rect, RichText, Sense, Stroke,
     StrokeKind, Vec2, pos2, vec2,
@@ -58,8 +60,16 @@ impl Tool {
 struct Drag {
     before: Document,
     start: Pos2,
-    node: u64,
+    /// Layers moved together, or the single resized layer.
+    nodes: Vec<u64>,
     resize: bool,
+}
+
+/// A token change requested by an inspector color control, applied after the panel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TokenChoice {
+    Bind(ColorTarget, Option<u64>),
+    CreateFrom(ColorTarget),
 }
 
 /// A layer being drawn with the rectangle or text tool, in artboard coordinates.
@@ -94,6 +104,14 @@ pub struct PaperCraftApp {
     pages_open: bool,
     layers_open: bool,
     logo: Option<egui::TextureHandle>,
+    /// Left panel shows the Theme (tokens) tab instead of Design (pages and layers).
+    pub theme: bool,
+    colors_open: bool,
+    pub selected_token: Option<u64>,
+    /// Format version of the file at `path` when it was opened or last saved.
+    file_version: u32,
+    /// Save is waiting for confirmation to upgrade a version 1 file.
+    upgrade_prompt: bool,
 }
 
 impl PaperCraftApp {
@@ -123,6 +141,11 @@ impl PaperCraftApp {
             pages_open: true,
             layers_open: true,
             logo: None,
+            theme: false,
+            colors_open: true,
+            selected_token: None,
+            file_version: 1,
+            upgrade_prompt: false,
         }
     }
 
@@ -243,6 +266,9 @@ impl PaperCraftApp {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.file_version = document.version;
+        self.selected_token = None;
+        self.upgrade_prompt = false;
         self.saved = document.clone();
         self.editor = Editor::new(document);
         self.path = path;
@@ -269,8 +295,22 @@ impl PaperCraftApp {
         let Some(path) = path else {
             return false;
         };
+        // Saving in place must not silently make a version 1 file unreadable to older
+        // PaperCraft; see docs/document-format.md.
+        let upgrading = self.path.as_ref() == Some(&path)
+            && self.file_version < self.editor.document.required_version();
+        if upgrading {
+            self.upgrade_prompt = true;
+            return false;
+        }
+        self.write_document(path)
+    }
+
+    fn write_document(&mut self, path: PathBuf) -> bool {
+        self.upgrade_prompt = false;
         match self.editor.document.save(&path) {
             Ok(()) => {
+                self.file_version = self.editor.document.required_version();
                 self.saved = self.editor.document.clone();
                 self.status = format!("Saved {}", path.display());
                 self.remember(&path);
@@ -445,6 +485,47 @@ impl PaperCraftApp {
             let result = self.editor.duplicate();
             self.result(result);
         }
+        if ctx.input_mut(|i| i.consume_shortcut(&command(Key::A))) {
+            self.flush_properties();
+            self.editor.select_all();
+        }
+        let command_shift =
+            |key| egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, key);
+        if ctx.input_mut(|i| i.consume_shortcut(&command_shift(Key::H))) {
+            self.flush_properties();
+            let result = self.editor.toggle_hidden();
+            self.result(result);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&command_shift(Key::L))) {
+            self.flush_properties();
+            let result = self.editor.toggle_locked();
+            self.result(result);
+        }
+        // Arrangement: ⌥A/D/W/S/H/V align, ⌃⌥H/V distribute.
+        for (key, align) in [
+            (Key::A, Align::Left),
+            (Key::D, Align::Right),
+            (Key::W, Align::Top),
+            (Key::S, Align::Bottom),
+            (Key::H, Align::CenterX),
+            (Key::V, Align::CenterY),
+        ] {
+            if ctx.input_mut(|i| {
+                i.consume_shortcut(&egui::KeyboardShortcut::new(Modifiers::ALT, key))
+            }) {
+                self.arrange(Some(align), None);
+            }
+        }
+        for (key, axis) in [(Key::H, Axis::Horizontal), (Key::V, Axis::Vertical)] {
+            if ctx.input_mut(|i| {
+                i.consume_shortcut(&egui::KeyboardShortcut::new(
+                    Modifiers::CTRL | Modifiers::ALT,
+                    key,
+                ))
+            }) {
+                self.arrange(None, Some(axis));
+            }
+        }
         if ctx.input(|i| i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace)) {
             self.flush_properties();
             let result = self.editor.delete();
@@ -454,7 +535,7 @@ impl PaperCraftApp {
             if self.tool != Tool::Select {
                 self.set_tool(Tool::Select);
             } else {
-                self.editor.selected = None;
+                self.editor.select(None);
             }
         }
         if !ctx.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.alt) {
@@ -487,24 +568,24 @@ impl PaperCraftApp {
                     * step,
             )
         });
-        if delta != Vec2::ZERO
-            && let Some(id) = self.editor.selected
-        {
+        if delta != Vec2::ZERO && !self.editor.selection().is_empty() {
             self.flush_properties();
-            let before = self.editor.document.clone();
-            if let Some(node) = self
-                .editor
-                .document
-                .nodes
-                .iter_mut()
-                .find(|n| n.id == id && !n.locked)
-            {
-                node.x = (node.x + delta.x).clamp(-100_000.0, 100_000.0);
-                node.y = (node.y + delta.y).clamp(-100_000.0, 100_000.0);
-            }
-            let result = self.editor.commit(before);
+            let result = self.editor.nudge(delta.x, delta.y);
             self.result(result);
         }
+    }
+
+    /// Aligns or distributes the arrangeable selection as one history step.
+    fn arrange(&mut self, align: Option<Align>, distribute: Option<Axis>) {
+        self.flush_properties();
+        let count = self.editor.arrangeable().len();
+        let result = match (align, distribute) {
+            (Some(align), _) if count >= 1 => self.editor.align(align),
+            (_, Some(axis)) if count >= 3 => self.editor.distribute(axis),
+            (Some(_), _) => Err("Select a visible, unlocked layer to align.".into()),
+            _ => Err("Distribute needs three or more visible, unlocked layers.".into()),
+        };
+        self.result(result);
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
@@ -566,6 +647,40 @@ impl PaperCraftApp {
                 });
             });
         }
+        if self.upgrade_prompt {
+            egui::Modal::new(egui::Id::new("format_upgrade")).show(&ctx, |ui| {
+                ui.set_max_width(400.0);
+                ui.label(RichText::new("Save this file in the new format?").size(16.0));
+                ui.label(
+                    RichText::new(
+                        "Color tokens need document format version 2. PaperCraft 0.1 and \
+                         earlier cannot open version 2 files. Saving as a new file keeps \
+                         the original unchanged.",
+                    )
+                    .color(TEXT_DIM),
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let saved = if ui.button("Save as new file…").clicked() {
+                        self.upgrade_prompt = false;
+                        self.save_document(true)
+                    } else if ui.button("Upgrade this file").clicked() {
+                        self.path
+                            .clone()
+                            .is_some_and(|path| self.write_document(path))
+                    } else {
+                        if ui.button("Cancel").clicked() {
+                            self.upgrade_prompt = false;
+                        }
+                        false
+                    };
+                    // Continue an action that was waiting for this save.
+                    if saved && let Some(intent) = self.pending.take() {
+                        self.perform(intent, &ctx);
+                    }
+                });
+            });
+        }
         egui::Window::new("Keyboard shortcuts")
             .open(&mut self.help)
             .collapsible(false)
@@ -584,7 +699,16 @@ impl PaperCraftApp {
                             ("V / H", "Select / hand tool"),
                             ("R / T", "Rectangle / text tool"),
                             ("Esc", "Select tool, then clear selection"),
+                            ("Shift + click", "Add or remove a layer from the selection"),
+                            ("⌘ / Ctrl + A", "Select visible, unlocked layers"),
                             ("Arrow keys", "Move selection (Shift: 10 px)"),
+                            ("⌥ / Alt + A, H, D", "Align left, horizontal centers, right"),
+                            ("⌥ / Alt + W, V, S", "Align top, vertical centers, bottom"),
+                            (
+                                "⌃ ⌥ / Ctrl + Alt + H, V",
+                                "Distribute horizontally, vertically",
+                            ),
+                            ("⌘ / Ctrl + Shift + H, L", "Hide / lock selection"),
                             ("Delete / Backspace", "Delete unlocked selection"),
                             ("F", "Fit artboard"),
                             ("Space + drag / middle drag", "Pan"),
@@ -696,7 +820,7 @@ impl PaperCraftApp {
             .frame(side)
             .show(ui, |ui| self.right_panel(ui));
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(color(self.editor.document.canvas)))
+            .frame(egui::Frame::NONE.fill(color(self.editor.document.canvas_color())))
             .show(ui, |ui| {
                 self.canvas(ui);
                 if !self.left_open {
@@ -826,8 +950,16 @@ impl PaperCraftApp {
         );
         ui::hline(ui);
         ui.add_space(14.0);
-        segmented(ui);
+        if segmented(ui, self.theme) {
+            self.flush_properties();
+            self.theme = !self.theme;
+        }
         ui.add_space(10.0);
+        if self.theme {
+            self.status_footer(ui);
+            self.theme_panel(ui);
+            return;
+        }
 
         section_toggle(
             ui,
@@ -844,22 +976,12 @@ impl PaperCraftApp {
                 .clicked()
         {
             self.flush_properties();
-            self.editor.selected = None;
+            self.editor.select(None);
         }
         ui.add_space(8.0);
         ui::hline(ui);
 
-        egui::Panel::bottom("left_status")
-            .frame(egui::Frame::NONE.inner_margin(egui::Margin {
-                left: 16,
-                right: 12,
-                top: 8,
-                bottom: 12,
-            }))
-            .show_separator_line(false)
-            .show(ui, |ui| {
-                ui.label(RichText::new(&self.status).size(12.0).color(TEXT_DIM));
-            });
+        self.status_footer(ui);
 
         ui.add_space(8.0);
         section_toggle(ui, "Layers", &mut self.layers_open, None);
@@ -881,7 +1003,7 @@ impl PaperCraftApp {
                 for (id, name, kind, hidden, locked) in nodes {
                     let (rect, response) =
                         ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
-                    let selected = self.editor.selected == Some(id);
+                    let selected = self.editor.is_selected(id);
                     response.widget_info(|| {
                         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, &name)
                     });
@@ -953,7 +1075,13 @@ impl PaperCraftApp {
                         self.result(result);
                     } else if response.clicked() {
                         self.flush_properties();
-                        self.editor.selected = Some(id);
+                        // Shift or ⌘/Ctrl adds or removes the row; locked and hidden
+                        // layers can be selected here but are not arranged.
+                        if ui.input(|i| i.modifiers.shift || i.modifiers.command) {
+                            self.editor.toggle_selection(id);
+                        } else {
+                            self.editor.select(Some(id));
+                        }
                     }
                 }
                 if self.editor.document.nodes.is_empty() {
@@ -970,6 +1098,202 @@ impl PaperCraftApp {
                         });
                 }
             });
+    }
+
+    fn status_footer(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::bottom("left_status")
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                left: 16,
+                right: 12,
+                top: 8,
+                bottom: 12,
+            }))
+            .show_separator_line(false)
+            .show(ui, |ui| {
+                ui.label(RichText::new(&self.status).size(12.0).color(TEXT_DIM));
+            });
+    }
+
+    /// Theme tab: the document's color tokens. Names and values edit in place as one
+    /// history step per completed edit; add, delete and binding changes are one step each.
+    fn theme_panel(&mut self, ui: &mut egui::Ui) {
+        let before = self.editor.document.clone();
+        let mut add = false;
+        let section = section_toggle(
+            ui,
+            "Colors",
+            &mut self.colors_open,
+            Some((icon::PLUS, "Add color token", true)),
+        );
+        if section.is_some_and(|r| r.clicked()) {
+            add = true;
+        }
+        if self
+            .selected_token
+            .is_some_and(|id| self.editor.document.token(id).is_none())
+        {
+            self.selected_token = None;
+        }
+        let mut delete = None;
+        let mut finish = false;
+        let mut rename: Option<(u64, String)> = None;
+        if self.colors_open {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    let tokens: Vec<ColorToken> = self.editor.document.tokens.clone();
+                    for token in &tokens {
+                        let (rect, response) =
+                            ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
+                        let selected = self.selected_token == Some(token.id);
+                        response.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::Button,
+                                true,
+                                selected,
+                                &token.name,
+                            )
+                        });
+                        Row::new("", &token.name)
+                            .indent(42.0)
+                            .selected(selected)
+                            .paint(ui, rect, &response, 8.0);
+                        swatch(
+                            ui.painter(),
+                            Rect::from_center_size(
+                                pos2(rect.left() + 28.0, rect.center().y),
+                                vec2(14.0, 14.0),
+                            ),
+                            token.value,
+                        );
+                        if response.clicked() {
+                            self.flush_properties();
+                            self.selected_token = (!selected).then_some(token.id);
+                        }
+                        if !selected {
+                            continue;
+                        }
+                        let usage = self.editor.document.token_usage(token.id).len();
+                        egui::Frame::NONE
+                            .inner_margin(egui::Margin {
+                                left: 16,
+                                right: 12,
+                                top: 6,
+                                bottom: 10,
+                            })
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                                let name_id = egui::Id::new(("token_name", token.id));
+                                let mut name = ui
+                                    .data(|d| d.get_temp::<String>(name_id))
+                                    .unwrap_or_else(|| token.name.clone());
+                                let edit = ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut name)
+                                            .id(name_id)
+                                            .frame(
+                                                egui::Frame::NONE
+                                                    .fill(CONTROL)
+                                                    .corner_radius(ui::RADIUS)
+                                                    .inner_margin(egui::Margin::symmetric(8, 6)),
+                                            )
+                                            .margin(egui::Margin::symmetric(8, 6))
+                                            .char_limit(64)
+                                            .desired_width(f32::INFINITY),
+                                    )
+                                    .on_hover_text("Token name: letters, digits, - and _");
+                                if edit.has_focus() {
+                                    ui.data_mut(|d| d.insert_temp(name_id, name.clone()));
+                                }
+                                if edit.lost_focus() {
+                                    ui.data_mut(|d| d.remove::<String>(name_id));
+                                    if name != token.name {
+                                        rename = Some((token.id, name));
+                                    }
+                                }
+                                if let Some(live) = self
+                                    .editor
+                                    .document
+                                    .tokens
+                                    .iter_mut()
+                                    .find(|t| t.id == token.id)
+                                {
+                                    finish |= ui::color_field(
+                                        ui,
+                                        egui::Id::new(("token_value", token.id)),
+                                        &mut live.value,
+                                    );
+                                }
+                                ui.label(
+                                    RichText::new(match usage {
+                                        0 => "Not used".to_string(),
+                                        1 => "Used by 1 property".to_string(),
+                                        n => format!("Used by {n} properties"),
+                                    })
+                                    .size(12.0)
+                                    .color(TEXT_DIM),
+                                );
+                                if ui
+                                    .button(format!("{}  Delete token", icon::TRASH))
+                                    .on_hover_text(
+                                        "Bound properties keep this color as a plain value",
+                                    )
+                                    .clicked()
+                                {
+                                    delete = Some(token.id);
+                                }
+                            });
+                    }
+                    if tokens.is_empty() {
+                        ui.add_space(8.0);
+                        egui::Frame::NONE
+                            .inner_margin(egui::Margin::symmetric(17, 0))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    RichText::new(
+                                        "No color tokens. Add one here, or create one from a \
+                                         color in the inspector.",
+                                    )
+                                    .color(TEXT_DIM),
+                                );
+                            });
+                    }
+                });
+        }
+        self.track_properties(before, finish, ui.ctx());
+        if let Some((id, name)) = rename {
+            self.flush_properties();
+            let result = self.editor.rename_token(id, &name);
+            self.result(result);
+        }
+        if let Some(id) = delete {
+            self.flush_properties();
+            let result = self.editor.delete_token(id);
+            self.result(result);
+            self.selected_token = None;
+        }
+        if add {
+            self.flush_properties();
+            match self.editor.create_token([124, 155, 214, 255]) {
+                Ok(id) => {
+                    self.selected_token = Some(id);
+                    self.colors_open = true;
+                }
+                Err(error) => self.status = error,
+            }
+        }
+    }
+
+    /// Opens a property transaction when `before` differs from the document and commits
+    /// it when an edit finished or no field is being edited.
+    fn track_properties(&mut self, before: Document, finish: bool, ctx: &egui::Context) {
+        if before != self.editor.document && self.property_before.is_none() {
+            self.property_before = Some(before);
+        }
+        if finish || (!ctx.egui_wants_keyboard_input() && !ctx.egui_is_using_pointer()) {
+            self.flush_properties();
+        }
     }
 
     fn floating_file_header(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -1114,6 +1438,8 @@ impl PaperCraftApp {
     fn inspector(&mut self, ui: &mut egui::Ui) {
         let before = self.editor.document.clone();
         let mut finish = false;
+        let mut choice = None;
+        let tokens = self.editor.document.tokens.clone();
         let section = |ui: &mut egui::Ui, title: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
             ui::section_title(ui, title);
             egui::Frame::NONE
@@ -1132,16 +1458,57 @@ impl PaperCraftApp {
             .fill(CONTROL)
             .corner_radius(ui::RADIUS)
             .inner_margin(text_margin);
-        if let Some(index) = self
+        let count = self.editor.selection().len();
+        if count > 1 {
+            let nodes = &self.editor.document.nodes;
+            let excluded = nodes
+                .iter()
+                .filter(|n| self.editor.is_selected(n.id) && (n.hidden || n.locked))
+                .count();
+            let bounds = self.editor.selection_bounds();
+            section(ui, &format!("{count} layers selected"), &mut |ui| {
+                if let Some([left, top, right, bottom]) = bounds {
+                    ui.label(
+                        RichText::new(format!(
+                            "X {left:.0}   Y {top:.0}   W {:.0}   H {:.0}",
+                            right - left,
+                            bottom - top
+                        ))
+                        .color(TEXT),
+                    )
+                    .on_hover_text("Shared bounds of the visible, unlocked selected layers");
+                }
+                if excluded > 0 {
+                    ui.label(
+                        RichText::new(format!(
+                            "{excluded} hidden or locked {} not moved or arranged.",
+                            if excluded == 1 {
+                                "layer is"
+                            } else {
+                                "layers are"
+                            }
+                        ))
+                        .size(12.0)
+                        .color(TEXT_DIM),
+                    );
+                }
+                ui.label(
+                    RichText::new("Select one layer to edit its properties.")
+                        .size(12.0)
+                        .color(TEXT_DIM),
+                );
+            });
+        } else if let Some(index) = self
             .editor
             .document
             .nodes
             .iter()
-            .position(|n| Some(n.id) == self.editor.selected)
+            .position(|n| Some(n.id) == self.editor.selected())
         {
             let node = &mut self.editor.document.nodes[index];
             let locked = node.locked;
             let kind = node.kind;
+            let id = node.id;
             section(
                 ui,
                 if kind == NodeKind::Text {
@@ -1186,7 +1553,15 @@ impl PaperCraftApp {
                         "Fill"
                     },
                     &mut |ui| {
-                        finish |= ui::color_field(ui, egui::Id::new("node_fill"), &mut node.fill);
+                        finish |= color_property(
+                            ui,
+                            egui::Id::new("node_fill"),
+                            &tokens,
+                            &mut node.fill,
+                            node.fill_token,
+                            ColorTarget::Node(id),
+                            &mut choice,
+                        );
                         if kind == NodeKind::Rectangle {
                             let r = ui::number_field(
                                 ui,
@@ -1225,7 +1600,15 @@ impl PaperCraftApp {
         } else {
             let document = &mut self.editor.document;
             section(ui, "Page", &mut |ui| {
-                finish |= ui::color_field(ui, egui::Id::new("page_color"), &mut document.canvas);
+                finish |= color_property(
+                    ui,
+                    egui::Id::new("page_color"),
+                    &tokens,
+                    &mut document.canvas,
+                    document.canvas_token,
+                    ColorTarget::Canvas,
+                    &mut choice,
+                );
             });
             section(ui, "Artboard", &mut |ui| {
                 finish |= ui
@@ -1244,86 +1627,214 @@ impl PaperCraftApp {
                     let r = ui::number_field(ui, "H", &mut document.height, 1.0..=100_000.0, half);
                     finish |= r.drag_stopped() || r.lost_focus();
                 });
-                finish |=
-                    ui::color_field(ui, egui::Id::new("artboard_fill"), &mut document.background);
+                finish |= color_property(
+                    ui,
+                    egui::Id::new("artboard_fill"),
+                    &tokens,
+                    &mut document.background,
+                    document.background_token,
+                    ColorTarget::Background,
+                    &mut choice,
+                );
             });
             egui::Frame::NONE
                 .inner_margin(egui::Margin::symmetric(16, 14))
                 .show(ui, |ui| {
                     ui.label(
                         RichText::new(
-                            "Select a layer on the canvas or in the layer list to edit it.",
+                            "Select a layer on the canvas or in the layer list to edit it. \
+                             Shift-click adds layers to the selection.",
                         )
                         .color(TEXT_DIM),
                     );
                 });
         }
-        if before != self.editor.document && self.property_before.is_none() {
-            self.property_before = Some(before);
-        }
-        if finish || (!ui.ctx().egui_wants_keyboard_input() && !ui.ctx().egui_is_using_pointer()) {
+        self.track_properties(before, finish, ui.ctx());
+        if let Some(choice) = choice {
             self.flush_properties();
-        }
-        if self.editor.selected.is_some() {
-            let Some((locked, hidden)) = self.editor.selected_node().map(|n| (n.locked, n.hidden))
-            else {
-                return;
+            let result = match choice {
+                TokenChoice::Bind(target, token) => self.editor.bind(target, token),
+                TokenChoice::CreateFrom(target) => self
+                    .editor
+                    .create_token_from(target)
+                    .map(|id| self.selected_token = id.or(self.selected_token)),
             };
-            ui::section_title(ui, "Layer");
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                ui.add_space(10.0);
-                let action = |ui: &mut egui::Ui, glyph, label, enabled| {
-                    ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, false, enabled, label)
+            self.result(result);
+        }
+        if count == 0 {
+            return;
+        }
+        self.arrange_section(ui);
+        self.layer_actions(ui);
+    }
+
+    /// Align and distribute controls. Disabled controls state the requirement.
+    fn arrange_section(&mut self, ui: &mut egui::Ui) {
+        let arrangeable = self.editor.arrangeable().len();
+        ui::section_title(ui, "Arrange");
+        let mut align = None;
+        let mut distribute = None;
+        egui::Frame::NONE
+            .inner_margin(egui::Margin {
+                left: 10,
+                right: 12,
+                top: 0,
+                bottom: 14,
+            })
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing = vec2(2.0, 8.0);
+                let reason = match arrangeable {
+                    0 => "Hidden and locked layers are not arranged",
+                    1 => "One layer aligns to the artboard",
+                    _ => "Layers align to their shared bounds",
+                };
+                ui.horizontal(|ui| {
+                    for (glyph, label, value) in [
+                        (icon::ALIGN_LEFT, "Align left · ⌥A", Align::Left),
+                        (
+                            icon::ALIGN_CENTER_HORIZONTAL,
+                            "Align horizontal centers · ⌥H",
+                            Align::CenterX,
+                        ),
+                        (icon::ALIGN_RIGHT, "Align right · ⌥D", Align::Right),
+                        (icon::ALIGN_TOP, "Align top · ⌥W", Align::Top),
+                        (
+                            icon::ALIGN_CENTER_VERTICAL,
+                            "Align vertical centers · ⌥V",
+                            Align::CenterY,
+                        ),
+                        (icon::ALIGN_BOTTOM, "Align bottom · ⌥S", Align::Bottom),
+                    ] {
+                        let label = format!("{label}\n{reason}");
+                        if ui::icon_button(
+                            ui,
+                            glyph,
+                            vec2(30.0, 30.0),
+                            18.0,
+                            false,
+                            arrangeable >= 1,
+                            &label,
+                        )
                         .clicked()
-                };
-                if action(ui, icon::ARROW_UP, "Bring forward", !locked) {
-                    self.flush_properties();
-                    let r = self.editor.reorder(true);
-                    self.result(r);
-                }
-                if action(ui, icon::ARROW_DOWN, "Send backward", !locked) {
-                    self.flush_properties();
-                    let r = self.editor.reorder(false);
-                    self.result(r);
-                }
-                if action(ui, icon::COPY, "Duplicate", !locked) {
-                    self.flush_properties();
-                    let r = self.editor.duplicate();
-                    self.result(r);
-                }
-                if action(ui, icon::TRASH, "Delete layer", !locked) {
-                    self.flush_properties();
-                    let r = self.editor.delete();
-                    self.result(r);
-                }
-                let toggle = |ui: &mut egui::Ui, glyph, label, on| {
-                    ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, on, true, label).clicked()
-                };
-                let hide_label = if hidden { "Show layer" } else { "Hide layer" };
-                let hide_glyph = if hidden { icon::EYE_SLASH } else { icon::EYE };
-                let lock_label = if locked { "Unlock layer" } else { "Lock layer" };
-                let lock_glyph = if locked { icon::LOCK } else { icon::LOCK_OPEN };
-                let hide = toggle(ui, hide_glyph, hide_label, hidden);
-                let lock = toggle(ui, lock_glyph, lock_label, locked);
-                if hide || lock {
-                    self.flush_properties();
-                    let before = self.editor.document.clone();
-                    if let Some(id) = self.editor.selected
-                        && let Some(node) =
-                            self.editor.document.nodes.iter_mut().find(|n| n.id == id)
-                    {
-                        if hide {
-                            node.hidden = !node.hidden;
-                        } else {
-                            node.locked = !node.locked;
+                        {
+                            align = Some(value);
                         }
                     }
-                    let result = self.editor.commit(before);
-                    self.result(result);
-                }
+                });
+                ui.horizontal(|ui| {
+                    for (glyph, label, axis) in [
+                        (
+                            icon::COLUMNS,
+                            "Distribute horizontally · ⌃⌥H",
+                            Axis::Horizontal,
+                        ),
+                        (icon::ROWS, "Distribute vertically · ⌃⌥V", Axis::Vertical),
+                    ] {
+                        let label = if arrangeable >= 3 {
+                            format!("{label}\nEqual gaps; the outer layers stay in place")
+                        } else {
+                            format!("{label}\nNeeds three or more visible, unlocked layers")
+                        };
+                        if ui::icon_button(
+                            ui,
+                            glyph,
+                            vec2(30.0, 30.0),
+                            18.0,
+                            false,
+                            arrangeable >= 3,
+                            &label,
+                        )
+                        .clicked()
+                        {
+                            distribute = Some(axis);
+                        }
+                    }
+                });
             });
+        ui::hline(ui);
+        if align.is_some() || distribute.is_some() {
+            self.arrange(align, distribute);
         }
+    }
+
+    /// Order, duplicate, delete, visibility and lock for the selection.
+    fn layer_actions(&mut self, ui: &mut egui::Ui) {
+        let selected: Vec<_> = self
+            .editor
+            .document
+            .nodes
+            .iter()
+            .filter(|n| self.editor.is_selected(n.id))
+            .map(|n| (n.locked, n.hidden))
+            .collect();
+        if selected.is_empty() {
+            return;
+        }
+        let single = selected.len() == 1;
+        let any_unlocked = selected.iter().any(|(locked, _)| !locked);
+        let all_locked = !any_unlocked;
+        let any_hidden = selected.iter().any(|(_, hidden)| *hidden);
+        ui::section_title(ui, if single { "Layer" } else { "Layers" });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_space(10.0);
+            let action = |ui: &mut egui::Ui, glyph: &str, label: &str, enabled: bool| {
+                ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, false, enabled, label).clicked()
+            };
+            let order = single && any_unlocked;
+            let order_label = |label: &str| {
+                if single {
+                    label.to_string()
+                } else {
+                    format!("{label} · select one layer")
+                }
+            };
+            if action(ui, icon::ARROW_UP, &order_label("Bring forward"), order) {
+                self.flush_properties();
+                let r = self.editor.reorder(true);
+                self.result(r);
+            }
+            if action(ui, icon::ARROW_DOWN, &order_label("Send backward"), order) {
+                self.flush_properties();
+                let r = self.editor.reorder(false);
+                self.result(r);
+            }
+            if action(ui, icon::COPY, "Duplicate unlocked layers", any_unlocked) {
+                self.flush_properties();
+                let r = self.editor.duplicate();
+                self.result(r);
+            }
+            if action(ui, icon::TRASH, "Delete unlocked layers", any_unlocked) {
+                self.flush_properties();
+                let r = self.editor.delete();
+                self.result(r);
+            }
+            let toggle = |ui: &mut egui::Ui, glyph, label, on| {
+                ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, on, true, label).clicked()
+            };
+            let hide_label = if any_hidden { "Show" } else { "Hide" };
+            let hide_glyph = if any_hidden {
+                icon::EYE_SLASH
+            } else {
+                icon::EYE
+            };
+            let lock_label = if all_locked { "Unlock" } else { "Lock" };
+            let lock_glyph = if all_locked {
+                icon::LOCK
+            } else {
+                icon::LOCK_OPEN
+            };
+            if toggle(ui, hide_glyph, hide_label, any_hidden) {
+                self.flush_properties();
+                let r = self.editor.toggle_hidden();
+                self.result(r);
+            }
+            if toggle(ui, lock_glyph, lock_label, all_locked) {
+                self.flush_properties();
+                let r = self.editor.toggle_locked();
+                self.result(r);
+            }
+        });
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
@@ -1405,12 +1916,49 @@ impl PaperCraftApp {
             canvas,
             false,
         );
-        if let Some(node) = self.editor.selected_node().filter(|n| !n.hidden) {
-            let rect = Rect::from_min_size(
-                origin + vec2(node.x, node.y) * self.zoom,
-                vec2(node.width, node.height) * self.zoom,
+        let screen = |n: &crate::document::Node| {
+            Rect::from_min_size(
+                origin + vec2(n.x, n.y) * self.zoom,
+                vec2(n.width, n.height) * self.zoom,
+            )
+        };
+        let multiple = self.editor.selection().len() > 1;
+        for node in self
+            .editor
+            .document
+            .nodes
+            .iter()
+            .filter(|n| self.editor.is_selected(n.id) && !n.hidden)
+        {
+            let width = if multiple { 1.0 } else { 1.5 };
+            painter.rect_stroke(
+                screen(node),
+                0.0,
+                Stroke::new(width, ACCENT),
+                StrokeKind::Outside,
             );
-            painter.rect_stroke(rect, 0.0, Stroke::new(1.5, ACCENT), StrokeKind::Outside);
+        }
+        if multiple && let Some([left, top, right, bottom]) = self.editor.selection_bounds() {
+            let bounds = Rect::from_min_max(
+                origin + vec2(left, top) * self.zoom,
+                origin + vec2(right, bottom) * self.zoom,
+            );
+            painter.rect_stroke(
+                bounds.expand(3.0),
+                0.0,
+                Stroke::new(1.0, ACCENT.gamma_multiply(0.7)),
+                StrokeKind::Outside,
+            );
+            painter.text(
+                bounds.center_bottom() + vec2(0.0, 20.0),
+                Align2::CENTER_CENTER,
+                format!("{:.0} × {:.0}", right - left, bottom - top),
+                FontId::proportional(11.0),
+                ACCENT,
+            );
+        }
+        if let Some(node) = self.editor.selected_node().filter(|n| !n.hidden) {
+            let rect = screen(node);
             if !node.locked {
                 let handle = Rect::from_center_size(rect.right_bottom(), vec2(7.0, 7.0));
                 painter.rect_filled(handle, 1.0, SHELL);
@@ -1501,6 +2049,8 @@ impl PaperCraftApp {
             }
         } else if !panning && self.pending.is_none() {
             let pointer = response.interact_pointer_pos();
+            // Shift adds to or removes from the selection.
+            let extend = ui.input(|i| i.modifiers.shift);
             if (response.clicked() || response.drag_started())
                 && let Some(pointer) = pointer
             {
@@ -1510,9 +2060,9 @@ impl PaperCraftApp {
                 } else {
                     pointer
                 };
-                let resize_id = self
-                    .editor
-                    .selected_node()
+                let resize_id = (!extend)
+                    .then(|| self.editor.selected_node())
+                    .flatten()
                     .filter(|n| !n.locked && !n.hidden)
                     .and_then(|n| {
                         let bottom = origin + vec2(n.x + n.width, n.y + n.height) * self.zoom;
@@ -1536,41 +2086,59 @@ impl PaperCraftApp {
                         })
                         .map(|n| n.id)
                 });
-                self.editor.selected = hit;
-                if response.drag_started()
-                    && let Some(id) = hit
-                {
-                    self.drag = Some(Drag {
-                        before: self.editor.document.clone(),
-                        start: hit_point,
-                        node: id,
-                        resize: resize_id.is_some(),
-                    });
+                match hit {
+                    Some(id) if response.drag_started() => {
+                        // Dragging a selected layer moves the whole selection.
+                        if !self.editor.is_selected(id) {
+                            if extend {
+                                self.editor.toggle_selection(id);
+                            } else {
+                                self.editor.select(Some(id));
+                            }
+                        }
+                        self.drag = Some(Drag {
+                            before: self.editor.document.clone(),
+                            start: hit_point,
+                            nodes: if resize_id.is_some() {
+                                vec![id]
+                            } else {
+                                self.editor.arrangeable()
+                            },
+                            resize: resize_id.is_some(),
+                        });
+                    }
+                    Some(id) if extend => self.editor.toggle_selection(id),
+                    Some(id) => self.editor.select(Some(id)),
+                    None if !extend => self.editor.select(None),
+                    None => {}
                 }
             }
             if (response.dragged() || response.drag_stopped())
                 && let (Some(drag), Some(pointer)) = (&self.drag, pointer)
             {
                 let delta = (pointer - drag.start) / self.zoom;
-                let original = drag
+                for original in drag
                     .before
                     .nodes
                     .iter()
-                    .find(|n| n.id == drag.node)
-                    .unwrap();
-                let node = self
-                    .editor
-                    .document
-                    .nodes
-                    .iter_mut()
-                    .find(|n| n.id == drag.node)
-                    .unwrap();
-                if drag.resize {
-                    node.width = (original.width + delta.x).round().clamp(1.0, 100_000.0);
-                    node.height = (original.height + delta.y).round().clamp(1.0, 100_000.0);
-                } else {
-                    node.x = (original.x + delta.x).round().clamp(-100_000.0, 100_000.0);
-                    node.y = (original.y + delta.y).round().clamp(-100_000.0, 100_000.0);
+                    .filter(|n| drag.nodes.contains(&n.id))
+                {
+                    let Some(node) = self
+                        .editor
+                        .document
+                        .nodes
+                        .iter_mut()
+                        .find(|n| n.id == original.id)
+                    else {
+                        continue;
+                    };
+                    if drag.resize {
+                        node.width = (original.width + delta.x).round().clamp(1.0, 100_000.0);
+                        node.height = (original.height + delta.y).round().clamp(1.0, 100_000.0);
+                    } else {
+                        node.x = (original.x + delta.x).round().clamp(-100_000.0, 100_000.0);
+                        node.y = (original.y + delta.y).round().clamp(-100_000.0, 100_000.0);
+                    }
                 }
             }
         }
@@ -1596,7 +2164,7 @@ fn paint_document(
 ) {
     let artboard = Rect::from_min_size(origin, vec2(document.width, document.height) * zoom);
     let painter = painter.with_clip_rect(clip);
-    painter.rect_filled(artboard, 0.0, color(document.background));
+    painter.rect_filled(artboard, 0.0, color(document.background_color()));
     let content = painter.with_clip_rect(clip.intersect(artboard));
     for node in document.nodes.iter().filter(|n| !n.hidden) {
         let rect = Rect::from_min_size(
@@ -1611,7 +2179,7 @@ fn paint_document(
                 content.rect_filled(
                     rect,
                     (node.radius.min(node.width.min(node.height) / 2.0) * zoom).min(255.0) as u8,
-                    color(node.fill),
+                    color(document.node_fill(node)),
                 );
             }
             NodeKind::Text => {
@@ -1622,15 +2190,16 @@ fn paint_document(
                     }
                     size = (size * 2.0).round() / 2.0;
                 }
+                let fill = color(document.node_fill(node));
                 let galley = content.layout(
                     node.text.clone(),
                     FontId::proportional(size),
-                    color(node.fill),
+                    fill,
                     rect.width(),
                 );
                 content
                     .with_clip_rect(rect.intersect(artboard).intersect(clip))
-                    .galley(rect.min, galley, color(node.fill));
+                    .galley(rect.min, galley, fill);
             }
         }
     }
@@ -1692,16 +2261,15 @@ fn tab(
     (response, close)
 }
 
-/// Design/Theme switch. Theme tokens are not part of the PaperCraft model yet, so that
-/// segment is shown disabled.
-fn segmented(ui: &mut egui::Ui) {
+/// Design/Theme switch. Returns `true` when the inactive segment was clicked.
+fn segmented(ui: &mut egui::Ui, theme: bool) -> bool {
     let width = ui.available_width() - 24.0;
     ui.horizontal(|ui| {
         ui.add_space(12.0);
         let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), Sense::hover());
         ui.painter().rect_filled(rect, 7, Color32::from_gray(53));
         let (left, right) = rect.split_left_right_at_fraction(0.5);
-        let selected = left.shrink(1.0);
+        let selected = if theme { right } else { left }.shrink(1.0);
         ui.painter()
             .rect_filled(selected, 6, Color32::from_gray(63));
         ui.painter().rect_stroke(
@@ -1710,30 +2278,151 @@ fn segmented(ui: &mut egui::Ui) {
             Stroke::new(1.0, Color32::from_gray(72)),
             StrokeKind::Inside,
         );
-        ui.painter().text(
-            left.center(),
-            Align2::CENTER_CENTER,
-            "Design",
-            ui::font(BODY),
-            TEXT,
+        let mut switch = false;
+        for (half, label, active) in [(left, "Design", !theme), (right, "Theme", theme)] {
+            let response = ui.interact(half, egui::Id::new(("segment", label)), Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, label)
+            });
+            let color = if active || response.hovered() {
+                TEXT
+            } else {
+                TEXT_DIM
+            };
+            ui.painter().text(
+                half.center(),
+                Align2::CENTER_CENTER,
+                label,
+                ui::font(BODY),
+                color,
+            );
+            switch |= response.clicked() && !active;
+        }
+        switch
+    })
+    .inner
+}
+
+/// Color control with token binding. Unbound: the literal color field plus a token
+/// menu. Bound: the token's swatch and name with a detach button; the color is edited
+/// through the token in the Theme tab. Returns `true` when a literal edit finished;
+/// binding changes are reported through `choice`.
+fn color_property(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    tokens: &[ColorToken],
+    literal: &mut [u8; 4],
+    binding: Option<u64>,
+    target: ColorTarget,
+    choice: &mut Option<TokenChoice>,
+) -> bool {
+    let mut finished = false;
+    let enabled = ui.is_enabled();
+    let width = ui.available_width();
+    let bound = binding.and_then(|id| tokens.iter().find(|t| t.id == id));
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let field_width = width - 32.0;
+        ui.allocate_ui_with_layout(
+            vec2(field_width, ROW),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_width(field_width);
+                match bound {
+                    Some(token) => {
+                        ui::field_frame().show(ui, |ui| {
+                            ui.set_width(field_width - 16.0);
+                            ui.set_height(ROW);
+                            ui.horizontal_centered(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                let (rect, _) =
+                                    ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                                swatch(ui.painter(), rect, token.value);
+                                // Leave room for the spacing and the 22 pt detach button.
+                                let name_width = (ui.available_width() - 30.0).max(0.0);
+                                let galley = ui::truncated(ui, &token.name, BODY, TEXT, name_width);
+                                let (rect, _) = ui.allocate_exact_size(
+                                    vec2(name_width, ROW - 6.0),
+                                    Sense::hover(),
+                                );
+                                ui.painter().galley(
+                                    pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
+                                    galley,
+                                    TEXT,
+                                );
+                                if ui::icon_button(
+                                    ui,
+                                    icon::LINK_BREAK,
+                                    vec2(22.0, 22.0),
+                                    15.0,
+                                    false,
+                                    enabled,
+                                    "Detach token · keeps the current color",
+                                )
+                                .clicked()
+                                {
+                                    *choice = Some(TokenChoice::Bind(target, None));
+                                }
+                            });
+                        });
+                    }
+                    None => finished = ui::color_field(ui, id, literal),
+                }
+            },
         );
-        ui.painter().text(
-            right.center(),
-            Align2::CENTER_CENTER,
-            "Theme",
-            ui::font(BODY),
-            TEXT_FAINT,
+        let menu = ui::icon_button(
+            ui,
+            icon::CIRCLES_FOUR,
+            vec2(28.0, 28.0),
+            17.0,
+            bound.is_some(),
+            enabled,
+            "Color tokens",
         );
-        let design = ui.interact(left, egui::Id::new("segment_design"), Sense::hover());
-        design.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, true, "Design")
+        egui::Popup::menu(&menu).id(id.with("tokens")).show(|ui| {
+            ui.set_min_width(210.0);
+            if tokens.is_empty() {
+                ui.label(RichText::new("No color tokens yet").color(TEXT_DIM));
+            }
+            for token in tokens {
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                    swatch(ui.painter(), rect, token.value);
+                    let current = binding == Some(token.id);
+                    if ui
+                        .add(egui::Button::selectable(current, &token.name))
+                        .clicked()
+                    {
+                        if !current {
+                            *choice = Some(TokenChoice::Bind(target, Some(token.id)));
+                        }
+                        ui.close();
+                    }
+                });
+            }
+            ui.separator();
+            if ui.button("Create token from this color").clicked() {
+                *choice = Some(TokenChoice::CreateFrom(target));
+                ui.close();
+            }
+            if bound.is_some() && ui.button("Detach token").clicked() {
+                *choice = Some(TokenChoice::Bind(target, None));
+                ui.close();
+            }
         });
-        let theme = ui.interact(right, egui::Id::new("segment_theme"), Sense::hover());
-        theme.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, false, false, "Theme")
-        });
-        theme.on_hover_text("Theme tokens are not available yet");
     });
+    finished
+}
+
+/// Color swatch with a faint outline so light and transparent colors stay visible.
+fn swatch(painter: &Painter, rect: Rect, value: [u8; 4]) {
+    painter.rect_filled(rect, 3, color(value));
+    painter.rect_stroke(
+        rect,
+        3,
+        Stroke::new(1.0, Color32::from_white_alpha(46)),
+        StrokeKind::Inside,
+    );
 }
 
 /// Collapsible panel heading with an optional trailing icon control

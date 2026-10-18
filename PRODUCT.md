@@ -18,7 +18,8 @@ Create a free alternative to Paper for visual interface design. Use observed beh
 
 - Rust and egui own the application, including its document model and editor.
 - Use Phosphor Icons. The native integration is `egui-phosphor`; no React runtime is required.
-- Implemented behavior covers one artboard, text and rectangle nodes, layer controls, selection, drag/resize, a property inspector, undo/redo, local documents and HTML/SVG export. SVG retains explicit text lines; fonts and automatic wrapping differ between renderers.
+- Implemented behavior covers one artboard, text and rectangle nodes, layer controls, multi-selection with shared moves and align/distribute, named color tokens bound to layer, artboard and page colors, drag/resize, a property inspector, undo/redo, local documents and HTML/SVG export. SVG retains explicit text lines; fonts and automatic wrapping differ between renderers.
+- Documents with color tokens use format version 2; documents without them remain version 1. See `docs/document-format.md`. Spacing, radius and typography tokens, theme modes, marquee selection, group resize and snapping are not implemented.
 - Native egui painting is not a browser CSS engine. Layout fidelity, editable HTML/SVG import, vector/image layers, rich text, multiple artboards and MCP editing require later milestones.
 - No backend service or account is required for the first local editing workflow.
 

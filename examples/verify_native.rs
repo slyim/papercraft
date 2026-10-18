@@ -1,7 +1,7 @@
 use eframe::egui;
 use papercraft::{
     app::{PaperCraftApp, Tool, View},
-    document::{Document, Editor, NodeKind, atomic_write},
+    document::{Align, Axis, ColorTarget, Document, Editor, NodeKind, atomic_write},
     recents::Recents,
 };
 use std::path::PathBuf;
@@ -100,8 +100,74 @@ impl eframe::App for NativeCheck {
     }
 }
 
+/// Model workflow: create → bind/edit tokens → arrange → undo/redo → save → reopen →
+/// HTML/SVG export. Returns the themed starter used by the `theme`, `bound` and
+/// `arranged` scenarios.
+fn token_workflow(directory: &std::path::Path) -> Editor {
+    let mut editor = Editor::new(Document::example());
+    let ids: Vec<u64> = editor.document.nodes.iter().map(|n| n.id).collect();
+    let ink = editor
+        .create_token_from(ColorTarget::Node(ids[1]))
+        .unwrap()
+        .unwrap();
+    editor.rename_token(ink, "ink").unwrap();
+    editor.bind(ColorTarget::Node(ids[2]), Some(ink)).unwrap();
+    let surface = editor
+        .create_token_from(ColorTarget::Node(ids[0]))
+        .unwrap()
+        .unwrap();
+    editor.rename_token(surface, "surface").unwrap();
+    let accent = editor
+        .create_token_from(ColorTarget::Node(ids[3]))
+        .unwrap()
+        .unwrap();
+    editor.rename_token(accent, "accent").unwrap();
+    editor
+        .bind(ColorTarget::Node(ids[5]), Some(accent))
+        .unwrap();
+    let paper = editor
+        .create_token_from(ColorTarget::Background)
+        .unwrap()
+        .unwrap();
+    editor.rename_token(paper, "paper").unwrap();
+    editor.set_token_value(accent, [176, 72, 44, 255]).unwrap();
+    for id in [ids[3], ids[5]] {
+        assert_eq!(
+            editor.document.target_color(ColorTarget::Node(id)),
+            Some([176, 72, 44, 255])
+        );
+    }
+    editor.set_selection([ids[1], ids[2], ids[3]]);
+    let themed = editor.document.clone();
+    editor.align(Align::Left).unwrap();
+    editor.distribute(Axis::Vertical).unwrap();
+    let arranged = editor.document.clone();
+    editor.undo();
+    editor.undo();
+    assert_eq!(editor.document, themed);
+    editor.redo();
+    editor.redo();
+    assert_eq!(editor.document, arranged);
+    let path = directory.join("workflow.papercraft");
+    editor.document.save(&path).unwrap();
+    let reopened = Document::load(&path).unwrap();
+    assert_eq!(reopened, editor.document);
+    assert_eq!(reopened.version, 2);
+    let html = reopened.export_html().unwrap();
+    assert!(html.contains("--color-accent:rgba(176,72,44,1.0000);"));
+    let svg = reopened.export_svg().unwrap();
+    assert_eq!(svg.matches("fill=\"#b0482c\"").count(), 2);
+    atomic_write(&directory.join("workflow.html"), html.as_bytes()).unwrap();
+    atomic_write(&directory.join("workflow.svg"), svg.as_bytes()).unwrap();
+    println!("Model token/arrange/undo/redo/save/reopen/HTML+SVG workflow verified.");
+    // Return the themed, unarranged document for screenshots.
+    editor.undo();
+    editor.undo();
+    editor
+}
+
 /// Usage: `verify_native [directory] [scenario] [WIDTHxHEIGHT] [hover=X,Y]`.
-/// Scenarios: `editor` (default), `selected`, `tool`, `exchange`, `export`, `quit`, `dashboard`, `list`, `empty`.
+/// Scenarios: `editor` (default), `selected`, `tool`, `exchange`, `export`, `quit`, `dashboard`, `list`, `empty`, `theme`, `bound`, `arranged`.
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let directory = args
@@ -146,8 +212,11 @@ fn main() -> eframe::Result {
     )
     .unwrap();
     println!("Model create/edit/undo/redo/save/reopen/HTML+SVG export verified.");
+    let themed = token_workflow(&directory);
     let document = if scenario == "exchange" {
         serde_json::from_str(include_str!("../tests/fixtures/svg-exchange.papercraft")).unwrap()
+    } else if matches!(scenario.as_str(), "theme" | "bound" | "arranged") {
+        themed.document.clone()
     } else {
         Document::example()
     };
@@ -180,8 +249,18 @@ fn main() -> eframe::Result {
     };
     let mut app = PaperCraftApp::from_document(document.clone());
     match scenario.as_str() {
-        "selected" => app.editor.selected = document.nodes.get(3).map(|n| n.id),
+        "selected" => app.editor.select(document.nodes.get(3).map(|n| n.id)),
         "tool" => app.tool = Tool::Rectangle,
+        "theme" => {
+            app.theme = true;
+            app.selected_token = document
+                .tokens
+                .iter()
+                .find(|t| t.name == "accent")
+                .map(|t| t.id);
+        }
+        "bound" => app.editor.select(document.nodes.get(3).map(|n| n.id)),
+        "arranged" => app.editor.set_selection(themed.selection().iter().copied()),
         "dashboard" | "list" | "empty" => {
             let mut recents = if scenario == "empty" {
                 Recents::in_memory()

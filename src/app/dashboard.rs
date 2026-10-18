@@ -565,7 +565,7 @@ fn thumbnail(ui: &egui::Ui, rect: Rect, document: Option<&Document>, radius: u8)
         );
         return;
     };
-    painter.rect_filled(rect, radius, color(document.canvas));
+    painter.rect_filled(rect, radius, color(document.canvas_color()));
     let inner = rect.shrink(rect.width().min(rect.height()) * 0.08);
     let zoom = (inner.width() / document.width).min(inner.height() / document.height);
     let origin = rect.center() - vec2(document.width, document.height) * zoom / 2.0;

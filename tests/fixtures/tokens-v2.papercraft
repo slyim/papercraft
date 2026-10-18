@@ -1,0 +1,66 @@
+{
+  "version": 2,
+  "name": "Token fixture",
+  "width": 400.0,
+  "height": 300.0,
+  "background": [250, 250, 250, 255],
+  "canvas": [40, 40, 40, 255],
+  "background_token": 1,
+  "canvas_token": 3,
+  "next_id": 4,
+  "next_token_id": 4,
+  "tokens": [
+    { "id": 1, "name": "surface", "value": [246, 241, 232, 255] },
+    { "id": 2, "name": "accent", "value": [39, 65, 48, 204] },
+    { "id": 3, "name": "page", "value": [30, 30, 34, 255] }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "Card",
+      "kind": "rectangle",
+      "x": 40.0,
+      "y": 40.0,
+      "width": 200.0,
+      "height": 120.0,
+      "fill": [1, 2, 3, 255],
+      "radius": 12.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 2
+    },
+    {
+      "id": 2,
+      "name": "Label",
+      "kind": "text",
+      "x": 60.0,
+      "y": 180.0,
+      "width": 240.0,
+      "height": 40.0,
+      "fill": [35, 40, 48, 255],
+      "radius": 0.0,
+      "text": "Tokens & <values>",
+      "font_size": 20.0,
+      "hidden": false,
+      "locked": true,
+      "fill_token": 2
+    },
+    {
+      "id": 3,
+      "name": "Plain",
+      "kind": "rectangle",
+      "x": 260.0,
+      "y": 40.0,
+      "width": 100.0,
+      "height": 100.0,
+      "fill": [200, 30, 30, 255],
+      "radius": 0.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false
+    }
+  ]
+}

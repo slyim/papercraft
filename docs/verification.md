@@ -114,3 +114,60 @@ No document migration is required: `.crumbs` and `.papercraft` remain version 1;
 SVG keeps explicit text lines and clips overflow; automatic native/HTML wrapping, exact baselines/fonts and full glyph coverage are not reproduced. Root clipping of objects extending outside the artboard, target editing/resave, full cross-app round trips, PhotoCraft/DesignCraft runtime workflows, native file-dialog clicks, physical Cmd-Q, actual screen-reader use, large-document performance and other-platform builds remain unverified. Grouping/hierarchy, snapping/alignment, richer typography, image/vector layers, multiple artboards, layout and CLI/MCP are still gaps. The upstream Touch Bar teardown issue was not reproduced on this hardware.
 
 **Environment failures:** sandboxed native rendering produced macOS Launch Services/XPC errors and stalled; the owned verification PID was stopped. The same native checks succeeded outside the sandbox. Loopback binding was denied inside the sandbox and succeeded outside it. Dependency fetching needed access to Cargo's cache outside the writable roots and then succeeded at the pinned revision. These are sandbox/service restrictions, not application test failures. Research tooling was unchanged; `npm test` was not rerun for this increment.
+
+## Color tokens and arrangement (18 October 2026)
+
+Branch `codex/theme-tokens-arrangement`, created from the uncommitted `codex/reliability-svg-exchange` work on `bc3c52b`. That work was carried over unchanged; a patch and untracked-file archive were also kept outside the repository before editing. Host: Apple Silicon macOS, Rust 1.99.1, eframe/egui 0.36.2. No release, push or affiliation change was made.
+
+### Defect established before correction
+
+| Defect / cause | Focused proof and correction |
+|---|---|
+| A token-bound color property widened the inspector from 280 to 296 pt at both test sizes. The bound chip's name allowance left 26 pt for an 8 pt gap and a 22 pt detach button. Found while inspecting a native screenshot of this increment's own UI; it was not a baseline defect. | `inspector_width_is_stable_for_bound_and_multiple_selections` failed (296 ≠ 280) before the fix. The allowance now reserves 30 pt. The test also covers single, multiple and empty selections, and the Theme tab's left panel at 180 pt. |
+
+No baseline defect was reproduced in the selection, history, persistence or export paths touched here. The baseline already excluded hidden and locked layers from canvas hit-testing; Paper's January 2026 build log records fixing exactly that in Paper.
+
+### Completed checks
+
+- `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` and `git diff --check` pass.
+- `cargo test --locked` passes: 4 unit and 35 integration tests. The 17 new tests are in `tests/tokens.rs` (9) and `tests/arrangement.rs` (8). One existing assertion changed: version 2 is now valid, so the unsupported-version case uses version 3.
+- **Model tests:**
+  - token propagation to layer, artboard and page bindings; unbound literals unaffected
+  - name rules: case-insensitive uniqueness, CSS-safe characters, 64-byte limit
+  - rejected invalid references (dangling, v1-with-tokens, newer version, duplicate IDs/names, IDs beyond `next_token_id`) without replacing the current document
+  - delete-detaches-and-preserves, including on locked layers
+  - one history step each for create, create-from, rename, value, bind, detach and delete
+  - selection invariants under delete, duplicate and undo/redo
+  - align against shared bounds and the artboard, distribute with equal and overlapping gaps
+  - hidden/locked exclusion; nudge and hide/lock toggles
+- **Persistence and migration:**
+  - the committed `tests/fixtures/tokens-v2.papercraft` loads and resolves its deliberately stale literals to token values
+  - the `legacy.crumbs` and `svg-exchange.papercraft` version 1 fixtures re-save with no new keys and `version: 1`
+  - adding a token writes version 2 to a new path, leaving original bytes unchanged; deleting all tokens writes version 1 with the same colors
+- **Baseline reader, real code:** an example built from `bc3c52b` in a temporary worktree rejected the fixture and a generated workflow file (unknown field `background_token`), left both byte-identical, and opened a tokenless file written by this build as version 1.
+- **Simulated egui input** at 1380×860 and 960×640 where noted:
+  - inspector token menu: create from color, bind a second layer, show the bound name, detach
+  - Theme tab: select a token and type a hex value. The canvas repaints both layers before Enter; one undo reverts the edit.
+  - dashboard thumbnails paint resolved token colors and never the stale literal
+  - Shift-click add/remove on the canvas, with locked/hidden layers not pickable
+  - a shared drag at both zoom levels moves every arrangeable layer by the same document distance, as one undo step
+  - ⌘A, ⌥W, ⌃⌥H (distinguished from center alignment), arrow nudge: one step each
+  - the inspector Align/Distribute buttons
+  - layer-list Shift-click including a locked layer, which is not moved
+  - ⌘S on a version 1 file with tokens shows the upgrade prompt and writes nothing. Cancel keeps the file; Upgrade writes version 2; later saves do not prompt.
+- **Native rendering** (`examples/verify_native.rs`, actual OpenGL window, screenshots inspected): `theme`, `bound` and `arranged` at 1380×860 and 960×640 under `target/verification/tokens/`. `selected`, `dashboard` and `export` were re-rendered under `target/verification/regress/` without visible regressions. The example's model preflight runs create → create-from/bind/rename/edit tokens → align/distribute → undo/redo → save → reopen (version 2, equal) → HTML/SVG export, then asserts the resolved accent color in both outputs.
+- **Browser:** the built-in Chromium pane, via a loopback server, opened `workflow.html` (SHA-256 `7888454e88ad17b2ea6b1cb9f50d5ab9797d0c811cf172a0af18faaedccbe9c0`) and `workflow.svg` (`1649cb80acf2e7b70a62bbe9ee951471ffb1ec59a9810d37532e195bfc36bf92`). Computed colors of every layer match between the `var(--color-…)` HTML and the literal SVG (for example accent `rgb(176, 72, 44)`). There are zero scripts. The SVG screenshot was inspected.
+- `cargo build --release --locked` passes; `target/release/papercraft` is Mach-O arm64.
+
+### Not verified
+
+- **Physical input:** keyboard/mouse input to the native window was not exercised. No computer-use tools were available in this session. Every interaction above is either a model call or simulated egui events, including the native example's renderer run.
+- **Platform and environment:** native file dialogs (Save As from the upgrade prompt), macOS Option-key delivery from a physical keyboard, screen readers, other platforms and large-document performance are unverified.
+- **Paper runtime:** no Paper runtime comparison was made.
+
+**Environment:** the native examples and the loopback server ran successfully in this session; no sandbox or service failure occurred. The baseline worktree was temporary and has been removed.
+
+### Compatibility and limits
+
+- **Format:** documents without tokens remain version 1 and still open in earlier builds. Documents with tokens are version 2, which earlier builds refuse without modifying them. Rollback is to delete the tokens, or to strip the version 2 keys as described in [document format](document-format.md). Recent-file storage is unchanged.
+- **Not implemented:** marquee selection, multi-layer resize, grouping, snapping, theme modes, non-color tokens, token copy/duplicate, and multi-selection property editing.

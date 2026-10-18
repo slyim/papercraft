@@ -29,7 +29,7 @@ fn legacy_crumbs_documents_survive_the_papercraft_rename() {
 fn document_edit_history_save_and_export_round_trip() {
     let mut editor = Editor::new(Document::default());
     editor.add(NodeKind::Text).unwrap();
-    let id = editor.selected.unwrap();
+    let id = editor.selected().unwrap();
     let before = editor.document.clone();
     let node = &mut editor.document.nodes[0];
     node.x = 175.0;
@@ -39,12 +39,12 @@ fn document_edit_history_save_and_export_round_trip() {
     editor.undo();
     assert_eq!(editor.document, before);
     editor.redo();
-    assert_eq!(editor.selected, Some(id));
+    assert_eq!(editor.selected(), Some(id));
     assert_eq!(editor.document.nodes[0].x, 175.0);
     editor.duplicate().unwrap();
     assert_ne!(editor.document.nodes[0].id, editor.document.nodes[1].id);
     editor.reorder(false).unwrap();
-    assert_eq!(editor.document.nodes[0].id, editor.selected.unwrap());
+    assert_eq!(editor.document.nodes[0].id, editor.selected().unwrap());
     editor.delete().unwrap();
     assert_eq!(editor.document.nodes.len(), 1);
     let directory = tempfile::tempdir().unwrap();
@@ -82,7 +82,7 @@ fn invalid_documents_and_edits_cannot_replace_valid_work() {
     invalid.nodes[1].id = invalid.nodes[0].id;
     assert!(invalid.validate().is_err());
     invalid = valid.clone();
-    invalid.version = 2;
+    invalid.version = 3;
     assert!(invalid.validate().is_err());
     invalid = valid.clone();
     invalid.nodes[0].height = -1.0;
@@ -96,7 +96,7 @@ fn invalid_documents_and_edits_cannot_replace_valid_work() {
     assert!(Document::load(&bad_path).is_err());
     assert_eq!(Document::load(&path).unwrap(), valid);
     editor.document.nodes[0].locked = true;
-    editor.selected = Some(editor.document.nodes[0].id);
+    editor.select(Some(editor.document.nodes[0].id));
     let count = editor.document.nodes.len();
     editor.delete().unwrap();
     editor.duplicate().unwrap();
@@ -347,7 +347,7 @@ fn positioned_layers_are_rounded_clamped_and_single_history_steps() {
     assert_eq!(editor.document.nodes.len(), 1);
     editor.undo();
     assert!(editor.document.nodes.is_empty());
-    assert_eq!(editor.selected, None);
+    assert_eq!(editor.selected(), None);
 }
 
 #[test]
@@ -400,7 +400,7 @@ fn side_panels_keep_their_width_across_frames() {
             let ctx = egui::Context::default();
             PaperCraftApp::configure(&ctx);
             let mut app = PaperCraftApp::from_document(Document::example());
-            app.editor.selected = selected;
+            app.editor.select(selected);
             let width = |ctx: &egui::Context, id: &str| {
                 egui::PanelState::load(ctx, egui::Id::new(id)).map(|s| s.size().x)
             };

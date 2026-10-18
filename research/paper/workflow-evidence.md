@@ -38,3 +38,15 @@ September 2026's build log still lists rich text, reusable components, a scale t
 **Inference / PaperCraft decision:** bounded SVG export is the first coherent exchange slice after demonstrated preservation/history/input fixes. It reaches a documented Paper format and the existing [Craft integration roadmap](../../docs/artcraft.md) using the current rectangle/text/artboard model. It needs no schema change, imported assets, remote services or second document model.
 
 The contract is validated artboard dimensions/viewBox; ordered visible rectangles and plain text; RGBA fills, radii, clipping and XML escaping; atomic output; clear typography limits. HTML remains the browser-layout handoff and `.papercraft`/legacy `.crumbs` version 1 remain the editing source. SVG is not a Paper file conversion or a lossless round trip. Cross-app compatibility may be reported only for the fixture and target revision actually inspected. [Gap assessment](../../docs/gap-assessment.md), [verification](../../docs/verification.md)
+
+## Color tokens and arrangement (D2)
+
+Checked 18 October 2026. The `app.asar` SHA-256 still equals E1 (`912bad3f…b78b2`) and the version is still 0.5.16. A static search of E1's evidence for token or alignment terms found only unrelated authentication tokens and a PDF-library text alignment helper. The token editor lives in the hosted editor that E1 does not contain, so no new REA analysis was useful. No Paper runtime interaction was performed and no Paper connector was available in this session.
+
+D2 is a refetch of the [tokens](https://paper.design/docs/tokens), [support](https://paper.design/docs/support) and [build log](https://paper.design/build-log) pages. All three returned HTTP 200 and show no last-updated date. A paraphrased private record is at `research/private/paper-tokens-2026-10-18/docs-refetch.md` (SHA-256 `2138108b499271d0baa607e0a02f74e3efbc2a15cc254334695df55322bfee60`).
+
+| Kind | Content |
+|---|---|
+| Documented | Token types include color, radius, spacing, typography and more. Tokens are created in a Theme tab and bound from property dropdowns, with a four-circle control for colors. Updates propagate. Detach keeps the current value. Tokens can be renamed, duplicated and deleted. Align shortcuts are ⌥W/S/A/D/V/H, distribute is ⌃⌥H/V, nudge is 1 px (Shift: 8 px default) and ⌘A selects siblings. In the build log: in-app tokens and a token SVG/PDF export fix (August 2026), creating a color token from a property panel (September 2026), and a fix that stopped locked/hidden elements being selectable on the canvas (January 2026). |
+| Not documented / unknown | The effect of deleting a token on bound properties, undo for token changes, page/artboard color tokens, the modifier for adding to a canvas selection, align reference bounds and single-layer behavior, distribute semantics, and how hidden/locked layers affect arrangement. |
+| PaperCraft decisions | All of the unknown items above. They are recorded in the [implementation process](../../docs/implementation-process.md#color-tokens-and-arrangement-increment--18-october-2026). Screenshots of Paper were not used. |

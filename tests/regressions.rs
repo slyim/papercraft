@@ -193,7 +193,7 @@ fn release_frame_delete_follows_the_gesture_without_panicking_or_merging_history
         ],
     );
     assert!(app.editor.document.nodes.is_empty());
-    assert_eq!(app.editor.selected, None);
+    assert_eq!(app.editor.selected(), None);
     app.editor.undo();
     assert_eq!(app.editor.document, moved);
     app.editor.undo();
