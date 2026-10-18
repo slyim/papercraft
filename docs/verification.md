@@ -28,7 +28,7 @@ Host: Linux aarch64 container, Rust 1.97.0, Xvfb with Mesa OpenGL. The macOS hos
 
 macOS title-bar integration (tab strip inset beside the window controls, window dragging from the strip; the window controls stay at the system position and are not vertically centered on the 41 pt strip), native file-dialog clicks, unsaved-change dialog choices, a complete manual editing session, screen-reader interaction, and every keyboard shortcut have not been exercised end to end. Model-level file safety and supported pointer gestures have automated coverage.
 
-Windows and Intel macOS builds, Linux release builds, distribution-license selection, large-document performance, font coverage for every writing system, and exact browser typography are unverified. A prior Linux aarch64 development rendering check is recorded above.
+Windows and Intel macOS builds, Linux release builds, large-document performance, font coverage for every writing system, and exact browser typography are unverified. A prior Linux aarch64 development rendering check is recorded above.
 
 Authenticated Paper editing and runtime parity remain unknown. Static evidence established the shipped shell and bridge, not the hosted editor internals. Nested layouts, images, SVG, multiple artboards, arbitrary CSS editing, Paper document compatibility, collaboration and a local MCP interface are deferred.
 
@@ -40,7 +40,15 @@ Host: Apple Silicon macOS 27.0.1, Rust 1.99.1. Version: 0.1.0, marked as a GitHu
 - `cargo build --release --locked` succeeds. The executable is Mach-O arm64, links only system libraries/frameworks, and declares macOS 11.0 as its minimum target. Runtime compatibility was checked only on macOS 27.0.1.
 - The native verification example rendered the editor at 1380×860 and dashboard at 960×640. Screenshots were inspected. Its save/reopen and HTML export assertions pass.
 - `Crumbs.app` uses the original release executable and `packaging/macos/Info.plist`. Launch Services opened the packaged app. Ad-hoc signature validation passes; Apple Developer ID signing and notarization are not configured.
-- The package includes notices for 137 normal/build dependency packages, bundled font/icon notices, and Rust standard-library notices. Package metadata and recovered upstream notice references accompany the license files. The application license remains undecided.
+- The package includes notices for 137 normal/build dependency packages, bundled font/icon notices, and Rust standard-library notices. Package metadata and recovered upstream notice references accompany the license files. The application license was undecided at initial publication; the later license decision is recorded below.
 - Local agent configuration, raw research, dependencies and build output are excluded from Git.
 
 Native file-dialog interactions, a complete manual editing session, screen-reader interaction and macOS approval prompts on a separate downloaded installation remain unverified. Finder document associations and automatic updates are not configured.
+
+## License and ecosystem alignment (18 October 2026)
+
+Original Crumbs code and documentation, including original code in v0.1.0, are now offered under `MIT OR Apache-2.0`. Third-party notices retain their own terms. Crumbs remains an independent companion project; no official catalog inclusion is claimed.
+
+Offline Cargo metadata, npm package/lockfile metadata, license texts and relative documentation links were checked. Application code, application dependencies and the existing release archive are unchanged. No additional application tests were run for this documentation and metadata change.
+
+The [integration plan](artcraft.md) cites checked upstream revisions and separates documented interfaces from proposed implementations. No cross-app editing, rendering, automation or installation was tested; adapters remain unimplemented.

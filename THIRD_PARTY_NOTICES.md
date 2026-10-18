@@ -9,4 +9,4 @@ REA is a development tool. Its copied workflow retains the upstream license in `
 
 Other dependencies retain their own licenses in their packages. `Cargo.lock` and `package-lock.json` identify the versions used; this file is not a complete distribution-license inventory. No Paper assets or source are included in application code.
 
-The macOS prerelease includes dependency notices, package metadata, upstream notice references, Rust standard-library notices, and font/icon licenses in `Crumbs.app/Contents/Resources/licenses/`. These third-party terms do not select a license for Crumbs itself.
+The macOS prerelease includes dependency notices, package metadata, upstream notice references, Rust standard-library notices, and font/icon licenses in `Crumbs.app/Contents/Resources/licenses/`. These materials retain their own terms. Original Crumbs code and documentation are separately offered under MIT or Apache-2.0 in the repository's root license files.

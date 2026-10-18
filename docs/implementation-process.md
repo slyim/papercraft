@@ -63,3 +63,5 @@ The saved [analysis](../research/paper/analysis.md) and [compact evidence](../re
 | 4. Release check for this slice | Rust formatting, compilation and focused tests pass; launch the egui app and complete one create→edit→undo→save→reopen→export session. Record supported platform, check results and rendering differences. Confirm icons are Phosphor and required license notices are present. |
 
 Later planning may cover tokens, nested layouts, images/SVG, imports and local MCP. Each requires separate behavior proof and acceptance checks. Full CSS layout, Paper file compatibility and multiplayer remain outside this slice.
+
+The [ArtCraft interoperability plan](artcraft.md) defines proposed cross-application work separately from Paper parity. Crumbs now uses `MIT OR Apache-2.0`; license alignment does not imply implemented adapters or official suite membership.

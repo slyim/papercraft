@@ -6,7 +6,7 @@ An original, local design editor built entirely in Rust with egui/eframe and Pho
 
 The [first prerelease](https://github.com/slyim/crumbs/releases/tag/v0.1.0) includes an Apple Silicon macOS build and SHA-256 checksums. Unzip it and move `Crumbs.app` to Applications. The app is ad-hoc signed and is not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt.
 
-This is an early preview. Windows, Linux and Intel macOS downloads are not provided. The application distribution license remains undecided.
+This is an early preview. Windows, Linux and Intel macOS downloads are not provided.
 
 ## Run the editor
 
@@ -48,7 +48,17 @@ The native verification example opens a real egui window, captures the renderer 
 - [Verification record](docs/verification.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-The project has no application distribution license selected yet.
+## ArtCraft interoperability
+
+Crumbs is an independently maintained companion project targeting interoperability with the [Craft app ecosystem](https://getartcraft.com/apps). It is not an official ArtCraft app or currently included in Craft Launcher.
+
+The [integration plan](docs/artcraft.md) starts with SVG exchange for VectorCraft and FigCraft, then PNG/image exchange for PhotoCraft and motion tools, followed by shared command-based automation. These integrations are planned; the current release exports HTML only. The plan records the upstream interfaces, shared Rust libraries, acceptance checks and launcher enrollment requirements.
+
+## License
+
+Original Crumbs code and documentation are available under either the [MIT license](LICENSE-MIT) or [Apache License 2.0](LICENSE-APACHE), at your option. This grant also covers the original Crumbs code in the v0.1.0 release. This matches the native Craft apps' `MIT OR Apache-2.0` license choice.
+
+Third-party tooling, fonts and icons retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). License alignment does not establish ArtCraft affiliation or file compatibility.
 
 ## Installed tooling
 

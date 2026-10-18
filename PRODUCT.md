@@ -32,4 +32,8 @@ The initial investigation is in `research/paper/analysis.md`. Its compact eviden
 
 ## Open Decisions
 
-Audience beyond the requesting user, distribution license, platform release targets, collaboration and detailed agent workflows remain undecided.
+Audience beyond the requesting user, platform release targets, collaboration and detailed agent workflows remain undecided.
+
+## Ecosystem and License
+
+Original Crumbs code and documentation use `MIT OR Apache-2.0`, matching the native Craft apps. Crumbs remains independently maintained. The phased plan in `docs/artcraft.md` targets open-format exchange, shared Rust utilities where needed, and command-based automation. No Craft app adapter or launcher enrollment is implemented yet.
