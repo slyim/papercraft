@@ -3,6 +3,7 @@ use papercraft::{
     app::{PaperCraftApp, Tool, View},
     document::{DEFAULT_CANVAS, Document, Editor, NodeKind},
     recents::Recents,
+    ui,
 };
 
 #[test]
@@ -109,6 +110,8 @@ fn native_editor_renders_at_supported_sizes_and_keyboard_actions_use_history() {
         let ctx = egui::Context::default();
         PaperCraftApp::configure(&ctx);
         let mut app = PaperCraftApp::from_document(Document::example());
+        // This checks exact pointer alignment; snapping is covered in tests/canvas.rs.
+        app.snapping = false;
         let frame = |events| egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -409,7 +412,7 @@ fn side_panels_keep_their_width_across_frames() {
             for _ in 0..8 {
                 run(&ctx, &mut app, size, Vec::new());
             }
-            assert_eq!(first, (Some(180.0), Some(280.0)));
+            assert_eq!(first, (Some(ui::SIDEBAR), Some(ui::INSPECTOR)));
             assert_eq!((width(&ctx, "layers"), width(&ctx, "inspector")), first);
         }
     }
@@ -495,28 +498,35 @@ fn dashboard_opens_recents_and_tabs_protect_unsaved_work() {
     assert_eq!(app.view, View::Editor);
 
     // Closing a clean tab activates the remaining one without asking.
+    // The compact tab strip reveals one close control while that tab is hovered.
     let output = run(&ctx, &mut app, size, Vec::new());
-    let closes = text_rects(&output, egui_phosphor::regular::X);
-    assert_eq!(closes.len(), 2, "One close button per tab");
-    let close = closes
-        .iter()
-        .max_by(|a, b| a.left().total_cmp(&b.left()))
-        .unwrap();
+    assert!(text_rects(&output, egui_phosphor::regular::X).is_empty());
+    let hover_close = |app: &mut PaperCraftApp, label: &str| {
+        let output = run(&ctx, app, size, Vec::new());
+        let tab = text_rect(&output, label).expect("Document tab");
+        run(
+            &ctx,
+            app,
+            size,
+            vec![egui::Event::PointerMoved(tab.center())],
+        );
+        let output = run(&ctx, app, size, Vec::new());
+        text_rect(&output, egui_phosphor::regular::X).expect("Hovered close button")
+    };
+    let close = hover_close(&mut app, "Second document");
     click(&ctx, &mut app, size, close.center());
     assert_eq!(app.tab_count(), 1);
     assert_eq!(app.editor.document.name, "A place to begin");
     assert_eq!(app.view, View::Editor);
 
     // Closing the unsaved tab asks first; cancel keeps it.
-    let output = run(&ctx, &mut app, size, Vec::new());
-    let close = text_rect(&output, egui_phosphor::regular::X).expect("Close tab button");
+    let close = hover_close(&mut app, "A place to begin");
     click(&ctx, &mut app, size, close.center());
     let output = run(&ctx, &mut app, size, Vec::new());
     let cancel = text_rect(&output, "Cancel").expect("Unsaved changes prompt");
     click(&ctx, &mut app, size, cancel.center());
     assert!(app.document_open());
-    let output = run(&ctx, &mut app, size, Vec::new());
-    let close = text_rect(&output, egui_phosphor::regular::X).unwrap();
+    let close = hover_close(&mut app, "A place to begin");
     click(&ctx, &mut app, size, close.center());
     let output = run(&ctx, &mut app, size, Vec::new());
     let discard = text_rect(&output, "Discard changes").expect("Unsaved changes prompt");

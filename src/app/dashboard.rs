@@ -3,7 +3,10 @@
 use super::{Intent, PaperCraftApp, color, paint_document};
 use crate::document::Document;
 use crate::recents::edited_label;
-use crate::ui::{self, BODY, BORDER, MAIN, ROW, Row, SHELL, TEXT, TEXT_DIM, TEXT_FAINT};
+use crate::ui::{
+    self, BODY, BORDER, CAPTION, ICON, ICON_SMALL, MAIN, ROW, Row, SHELL, SPACE_2XL, SPACE_3XL,
+    SPACE_L, SPACE_M, SPACE_S, SPACE_XL, SPACE_XS, TEXT, TEXT_DIM, TEXT_FAINT,
+};
 use eframe::egui::{self, Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
 use egui_phosphor::regular as icon;
 use std::{
@@ -12,9 +15,12 @@ use std::{
     time::SystemTime,
 };
 
-const CARD_MIN_WIDTH: f32 = 280.0;
-const CARD_GAP: f32 = 24.0;
-const CARD_HEADER: f32 = 58.0;
+const CARD_MIN_WIDTH: f32 = 256.0;
+const CARD_GAP: f32 = SPACE_XL;
+/// Title and subtitle above the preview.
+const CARD_HEADER: f32 = 48.0;
+/// List view row height and its thumbnail.
+const LIST_ROW: f32 = 48.0;
 
 pub(super) fn search_id() -> egui::Id {
     egui::Id::new("dashboard_search")
@@ -82,9 +88,10 @@ impl PaperCraftApp {
     pub(super) fn dashboard(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.cards.refresh(self.recents.files());
         egui::Panel::left("dashboard_sidebar")
-            .exact_size(240.0)
+            .exact_size(ui::SIDEBAR)
             .resizable(false)
-            .frame(egui::Frame::NONE.fill(SHELL))
+            // Same tone as the content, divided by the panel's hairline.
+            .frame(egui::Frame::NONE.fill(MAIN))
             .show(ui, |ui| self.dashboard_sidebar(ui, ctx));
         let action = egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(MAIN))
@@ -106,11 +113,11 @@ impl PaperCraftApp {
     }
 
     fn dashboard_sidebar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.spacing_mut().item_spacing = vec2(0.0, 1.0);
-        ui.add_space(11.0);
-        // Application header.
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        ui.add_space(SPACE_M);
+        // Application header, aligned with the row icons and labels below it.
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
-        let mark = pos2(rect.left() + 26.0, rect.center().y);
+        let mark = pos2(rect.left() + SPACE_L + ICON_SMALL / 2.0, rect.center().y);
         let logo = self.logo.get_or_insert_with(|| {
             let icon = ui::app_icon();
             ctx.load_texture(
@@ -124,31 +131,33 @@ impl PaperCraftApp {
         });
         ui.painter().image(
             logo.id(),
-            Rect::from_center_size(mark, vec2(24.0, 24.0)),
+            Rect::from_center_size(mark, vec2(ICON, ICON)),
             Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0)),
             Color32::WHITE,
         );
         ui.painter().text(
-            pos2(rect.left() + 46.0, rect.center().y),
+            pos2(
+                rect.left() + SPACE_L + ICON_SMALL + SPACE_S,
+                rect.center().y,
+            ),
             Align2::LEFT_CENTER,
             "PaperCraft",
             ui::font(BODY),
             TEXT,
         );
-        ui.add_space(12.0);
+        ui.add_space(SPACE_S);
         // Search.
         egui::Frame::NONE
-            .inner_margin(egui::Margin::symmetric(12, 0))
+            .inner_margin(egui::Margin::symmetric(8, 0))
             .show(ui, |ui| {
                 ui::field_frame().show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.set_height(ROW);
                     ui.horizontal_centered(|ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        ui.add_space(2.0);
+                        ui.spacing_mut().item_spacing.x = SPACE_S;
                         ui.label(
                             RichText::new(icon::MAGNIFYING_GLASS)
-                                .size(16.0)
+                                .size(ICON_SMALL)
                                 .color(TEXT_DIM),
                         );
                         let hint = if cfg!(target_os = "macos") {
@@ -156,7 +165,7 @@ impl PaperCraftApp {
                         } else {
                             "Ctrl F"
                         };
-                        let edit_width = ui.available_width() - 40.0;
+                        let edit_width = ui.available_width() - SPACE_2XL - SPACE_S;
                         ui.add(
                             egui::TextEdit::singleline(&mut self.search)
                                 .id(search_id())
@@ -167,15 +176,13 @@ impl PaperCraftApp {
                                 .text_color(TEXT),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.add_space(4.0);
-                            ui.label(RichText::new(hint).size(12.5).color(TEXT_DIM));
+                            ui.label(RichText::new(hint).size(CAPTION).color(TEXT_DIM));
                         });
                     });
                 });
             });
-        ui.add_space(12.0);
+        ui.add_space(SPACE_M);
         if Row::new(icon::CLOCK, "Recents")
-            .indent(19.0)
             .selected(true)
             .show(ui)
             .on_hover_text("Recently opened and saved files")
@@ -184,14 +191,13 @@ impl PaperCraftApp {
             self.search.clear();
         }
         if Row::new(icon::FOLDER_OPEN, "Open file…")
-            .indent(19.0)
             .show(ui)
             .on_hover_text("Open a .papercraft or legacy .crumbs document")
             .clicked()
         {
             self.request(Intent::Open, ctx);
         }
-        ui.add_space(12.0);
+        ui.add_space(SPACE_M);
         ui::hline(ui);
 
         egui::Panel::bottom("dashboard_footer")
@@ -199,19 +205,19 @@ impl PaperCraftApp {
                 left: 16,
                 right: 12,
                 top: 8,
-                bottom: 12,
+                bottom: 16,
             }))
             .show_separator_line(false)
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
+                ui.spacing_mut().item_spacing.y = SPACE_S;
                 if !self.status.is_empty() && !self.document_open {
-                    ui.label(RichText::new(&self.status).size(12.0).color(TEXT_DIM));
+                    ui.label(RichText::new(&self.status).size(CAPTION).color(TEXT_DIM));
                 }
                 let shortcuts = ui
                     .add(
                         egui::Label::new(
                             RichText::new("Keyboard shortcuts")
-                                .size(12.5)
+                                .size(CAPTION)
                                 .color(TEXT_DIM),
                         )
                         .sense(Sense::click()),
@@ -311,26 +317,29 @@ impl PaperCraftApp {
 
     fn dashboard_main(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) -> Option<Action> {
         let full = ui.max_rect();
-        let padding = (full.width() * 0.065).clamp(24.0, 80.0);
+        // Narrow windows keep half the side padding.
+        let padding = if full.width() >= 640.0 {
+            SPACE_3XL
+        } else {
+            SPACE_2XL
+        };
         let content = full.shrink2(vec2(padding, 0.0));
         // Header: title, new file, layout switch.
         let header = Rect::from_min_size(
-            pos2(content.left(), full.top() + 30.0),
-            vec2(content.width(), 34.0),
+            pos2(content.left(), full.top() + SPACE_2XL),
+            vec2(content.width(), SPACE_2XL),
         );
         ui.painter().text(
             header.left_center(),
             Align2::LEFT_CENTER,
             "Recents",
-            ui::font(26.0),
+            ui::font(ui::HEADING),
             TEXT,
         );
         let switch = Rect::from_min_size(
-            pos2(header.right() - 58.0, header.center().y - 15.0),
-            vec2(58.0, 30.0),
+            pos2(header.right() - 2.0 * ROW, header.center().y - ROW / 2.0),
+            vec2(2.0 * ROW, ROW),
         );
-        ui.painter()
-            .rect_filled(switch, ui::RADIUS, Color32::from_gray(45));
         for (index, (glyph, label, list)) in [
             (icon::SQUARES_FOUR, "Grid view", false),
             (icon::LIST, "List view", true),
@@ -338,17 +347,15 @@ impl PaperCraftApp {
         .into_iter()
         .enumerate()
         {
-            let slot = Rect::from_min_size(
-                switch.min + vec2(1.0 + index as f32 * 28.0, 1.0),
-                vec2(28.0, 28.0),
-            );
+            let slot =
+                Rect::from_min_size(switch.min + vec2(index as f32 * ROW, 0.0), vec2(ROW, ROW));
             let selected = self.list_view == list;
             if ui::icon_button_at(
                 ui,
                 slot,
                 egui::Id::new(("layout_switch", index)),
                 glyph,
-                17.0,
+                ICON,
                 selected,
                 true,
                 label,
@@ -358,19 +365,31 @@ impl PaperCraftApp {
                 self.list_view = list;
             }
         }
+        // Sized to its label with 12 pt padding, rounded up to the 4 pt grid.
+        let label = format!("{}  New file", icon::PLUS);
+        let text = ui
+            .painter()
+            .layout_no_wrap(label.clone(), ui::font(BODY), TEXT)
+            .size()
+            .x;
+        let new_file_width = ((text + 2.0 * SPACE_M) / SPACE_XS).ceil() * SPACE_XS;
         let new_file = Rect::from_min_size(
-            pos2(switch.left() - 12.0 - 108.0, header.center().y - 15.0),
-            vec2(108.0, 30.0),
+            pos2(
+                switch.left() - SPACE_M - new_file_width,
+                header.center().y - ROW / 2.0,
+            ),
+            vec2(new_file_width, ROW),
         );
         if ui
             .put(
                 new_file,
                 egui::Button::new(
-                    RichText::new(format!("{}  New file", icon::PLUS))
+                    RichText::new(label)
                         .size(BODY)
                         .color(Color32::from_gray(24)),
                 )
-                .fill(Color32::from_gray(242)),
+                .fill(Color32::from_gray(242))
+                .corner_radius(ui::RADIUS),
             )
             .on_hover_text("Create a new document")
             .clicked()
@@ -379,7 +398,8 @@ impl PaperCraftApp {
             return None;
         }
 
-        let body = Rect::from_min_max(pos2(full.left(), full.top() + 108.0), full.max);
+        // Title row, then the same gap again before the cards.
+        let body = Rect::from_min_max(pos2(full.left(), header.bottom() + SPACE_2XL), full.max);
         let mut action = None;
         let cards = self.collect_cards();
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
@@ -392,16 +412,16 @@ impl PaperCraftApp {
             } else {
                 ("No matching files", "Try another name or clear the search.")
             };
-            child.add_space(40.0);
+            child.add_space(SPACE_2XL);
             child.vertical_centered(|ui| {
                 ui.label(
                     RichText::new(icon::FILE_DASHED)
                         .size(32.0)
                         .color(TEXT_FAINT),
                 );
-                ui.add_space(8.0);
-                ui.label(RichText::new(title).size(15.0).color(TEXT));
-                ui.add_space(4.0);
+                ui.add_space(SPACE_S);
+                ui.label(RichText::new(title).size(SPACE_L).color(TEXT));
+                ui.add_space(SPACE_XS);
                 ui.label(RichText::new(detail).color(TEXT_DIM));
             });
             return None;
@@ -413,9 +433,12 @@ impl PaperCraftApp {
                 let width = content.width();
                 if self.list_view {
                     for (index, card) in cards.iter().enumerate() {
-                        let (rect, _) = ui
-                            .allocate_exact_size(vec2(ui.available_width(), 60.0), Sense::hover());
-                        let row = Rect::from_min_size(pos2(left, rect.top()), vec2(width, 56.0));
+                        let (rect, _) = ui.allocate_exact_size(
+                            vec2(ui.available_width(), LIST_ROW + SPACE_XS),
+                            Sense::hover(),
+                        );
+                        let row =
+                            Rect::from_min_size(pos2(left, rect.top()), vec2(width, LIST_ROW));
                         if let Some(a) = list_row(ui, index, row, card) {
                             action = Some(a);
                         }
@@ -425,7 +448,8 @@ impl PaperCraftApp {
                         as usize)
                         .max(1);
                     let card_width = (width - CARD_GAP * (columns as f32 - 1.0)) / columns as f32;
-                    let card_height = CARD_HEADER + (card_width - 8.0) / 1.53 + 4.0;
+                    // Preview inset by 4 pt on three sides, in a 3:2 frame.
+                    let card_height = CARD_HEADER + (card_width - SPACE_S) / 1.5 + SPACE_XS;
                     for (row_index, row) in cards.chunks(columns).enumerate() {
                         let (rect, _) = ui.allocate_exact_size(
                             vec2(ui.available_width(), card_height + CARD_GAP),
@@ -485,10 +509,10 @@ fn grid_card(ui: &mut egui::Ui, index: usize, rect: Rect, card: &Card) -> Option
     let response = card_response(ui, index, rect, card);
     let hovered = response.hovered();
     let painter = ui.painter();
-    painter.rect_filled(rect, 8, SHELL);
+    painter.rect_filled(rect, ui::RADIUS_LARGE, SHELL);
     painter.rect_stroke(
         rect,
-        8,
+        ui::RADIUS_LARGE,
         Stroke::new(
             1.0,
             if hovered {
@@ -499,45 +523,58 @@ fn grid_card(ui: &mut egui::Ui, index: usize, rect: Rect, card: &Card) -> Option
         ),
         StrokeKind::Inside,
     );
-    let title = ui::truncated(ui, &card.title, BODY, TEXT, rect.width() - 32.0);
+    let text_width = rect.width() - 2.0 * SPACE_M;
+    let title = ui::truncated(ui, &card.title, BODY, TEXT, text_width);
     ui.painter().galley(
-        pos2(rect.left() + 16.0, rect.top() + 21.0 - title.size().y / 2.0),
+        pos2(
+            rect.left() + SPACE_M,
+            rect.top() + SPACE_L - title.size().y / 2.0,
+        ),
         title,
         TEXT,
     );
-    let subtitle = ui::truncated(ui, &card.subtitle, BODY, TEXT_DIM, rect.width() - 32.0);
+    let subtitle = ui::truncated(ui, &card.subtitle, BODY, TEXT_DIM, text_width);
     ui.painter().galley(
         pos2(
-            rect.left() + 16.0,
-            rect.top() + 40.0 - subtitle.size().y / 2.0,
+            rect.left() + SPACE_M,
+            rect.top() + SPACE_2XL - subtitle.size().y / 2.0,
         ),
         subtitle,
         TEXT_DIM,
     );
     let thumb = Rect::from_min_max(
-        pos2(rect.left() + 4.0, rect.top() + CARD_HEADER),
-        rect.max - vec2(4.0, 4.0),
+        pos2(rect.left() + SPACE_XS, rect.top() + CARD_HEADER),
+        rect.max - vec2(SPACE_XS, SPACE_XS),
     );
-    thumbnail(ui, thumb, card.document, 5);
+    thumbnail(ui, thumb, card.document, ui::RADIUS);
     card_action(&response, card)
 }
 
 fn list_row(ui: &mut egui::Ui, index: usize, rect: Rect, card: &Card) -> Option<Action> {
     let response = card_response(ui, index, rect, card);
     if response.hovered() {
-        ui.painter().rect_filled(rect, 8, ui::HOVER);
+        ui.painter().rect_filled(rect, ui::RADIUS_LARGE, ui::HOVER);
     }
-    let thumb = Rect::from_min_size(rect.left_top() + vec2(8.0, 8.0), vec2(64.0, 40.0));
-    thumbnail(ui, thumb, card.document, 4);
-    let text_left = thumb.right() + 14.0;
+    let thumb = Rect::from_min_size(
+        rect.left_top() + vec2(SPACE_S, SPACE_S),
+        vec2(LIST_ROW, LIST_ROW - SPACE_L),
+    );
+    thumbnail(ui, thumb, card.document, ui::RADIUS);
+    let text_left = thumb.right() + SPACE_M;
     let path_width = (rect.width() * 0.4).min(420.0);
-    let text_width = rect.right() - path_width - text_left - 16.0;
+    let text_width = rect.right() - path_width - text_left - SPACE_L;
     let title = ui::truncated(ui, &card.title, BODY, TEXT, text_width);
-    ui.painter()
-        .galley(pos2(text_left, rect.top() + 10.0), title, TEXT);
-    let subtitle = ui::truncated(ui, &card.subtitle, 12.5, TEXT_DIM, text_width);
-    ui.painter()
-        .galley(pos2(text_left, rect.top() + 30.0), subtitle, TEXT_DIM);
+    ui.painter().galley(
+        pos2(text_left, rect.top() + SPACE_L - title.size().y / 2.0),
+        title,
+        TEXT,
+    );
+    let subtitle = ui::truncated(ui, &card.subtitle, CAPTION, TEXT_DIM, text_width);
+    ui.painter().galley(
+        pos2(text_left, rect.top() + SPACE_2XL - subtitle.size().y / 2.0),
+        subtitle,
+        TEXT_DIM,
+    );
     if let Some(path) = card.path {
         let location = ui::truncated(
             ui,
@@ -545,13 +582,13 @@ fn list_row(ui: &mut egui::Ui, index: usize, rect: Rect, card: &Card) -> Option<
                 .parent()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default(),
-            12.5,
+            CAPTION,
             TEXT_FAINT,
             path_width,
         );
         ui.painter().galley(
             pos2(
-                rect.right() - 16.0 - location.size().x,
+                rect.right() - SPACE_L - location.size().x,
                 rect.center().y - location.size().y / 2.0,
             ),
             location,
@@ -570,7 +607,7 @@ fn thumbnail(ui: &egui::Ui, rect: Rect, document: Option<&Document>, radius: u8)
             rect.center(),
             Align2::CENTER_CENTER,
             icon::WARNING,
-            ui::icon_font(20.0),
+            ui::icon_font(ICON),
             TEXT_FAINT,
         );
         return;

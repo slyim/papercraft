@@ -1,9 +1,13 @@
 use crate::document::{
-    Align, Axis, ColorTarget, ColorToken, Document, Editor, NEW_TEXT, NodeKind, TextStyle,
-    atomic_write,
+    Align, Axis, ColorTarget, ColorToken, Document, Editor, IdSet, NEW_TEXT, Node, NodeKind,
+    TextStyle, atomic_write,
 };
 use crate::recents::Recents;
-use crate::ui::{self, ACCENT, BODY, BORDER, CONTROL, ROW, Row, SHELL, TEXT, TEXT_DIM};
+use crate::snap::{self, Frame, Guide, Handle, SNAP_DISTANCE, Side, Snapper};
+use crate::ui::{
+    self, ACCENT, BODY, BORDER, CAPTION, CONTROL, ICON, ICON_SMALL, ROW, Row, SHELL, SPACE_L,
+    SPACE_M, SPACE_S, SPACE_XS, TEXT, TEXT_DIM,
+};
 use eframe::egui::{
     self, Align2, Color32, FontId, Key, Modifiers, Painter, Pos2, Rect, RichText, Sense, Stroke,
     StrokeKind, Vec2, pos2, vec2,
@@ -15,12 +19,13 @@ mod dashboard;
 
 /// Left inset of the tab strip. On macOS the strip shares the title bar with the window
 /// controls.
-const TAB_INSET: f32 = if cfg!(target_os = "macos") { 80.0 } else { 8.0 };
+const TAB_INSET: f32 = if cfg!(target_os = "macos") { 72.0 } else { 8.0 };
 /// Default geometry for a rectangle placed with a single click.
 const CLICK_SIZE: Vec2 = vec2(220.0, 80.0);
-/// Extra width, in artboard units, given to auto-width text so that glyph rounding at
-/// other zoom levels does not wrap it.
+/// Extra artboard width prevents glyph rounding at other zoom levels from wrapping.
 const AUTO_WIDTH_SLACK: f32 = 2.0;
+/// Snapping guide color; distinct from the selection accent.
+const GUIDE: Color32 = Color32::from_rgb(242, 78, 120);
 
 #[derive(Clone, Debug, PartialEq)]
 enum Intent {
@@ -107,8 +112,23 @@ struct Drag {
     before: Document,
     start: Pos2,
     /// Layers moved together, or the single resized layer.
-    nodes: Vec<u64>,
-    resize: bool,
+    nodes: IdSet,
+    /// Positions of `nodes` in the document; layer order is fixed during a gesture.
+    indices: Vec<usize>,
+    /// Resize handle being dragged, or `None` when moving.
+    handle: Option<Handle>,
+    /// Bounds of `nodes` when the gesture started, in artboard units.
+    frame: Frame,
+    /// Edges and centers of the other visible layers and the artboard.
+    snapper: Snapper,
+}
+
+/// Marquee selection in progress, in artboard units.
+struct Marquee {
+    start: Pos2,
+    current: Pos2,
+    /// Selection kept when the marquee started with Shift.
+    base: Vec<u64>,
 }
 
 /// A token change requested by an inspector color control, applied after the panel.
@@ -118,19 +138,52 @@ enum TokenChoice {
     CreateFrom(ColorTarget),
 }
 
+/// The parts of a document that a panel edits in place during one frame: every field
+/// except the layers, plus at most one layer. Taking it is much cheaper than cloning a
+/// large document every frame.
+struct Snapshot {
+    header: Document,
+    node: Option<(usize, Node)>,
+}
+
+impl Snapshot {
+    fn take(document: &mut Document, node: Option<usize>) -> Self {
+        let nodes = std::mem::take(&mut document.nodes);
+        let header = document.clone();
+        document.nodes = nodes;
+        let node = node.and_then(|i| Some((i, document.nodes.get(i)?.clone())));
+        Self { header, node }
+    }
+
+    /// The document as it was when the snapshot was taken, or `None` when the panel
+    /// changed nothing.
+    fn before(self, document: &mut Document) -> Option<Document> {
+        let nodes = std::mem::take(&mut document.nodes);
+        let header_changed = self.header != *document;
+        document.nodes = nodes;
+        let node_changed = self
+            .node
+            .as_ref()
+            .is_some_and(|(i, node)| document.nodes.get(*i) != Some(node));
+        if !header_changed && !node_changed {
+            return None;
+        }
+        let mut before = self.header;
+        before.nodes = document.nodes.clone();
+        if let Some((i, node)) = self.node
+            && let Some(slot) = before.nodes.get_mut(i)
+        {
+            *slot = node;
+        }
+        Some(before)
+    }
+}
+
 /// A layer being drawn with the rectangle or text tool, in artboard coordinates.
 struct Creation {
     kind: NodeKind,
     start: Pos2,
     current: Pos2,
-}
-
-/// A selection rectangle dragged from empty canvas, in artboard coordinates.
-struct Marquee {
-    start: Pos2,
-    current: Pos2,
-    /// Selection kept when the drag started (Shift); otherwise empty.
-    base: Vec<u64>,
 }
 
 /// A text layer edited in place on the canvas.
@@ -170,6 +223,8 @@ struct Tab {
     fit: bool,
     file_version: u32,
     selected_token: Option<u64>,
+    text_style: TextStyle,
+    dirty: bool,
 }
 
 impl Tab {
@@ -184,28 +239,37 @@ impl Tab {
             pan: Vec2::ZERO,
             fit: true,
             selected_token: None,
+            text_style: TextStyle::default(),
+            dirty: false,
         }
     }
 
     fn dirty(&self) -> bool {
-        self.editor.document != self.saved
+        self.dirty
     }
 }
 
 pub struct PaperCraftApp {
     pub editor: Editor,
     saved: Document,
+    /// Result of comparing the committed document with `saved`, keyed by the editor
+    /// revision it was computed for. Comparing a large document every frame is costly.
+    dirty_cache: std::cell::Cell<Option<(u64, bool)>>,
     path: Option<PathBuf>,
     status: String,
     zoom: f32,
     pan: Vec2,
     fit: bool,
     drag: Option<Drag>,
-    creation: Option<Creation>,
     marquee: Option<Marquee>,
+    creation: Option<Creation>,
     text_edit: Option<TextEditing>,
     /// Style of the text layer most recently selected; new text layers use it.
     text_style: TextStyle,
+    /// Moving and resizing snap to layer and artboard edges and centers.
+    pub snapping: bool,
+    /// Shift was held when the primary button was last pressed on the canvas.
+    press_shift: bool,
     property_before: Option<Document>,
     pending: Option<Intent>,
     allow_close: bool,
@@ -241,6 +305,7 @@ impl PaperCraftApp {
     pub fn from_document(document: Document) -> Self {
         Self {
             saved: document.clone(),
+            dirty_cache: Default::default(),
             editor: Editor::new(document),
             path: None,
             status: "Starter document · local and editable".into(),
@@ -248,10 +313,12 @@ impl PaperCraftApp {
             pan: Vec2::ZERO,
             fit: true,
             drag: None,
-            creation: None,
             marquee: None,
+            creation: None,
             text_edit: None,
             text_style: TextStyle::default(),
+            snapping: true,
+            press_shift: false,
             property_before: None,
             pending: None,
             allow_close: false,
@@ -292,15 +359,15 @@ impl PaperCraftApp {
         ctx.set_visuals(egui::Visuals::dark());
         ctx.global_style_mut(|s| {
             s.spacing.item_spacing = vec2(8.0, 8.0);
-            s.spacing.button_padding = vec2(10.0, 6.0);
+            s.spacing.button_padding = vec2(SPACE_S, SPACE_XS);
             s.spacing.interact_size.y = ROW;
-            s.spacing.menu_margin = egui::Margin::same(6);
+            s.spacing.menu_margin = egui::Margin::same(4);
             let v = &mut s.visuals;
             v.panel_fill = SHELL;
             v.window_fill = SHELL;
             v.window_stroke = Stroke::new(1.0, BORDER);
-            v.window_corner_radius = egui::CornerRadius::same(10);
-            v.menu_corner_radius = egui::CornerRadius::same(8);
+            v.window_corner_radius = egui::CornerRadius::same(ui::RADIUS_LARGE);
+            v.menu_corner_radius = egui::CornerRadius::same(ui::RADIUS_LARGE);
             v.extreme_bg_color = Color32::from_rgb(30, 30, 30);
             v.faint_bg_color = Color32::from_rgb(46, 46, 46);
             v.override_text_color = None;
@@ -329,9 +396,9 @@ impl PaperCraftApp {
             s.text_styles
                 .insert(egui::TextStyle::Button, FontId::proportional(BODY));
             s.text_styles
-                .insert(egui::TextStyle::Small, FontId::proportional(12.0));
+                .insert(egui::TextStyle::Small, FontId::proportional(CAPTION));
             s.text_styles
-                .insert(egui::TextStyle::Heading, FontId::proportional(17.0));
+                .insert(egui::TextStyle::Heading, FontId::proportional(SPACE_L));
         });
     }
 
@@ -415,6 +482,7 @@ impl PaperCraftApp {
 
     /// Exchanges the active document state with the state stored in tab `index`.
     fn swap_tab(&mut self, index: usize) {
+        let dirty = self.dirty();
         let tab = &mut self.tabs[index];
         std::mem::swap(&mut self.editor, &mut tab.editor);
         std::mem::swap(&mut self.saved, &mut tab.saved);
@@ -424,6 +492,10 @@ impl PaperCraftApp {
         std::mem::swap(&mut self.fit, &mut tab.fit);
         std::mem::swap(&mut self.file_version, &mut tab.file_version);
         std::mem::swap(&mut self.selected_token, &mut tab.selected_token);
+        std::mem::swap(&mut self.text_style, &mut tab.text_style);
+        self.dirty_cache
+            .set(Some((self.editor.revision(), tab.dirty)));
+        tab.dirty = dirty;
     }
 
     /// Drops in-progress gestures and edits that belong to the active document.
@@ -455,7 +527,27 @@ impl PaperCraftApp {
     }
 
     fn dirty(&self) -> bool {
-        self.document_open && self.editor.document != self.saved
+        if !self.document_open {
+            return false;
+        }
+        // Uncommitted edits change the document without a new revision.
+        if self.property_before.is_some() || self.drag.is_some() || self.text_edit.is_some() {
+            return self.editor.document != self.saved;
+        }
+        let revision = self.editor.revision();
+        match self.dirty_cache.get() {
+            Some((cached, dirty)) if cached == revision => dirty,
+            _ => {
+                let dirty = self.editor.document != self.saved;
+                self.dirty_cache.set(Some((revision, dirty)));
+                dirty
+            }
+        }
+    }
+
+    fn set_saved(&mut self, document: Document) {
+        self.saved = document;
+        self.dirty_cache.set(None);
     }
 
     fn tab_dirty(&self, index: usize) -> bool {
@@ -531,15 +623,16 @@ impl PaperCraftApp {
         self.selected_token = None;
         self.renaming = None;
         self.upgrade_prompt = false;
-        self.saved = document.clone();
+        self.set_saved(document.clone());
         self.editor = Editor::new(document);
         self.path = path;
         self.fit = true;
         self.property_before = None;
         self.drag = None;
-        self.creation = None;
         self.marquee = None;
+        self.creation = None;
         self.text_edit = None;
+        self.text_style = TextStyle::default();
         self.tool = Tool::Select;
         self.zoom = 1.0;
         self.pan = Vec2::ZERO;
@@ -592,7 +685,7 @@ impl PaperCraftApp {
         match self.editor.document.save(&path) {
             Ok(()) => {
                 self.file_version = self.editor.document.required_version();
-                self.saved = self.editor.document.clone();
+                self.set_saved(self.editor.document.clone());
                 self.status = format!("Saved {}", path.display());
                 self.remember(&path);
                 self.path = Some(path);
@@ -1033,6 +1126,13 @@ impl PaperCraftApp {
                             ("R / T", "Rectangle / text tool"),
                             ("Esc", "Select tool, then clear selection"),
                             ("Shift + click", "Add or remove a layer from the selection"),
+                            (
+                                "Drag empty canvas",
+                                "Select layers with a marquee (Shift: add)",
+                            ),
+                            ("Drag a handle", "Resize; several layers scale together"),
+                            ("Shift + corner drag", "Resize keeping proportions"),
+                            ("⌘ / Ctrl + drag", "Move or resize without snapping"),
                             ("⌘ / Ctrl + A", "Select visible, unlocked layers"),
                             ("Arrow keys", "Move selection (Shift: 10 px)"),
                             ("⌥ / Alt + A, H, D", "Align left, horizontal centers, right"),
@@ -1072,7 +1172,7 @@ impl PaperCraftApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
         }
         ui.horizontal_centered(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.spacing_mut().item_spacing.x = SPACE_XS;
             ui.add_space(TAB_INSET);
             if tab(
                 ui,
@@ -1090,12 +1190,12 @@ impl PaperCraftApp {
                 self.cards.invalidate();
             }
             if self.document_open {
-                let (rect, _) = ui.allocate_exact_size(vec2(9.0, 18.0), Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(vec2(SPACE_S, SPACE_L), Sense::hover());
                 ui.painter()
                     .vline(rect.center().x, rect.y_range(), Stroke::new(1.0, BORDER));
                 // Tabs share the space left of the new-file button.
                 let count = self.tabs.len() as f32;
-                let room = ui.available_width() - 40.0 - 6.0 * count;
+                let room = ui.available_width() - 40.0 - SPACE_XS * count;
                 let max_width = (room / count).clamp(96.0, 260.0);
                 let mut select = None;
                 let mut close_tab = None;
@@ -1112,17 +1212,6 @@ impl PaperCraftApp {
                                 let (response, close) =
                                     tab(ui, icon::FILE, &name, selected, Some(index), max_width);
                                 let dirty = self.tab_dirty(index);
-                                if dirty {
-                                    // Unsaved marker before the close control.
-                                    ui.painter().circle_filled(
-                                        pos2(
-                                            response.rect.right() - 34.0,
-                                            response.rect.center().y,
-                                        ),
-                                        3.0,
-                                        TEXT_DIM,
-                                    );
-                                }
                                 let response =
                                     response.on_hover_text(match (self.tab_path(index), dirty) {
                                         (Some(path), true) => {
@@ -1146,12 +1235,12 @@ impl PaperCraftApp {
                     self.activate_tab(index);
                 }
             }
-            ui.add_space(6.0);
+            ui.add_space(SPACE_XS);
             if ui::icon_button(
                 ui,
                 icon::PLUS,
-                vec2(26.0, 26.0),
-                17.0,
+                vec2(ROW, ROW),
+                ICON,
                 false,
                 true,
                 "New file",
@@ -1167,20 +1256,20 @@ impl PaperCraftApp {
         let side = egui::Frame::NONE.fill(SHELL);
         if self.left_open {
             egui::Panel::left("layers")
-                .default_size(180.0)
-                .size_range(180.0..=320.0)
+                .default_size(ui::SIDEBAR)
+                .size_range(ui::SIDEBAR..=320.0)
                 .resizable(true)
                 .frame(side)
                 .show(ui, |ui| self.left_panel(ui, ctx));
         }
         egui::Panel::left("tools")
-            .exact_size(40.0)
+            .exact_size(ui::RAIL)
             .resizable(false)
             .frame(side)
             .show(ui, |ui| self.tool_rail(ui));
         egui::Panel::right("inspector")
-            .default_size(280.0)
-            .size_range(260.0..=360.0)
+            .default_size(ui::INSPECTOR)
+            .size_range(ui::INSPECTOR..=320.0)
             .resizable(true)
             .frame(side)
             .show(ui, |ui| self.right_panel(ui));
@@ -1256,28 +1345,32 @@ impl PaperCraftApp {
 
     /// File name with the file menu, as shown at the top of the layer panel.
     fn file_name_button(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, width: f32) {
-        let (rect, response) = ui.allocate_exact_size(vec2(width, ROW + 4.0), Sense::click());
+        let (rect, response) = ui.allocate_exact_size(vec2(width, ROW), Sense::click());
         response
             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "File menu"));
         if response.hovered() || egui::Popup::is_id_open(ctx, egui::Id::new("file_menu")) {
             ui.painter().rect_filled(rect, ui::RADIUS, ui::HOVER);
         }
         ui.painter().text(
-            pos2(rect.left() + 12.0, rect.center().y),
+            pos2(rect.left() + SPACE_S + ICON_SMALL / 2.0, rect.center().y),
             Align2::CENTER_CENTER,
             icon::COOKIE,
-            ui::icon_font(17.0),
+            ui::icon_font(ICON_SMALL),
             TEXT_DIM,
         );
+        let text_x = SPACE_S + ICON_SMALL + SPACE_S;
         let galley = ui::truncated(
             ui,
             &self.editor.document.name,
-            15.0,
+            BODY,
             TEXT,
-            rect.width() - 36.0,
+            rect.width() - text_x - SPACE_S,
         );
         ui.painter().galley(
-            pos2(rect.left() + 32.0, rect.center().y - galley.size().y / 2.0),
+            pos2(
+                rect.left() + text_x,
+                rect.center().y - galley.size().y / 2.0,
+            ),
             galley,
             TEXT,
         );
@@ -1292,17 +1385,17 @@ impl PaperCraftApp {
         let width = ui.available_width();
         // File header.
         ui.allocate_ui_with_layout(
-            vec2(width, 42.0),
+            vec2(width, ui::SPACE_2XL + SPACE_S),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-                ui.add_space(8.0);
-                self.file_name_button(ui, ctx, width - 52.0);
-                ui.add_space(4.0);
+                ui.add_space(SPACE_S);
+                self.file_name_button(ui, ctx, width - 3.0 * SPACE_S - ROW);
+                ui.add_space(SPACE_XS);
                 if ui::icon_button(
                     ui,
                     icon::SIDEBAR_SIMPLE,
-                    vec2(28.0, 28.0),
-                    18.0,
+                    vec2(ROW, ROW),
+                    ICON,
                     false,
                     true,
                     "Hide sidebar",
@@ -1314,12 +1407,12 @@ impl PaperCraftApp {
             },
         );
         ui::hline(ui);
-        ui.add_space(14.0);
+        ui.add_space(SPACE_M);
         if segmented(ui, self.theme) {
             self.flush_properties();
             self.theme = !self.theme;
         }
-        ui.add_space(10.0);
+        ui.add_space(SPACE_S);
         if self.theme {
             self.status_footer(ui);
             self.theme_panel(ui);
@@ -1334,7 +1427,6 @@ impl PaperCraftApp {
         );
         if self.pages_open
             && Row::new(icon::FILE, "Page 1")
-                .indent(17.0)
                 .right(Some(icon::CHECK))
                 .show(ui)
                 .on_hover_text("Current page · select the artboard")
@@ -1353,9 +1445,11 @@ impl PaperCraftApp {
         if !self.layers_open {
             return;
         }
+        let total = self.editor.document.nodes.len();
+        // Only visible rows are built, so long layer lists cost the same as short ones.
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| {
+            .show_rows(ui, ROW, total, |ui, rows| {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
                 let nodes: Vec<_> = self
                     .editor
@@ -1363,6 +1457,8 @@ impl PaperCraftApp {
                     .nodes
                     .iter()
                     .rev()
+                    .skip(rows.start)
+                    .take(rows.len())
                     .map(|n| (n.id, n.name.clone(), n.kind, n.hidden, n.locked))
                     .collect();
                 for (id, name, kind, hidden, locked) in nodes {
@@ -1382,7 +1478,6 @@ impl PaperCraftApp {
                     }
                     let hovered = ui.rect_contains_pointer(rect);
                     Row::new(glyph, &name)
-                        .indent(17.0)
                         .selected(selected)
                         .dim(hidden)
                         .reserve(if hovered || hidden || locked {
@@ -1390,18 +1485,18 @@ impl PaperCraftApp {
                         } else {
                             0.0
                         })
-                        .paint(ui, rect, &response, 8.0);
+                        .paint(ui, rect, &response, SPACE_S);
                     let mut toggle = |offset: f32, glyph: &str, label: &str| {
                         let button = Rect::from_center_size(
                             pos2(rect.right() - offset, rect.center().y),
-                            vec2(22.0, 22.0),
+                            vec2(20.0, 20.0),
                         );
                         ui::icon_button_at(
                             ui,
                             button,
                             egui::Id::new(("layer_toggle", id, offset as i32)),
                             glyph,
-                            15.0,
+                            ICON_SMALL,
                             false,
                             true,
                             label,
@@ -1411,7 +1506,7 @@ impl PaperCraftApp {
                     let mut changed = None;
                     if (hovered || hidden)
                         && toggle(
-                            42.0,
+                            40.0,
                             if hidden { icon::EYE_SLASH } else { icon::EYE },
                             if hidden { "Show layer" } else { "Hide layer" },
                         )
@@ -1420,7 +1515,7 @@ impl PaperCraftApp {
                     }
                     if (hovered || locked)
                         && toggle(
-                            20.0,
+                            SPACE_L + SPACE_XS,
                             if locked { icon::LOCK } else { icon::LOCK_OPEN },
                             if locked { "Unlock layer" } else { "Lock layer" },
                         )
@@ -1457,9 +1552,9 @@ impl PaperCraftApp {
                     }
                 }
                 if self.editor.document.nodes.is_empty() {
-                    ui.add_space(8.0);
+                    ui.add_space(SPACE_S);
                     egui::Frame::NONE
-                        .inner_margin(egui::Margin::symmetric(17, 0))
+                        .inner_margin(egui::Margin::symmetric(16, 0))
                         .show(ui, |ui| {
                             ui.label(
                                 RichText::new(
@@ -1488,13 +1583,16 @@ impl PaperCraftApp {
             return false;
         };
         Row::new(glyph, "")
-            .indent(17.0)
+            .indent(SPACE_M)
             .selected(selected)
             .paint(ui, rect, response, 8.0);
         let edit_id = egui::Id::new(("rename_layer", id));
         let field = Rect::from_min_max(
-            pos2(rect.left() + 37.0, rect.top() + 3.0),
-            pos2(rect.right() - 12.0, rect.bottom() - 3.0),
+            pos2(
+                rect.left() + SPACE_M + ICON_SMALL + SPACE_S,
+                rect.top() + SPACE_XS,
+            ),
+            pos2(rect.right() - SPACE_M, rect.bottom() - SPACE_XS),
         );
         let edit = ui.put(
             field,
@@ -1506,7 +1604,7 @@ impl PaperCraftApp {
                         .stroke(Stroke::new(1.0, ACCENT))
                         .corner_radius(4),
                 )
-                .margin(vec2(4.0, 2.0))
+                .margin(vec2(SPACE_XS, 0.0))
                 .font(ui::font(BODY))
                 .desired_width(f32::INFINITY),
         );
@@ -1531,14 +1629,14 @@ impl PaperCraftApp {
             }))
             .show_separator_line(false)
             .show(ui, |ui| {
-                ui.label(RichText::new(&self.status).size(12.0).color(TEXT_DIM));
+                ui.label(RichText::new(&self.status).size(CAPTION).color(TEXT_DIM));
             });
     }
 
     /// Theme tab: the document's color tokens. Names and values edit in place as one
     /// history step per completed edit; add, delete and binding changes are one step each.
     fn theme_panel(&mut self, ui: &mut egui::Ui) {
-        let before = self.editor.document.clone();
+        let snapshot = Snapshot::take(&mut self.editor.document, None);
         let mut add = false;
         let section = section_toggle(
             ui,
@@ -1577,14 +1675,14 @@ impl PaperCraftApp {
                             )
                         });
                         Row::new("", &token.name)
-                            .indent(42.0)
+                            .indent(SPACE_L + ICON_SMALL + SPACE_S)
                             .selected(selected)
-                            .paint(ui, rect, &response, 8.0);
+                            .paint(ui, rect, &response, SPACE_S);
                         swatch(
                             ui.painter(),
                             Rect::from_center_size(
-                                pos2(rect.left() + 28.0, rect.center().y),
-                                vec2(14.0, 14.0),
+                                pos2(rect.left() + SPACE_L + ICON_SMALL / 2.0, rect.center().y),
+                                vec2(ICON_SMALL, ICON_SMALL),
                             ),
                             token.value,
                         );
@@ -1600,11 +1698,11 @@ impl PaperCraftApp {
                             .inner_margin(egui::Margin {
                                 left: 16,
                                 right: 12,
-                                top: 6,
-                                bottom: 10,
+                                top: 8,
+                                bottom: 12,
                             })
                             .show(ui, |ui| {
-                                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                                ui.spacing_mut().item_spacing = vec2(SPACE_S, SPACE_S);
                                 let name_id = egui::Id::new(("token_name", token.id));
                                 let mut name = ui
                                     .data(|d| d.get_temp::<String>(name_id))
@@ -1617,9 +1715,9 @@ impl PaperCraftApp {
                                                 egui::Frame::NONE
                                                     .fill(CONTROL)
                                                     .corner_radius(ui::RADIUS)
-                                                    .inner_margin(egui::Margin::symmetric(8, 6)),
+                                                    .inner_margin(egui::Margin::symmetric(8, 4)),
                                             )
-                                            .margin(egui::Margin::symmetric(8, 6))
+                                            .margin(egui::Margin::symmetric(8, 4))
                                             .char_limit(64)
                                             .desired_width(f32::INFINITY),
                                     )
@@ -1652,7 +1750,7 @@ impl PaperCraftApp {
                                         1 => "Used by 1 property".to_string(),
                                         n => format!("Used by {n} properties"),
                                     })
-                                    .size(12.0)
+                                    .size(CAPTION)
                                     .color(TEXT_DIM),
                                 );
                                 if ui
@@ -1669,7 +1767,7 @@ impl PaperCraftApp {
                     if tokens.is_empty() {
                         ui.add_space(8.0);
                         egui::Frame::NONE
-                            .inner_margin(egui::Margin::symmetric(17, 0))
+                            .inner_margin(egui::Margin::symmetric(16, 0))
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new(
@@ -1682,6 +1780,7 @@ impl PaperCraftApp {
                     }
                 });
         }
+        let before = snapshot.before(&mut self.editor.document);
         self.track_properties(before, finish, ui.ctx());
         if let Some((id, name)) = rename {
             self.flush_properties();
@@ -1706,10 +1805,13 @@ impl PaperCraftApp {
         }
     }
 
-    /// Opens a property transaction when `before` differs from the document and commits
-    /// it when an edit finished or no field is being edited.
-    fn track_properties(&mut self, before: Document, finish: bool, ctx: &egui::Context) {
-        if before != self.editor.document && self.property_before.is_none() {
+    /// Opens a property transaction with `before`, the document before this frame's
+    /// edits (`None` when unchanged), and commits it when an edit finished or no field is
+    /// being edited.
+    fn track_properties(&mut self, before: Option<Document>, finish: bool, ctx: &egui::Context) {
+        if let Some(before) = before
+            && self.property_before.is_none()
+        {
             self.property_before = Some(before);
         }
         // An in-place text edit takes focus later in the frame and ends itself.
@@ -1720,7 +1822,7 @@ impl PaperCraftApp {
     }
 
     fn floating_file_header(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let anchor = ui.max_rect().left_top() + vec2(10.0, 10.0);
+        let anchor = ui.max_rect().left_top() + vec2(SPACE_S, SPACE_S);
         egui::Area::new(egui::Id::new("floating_file"))
             .fixed_pos(anchor)
             .order(egui::Order::Foreground)
@@ -1728,17 +1830,17 @@ impl PaperCraftApp {
                 egui::Frame::NONE
                     .fill(SHELL)
                     .stroke(Stroke::new(1.0, BORDER))
-                    .corner_radius(8)
+                    .corner_radius(ui::RADIUS_LARGE)
                     .inner_margin(egui::Margin::same(4))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            self.file_name_button(ui, ctx, 168.0);
+                            ui.spacing_mut().item_spacing.x = SPACE_XS;
+                            self.file_name_button(ui, ctx, ui::SIDEBAR - 2.0 * SPACE_S - ROW);
                             if ui::icon_button(
                                 ui,
                                 icon::SIDEBAR_SIMPLE,
-                                vec2(28.0, 28.0),
-                                18.0,
+                                vec2(ROW, ROW),
+                                ICON,
                                 false,
                                 true,
                                 "Show sidebar",
@@ -1753,15 +1855,12 @@ impl PaperCraftApp {
     }
 
     fn tool_rail(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
-        ui.add_space(6.0);
+        ui.spacing_mut().item_spacing = vec2(0.0, SPACE_XS);
+        ui.add_space(SPACE_XS);
         ui.vertical_centered(|ui| {
             for (index, spec) in TOOLS.iter().enumerate() {
                 if index > 0 && TOOLS[index - 1].group != spec.group {
-                    ui.add_space(10.0);
-                    let (rect, _) = ui.allocate_exact_size(vec2(18.0, 1.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 0.0, BORDER);
-                    ui.add_space(10.0);
+                    rail_separator(ui);
                 }
                 let label = format!("{} · {}", spec.label, spec.key.name());
                 if ui::icon_button(
@@ -1778,6 +1877,25 @@ impl PaperCraftApp {
                     self.set_tool(spec.tool);
                 }
             }
+            rail_separator(ui);
+            let label = if self.snapping {
+                "Snapping on · hold ⌘/Ctrl while dragging to bypass"
+            } else {
+                "Snapping off"
+            };
+            if ui::icon_button(
+                ui,
+                icon::MAGNET,
+                vec2(ui::SPACE_2XL, ui::SPACE_2XL),
+                ICON,
+                self.snapping,
+                true,
+                label,
+            )
+            .clicked()
+            {
+                self.snapping = !self.snapping;
+            }
         });
     }
 
@@ -1785,16 +1903,16 @@ impl PaperCraftApp {
         ui.spacing_mut().item_spacing = Vec2::ZERO;
         let width = ui.available_width();
         ui.allocate_ui_with_layout(
-            vec2(width, 49.0),
+            vec2(width, ui::SPACE_2XL + SPACE_S),
             egui::Layout::right_to_left(egui::Align::Center),
             |ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                ui.add_space(12.0);
+                ui.spacing_mut().item_spacing.x = SPACE_XS;
+                ui.add_space(SPACE_S);
                 let export = ui
                     .add(
                         egui::Button::new(RichText::new("Export").size(BODY).color(TEXT))
                             .fill(CONTROL)
-                            .min_size(vec2(52.0, ROW)),
+                            .min_size(vec2(0.0, ROW)),
                     )
                     .on_hover_text("Export artboard as HTML or SVG");
                 egui::Popup::menu(&export).show(|ui| self.export_menu(ui));
@@ -1814,7 +1932,7 @@ impl PaperCraftApp {
                     )
                     .on_hover_text("Zoom");
                 egui::Popup::menu(&zoom).show(|ui| {
-                    ui.set_min_width(170.0);
+                    ui.set_min_width(168.0);
                     let item = |ui: &mut egui::Ui, label: &str, key: &str| {
                         ui.add(
                             egui::Button::new(label)
@@ -1847,7 +1965,12 @@ impl PaperCraftApp {
     }
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
-        let before = self.editor.document.clone();
+        // The inspector edits document fields and, with one selected layer, that layer.
+        let edited = self
+            .editor
+            .selected()
+            .and_then(|id| self.editor.document.nodes.iter().position(|n| n.id == id));
+        let snapshot = Snapshot::take(&mut self.editor.document, edited);
         let mut finish = false;
         let mut choice = None;
         let mut toggle_hidden = false;
@@ -1889,13 +2012,13 @@ impl PaperCraftApp {
                                 "layers are"
                             }
                         ))
-                        .size(12.0)
+                        .size(CAPTION)
                         .color(TEXT_DIM),
                     );
                 }
                 ui.label(
                     RichText::new("Select one layer to edit its properties.")
-                        .size(12.0)
+                        .size(CAPTION)
                         .color(TEXT_DIM),
                 );
             });
@@ -1915,7 +2038,8 @@ impl PaperCraftApp {
                 inspector_heading(ui, "Layout", true, true)
                     .on_hover_text("Layout modes are not available yet");
                 inspector_body(ui, |ui| {
-                    let third = (ui.available_width() - 16.0) / 3.0;
+                    let third = ((ui.available_width() - 2.0 * SPACE_S) / 3.0 / SPACE_XS).floor()
+                        * SPACE_XS;
                     let range = -100_000.0..=100_000.0;
                     ui.horizontal(|ui| {
                         let r = ui::number_field(ui, "X", &mut node.x, range.clone(), third);
@@ -1996,7 +2120,9 @@ impl PaperCraftApp {
                         "Independent corners are not available yet",
                     );
                     inspector_body(ui, |ui| {
-                        let third = (ui.available_width() - 16.0) / 3.0;
+                        let third = ((ui.available_width() - 2.0 * SPACE_S) / 3.0 / SPACE_XS)
+                            .floor()
+                            * SPACE_XS;
                         let max = (node.width.min(node.height) / 2.0).floor().max(0.0);
                         ui.horizontal(|ui| {
                             let r = ui::slider(
@@ -2157,7 +2283,7 @@ impl PaperCraftApp {
                     )
                     .on_hover_text("Document name")
                     .lost_focus();
-                let half = (ui.available_width() - 8.0) / 2.0;
+                let half = (ui.available_width() - SPACE_S) / 2.0;
                 ui.horizontal(|ui| {
                     let r = ui::number_field(ui, "W", &mut document.width, 1.0..=100_000.0, half);
                     finish |= r.drag_stopped() || r.lost_focus();
@@ -2175,7 +2301,7 @@ impl PaperCraftApp {
                 );
             });
             egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(12, 14))
+                .inner_margin(egui::Margin::same(12))
                 .show(ui, |ui| {
                     ui.label(
                         RichText::new(
@@ -2187,6 +2313,7 @@ impl PaperCraftApp {
                     );
                 });
         }
+        let before = snapshot.before(&mut self.editor.document);
         self.track_properties(before, finish, ui.ctx());
         if let Some(choice) = choice {
             self.flush_properties();
@@ -2218,7 +2345,7 @@ impl PaperCraftApp {
         let mut align = None;
         let mut distribute = None;
         inspector_body(ui, |ui| {
-            ui.spacing_mut().item_spacing = vec2(2.0, 8.0);
+            ui.spacing_mut().item_spacing = vec2(SPACE_XS, SPACE_S);
             let reason = match arrangeable {
                 0 => "Hidden and locked layers are not arranged",
                 1 => "One layer aligns to the artboard",
@@ -2245,8 +2372,8 @@ impl PaperCraftApp {
                     if ui::icon_button(
                         ui,
                         glyph,
-                        vec2(30.0, 30.0),
-                        18.0,
+                        vec2(ROW, ROW),
+                        ICON,
                         false,
                         arrangeable >= 1,
                         &label,
@@ -2274,8 +2401,8 @@ impl PaperCraftApp {
                     if ui::icon_button(
                         ui,
                         glyph,
-                        vec2(30.0, 30.0),
-                        18.0,
+                        vec2(ROW, ROW),
+                        ICON,
                         false,
                         arrangeable >= 3,
                         &label,
@@ -2314,7 +2441,7 @@ impl PaperCraftApp {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let action = |ui: &mut egui::Ui, glyph: &str, label: &str, enabled: bool| {
-                    ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, false, enabled, label)
+                    ui::icon_button(ui, glyph, vec2(ROW, ROW), ICON, false, enabled, label)
                         .clicked()
                 };
                 let order = single && any_unlocked;
@@ -2346,7 +2473,7 @@ impl PaperCraftApp {
                     self.result(r);
                 }
                 let toggle = |ui: &mut egui::Ui, glyph, label, on| {
-                    ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, on, true, label).clicked()
+                    ui::icon_button(ui, glyph, vec2(ROW, ROW), ICON, on, true, label).clicked()
                 };
                 let hide_label = if any_hidden { "Show" } else { "Hide" };
                 let hide_glyph = if any_hidden {
@@ -2374,12 +2501,99 @@ impl PaperCraftApp {
         });
     }
 
+    /// Bounds and layers that resize handles act on: the visible, unlocked selected
+    /// layers. A single layer resizes alone; several scale together.
+    fn resize_target(&self) -> Option<(Frame, IdSet)> {
+        let frame = self.editor.selection_bounds()?;
+        Some((frame, self.editor.arrangeable().into_iter().collect()))
+    }
+
+    fn start_drag(&mut self, start: Pos2, nodes: IdSet, handle: Option<Handle>, frame: Frame) {
+        let document = &self.editor.document;
+        let indices = (document.nodes.iter().enumerate())
+            .filter(|(_, n)| nodes.contains(&n.id))
+            .map(|(index, _)| index)
+            .collect();
+        let others = (document.nodes.iter())
+            .filter(|n| !n.hidden && !nodes.contains(&n.id))
+            .map(node_frame);
+        let snapper = Snapper::new([0.0, 0.0, document.width, document.height], others);
+        self.drag = Some(Drag {
+            before: document.clone(),
+            start,
+            nodes,
+            indices,
+            handle,
+            frame,
+            snapper,
+        });
+    }
+
+    /// Moves or resizes the gesture's layers for the pointer at `pointer` and returns
+    /// the guides of any snapped edges or centers.
+    fn apply_drag(
+        &mut self,
+        drag: &Drag,
+        pointer: Pos2,
+        snapping: bool,
+        keep_aspect: bool,
+    ) -> Vec<Guide> {
+        let delta = (pointer - drag.start) / self.zoom;
+        let threshold = SNAP_DISTANCE / self.zoom;
+        let snapper = snapping.then_some(&drag.snapper);
+        let nodes = &mut self.editor.document.nodes;
+        let frame = if let Some(handle) = drag.handle {
+            let to = snap::resize_frame(
+                drag.frame,
+                handle,
+                [delta.x, delta.y],
+                keep_aspect,
+                snapper.map(|s| (s, threshold)),
+            );
+            for &index in &drag.indices {
+                let original = &drag.before.nodes[index];
+                let Some(node) = nodes.get_mut(index).filter(|n| n.id == original.id) else {
+                    continue;
+                };
+                let [left, top, right, bottom] =
+                    snap::map_rect(node_frame(original), drag.frame, to);
+                node.x = left.clamp(-100_000.0, 100_000.0);
+                node.y = top.clamp(-100_000.0, 100_000.0);
+                node.width = (right - left).clamp(1.0, 100_000.0);
+                node.height = (bottom - top).clamp(1.0, 100_000.0);
+            }
+            to
+        } else {
+            let mut offset = [delta.x.round(), delta.y.round()];
+            if let Some(snapper) = snapper {
+                let snapped = snapper.snap_move(drag.frame, [delta.x, delta.y], threshold);
+                for (offset, snapped) in offset.iter_mut().zip(snapped) {
+                    *offset = snapped.unwrap_or(*offset);
+                }
+            }
+            let [dx, dy] = drag.before.clamp_translation(&drag.nodes, offset);
+            for &index in &drag.indices {
+                let original = &drag.before.nodes[index];
+                let Some(node) = nodes.get_mut(index).filter(|n| n.id == original.id) else {
+                    continue;
+                };
+                node.x = original.x + dx;
+                node.y = original.y + dy;
+            }
+            let [l, t, r, b] = drag.frame;
+            [l + dx, t + dy, r + dx, b + dy]
+        };
+        snapper.map_or_else(Vec::new, |s| s.guides(frame))
+    }
+
     fn canvas(&mut self, ui: &mut egui::Ui) {
         let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         let canvas = response.rect;
         if self.fit {
-            self.zoom = ((canvas.width() - 110.0) / self.editor.document.width)
-                .min((canvas.height() - 130.0) / self.editor.document.height)
+            // Leave a 64 pt margin around the fitted artboard.
+            let margin = 2.0 * ui::SPACE_3XL;
+            self.zoom = ((canvas.width() - margin) / self.editor.document.width)
+                .min((canvas.height() - margin) / self.editor.document.height)
                 .clamp(0.05, 2.0);
             self.pan = Vec2::ZERO;
             self.fit = false;
@@ -2436,13 +2650,13 @@ impl PaperCraftApp {
         let origin = canvas.center() - size * self.zoom / 2.0 + self.pan;
         let artboard = Rect::from_min_size(origin, size * self.zoom);
         painter.text(
-            artboard.min - vec2(0.0, 14.0),
+            artboard.min - vec2(0.0, SPACE_M),
             Align2::LEFT_CENTER,
             format!(
                 "{}   {} × {}",
                 self.editor.document.name, self.editor.document.width, self.editor.document.height
             ),
-            FontId::proportional(12.0),
+            FontId::proportional(CAPTION),
             TEXT_DIM,
         );
         if let Some(style) = self.editor.selected_node().and_then(TextStyle::of) {
@@ -2464,64 +2678,76 @@ impl PaperCraftApp {
             )
         };
         let multiple = self.editor.selection().len() > 1;
-        for node in self
+        let outlines = self
             .editor
             .document
             .nodes
             .iter()
             .filter(|n| self.editor.is_selected(n.id) && !n.hidden)
-        {
-            let width = if multiple { 1.0 } else { 1.5 };
-            painter.rect_stroke(
-                screen(node),
-                0.0,
-                Stroke::new(width, ACCENT),
-                StrokeKind::Outside,
-            );
-        }
+            .map(screen)
+            .filter(|r| r.intersects(canvas));
+        painter.add(outline_mesh(
+            outlines,
+            if multiple { 1.0 } else { 1.5 },
+            ACCENT,
+            ui.ctx().pixels_per_point(),
+        ));
         if multiple && let Some([left, top, right, bottom]) = self.editor.selection_bounds() {
             let bounds = Rect::from_min_max(
                 origin + vec2(left, top) * self.zoom,
                 origin + vec2(right, bottom) * self.zoom,
             );
+            // On the bounds themselves, where the group's resize handles sit.
             painter.rect_stroke(
-                bounds.expand(3.0),
+                bounds,
                 0.0,
                 Stroke::new(1.0, ACCENT.gamma_multiply(0.7)),
                 StrokeKind::Outside,
             );
             painter.text(
-                bounds.center_bottom() + vec2(0.0, 20.0),
+                bounds.center_bottom() + vec2(0.0, SPACE_L),
                 Align2::CENTER_CENTER,
                 format!("{:.0} × {:.0}", right - left, bottom - top),
-                FontId::proportional(11.0),
+                FontId::proportional(CAPTION),
                 ACCENT,
             );
         }
-        if let Some(node) = self.editor.selected_node().filter(|n| !n.hidden) {
-            let rect = screen(node);
-            if !node.locked {
-                let handle = Rect::from_center_size(rect.right_bottom(), vec2(7.0, 7.0));
-                painter.rect_filled(handle, 1.0, SHELL);
-                painter.rect_stroke(handle, 1.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
-                if response.hovered()
-                    && self.tool == Tool::Select
-                    && ui
-                        .input(|i| i.pointer.hover_pos())
-                        .is_some_and(|p| p.distance(rect.right_bottom()) < 12.0)
-                {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
-                }
+        let zoom = self.zoom;
+        let to_screen = move |frame: Frame| {
+            Rect::from_min_max(
+                origin + vec2(frame[0], frame[1]) * zoom,
+                origin + vec2(frame[2], frame[3]) * zoom,
+            )
+        };
+        let target = self.resize_target();
+        if let Some((frame, _)) = &target {
+            let rect = to_screen(*frame);
+            for handle in Handle::ALL.iter().filter(|h| h.is_corner()) {
+                let [x, y] = handle.point(*frame);
+                let center = origin + vec2(x, y) * self.zoom;
+                let square = Rect::from_center_size(center, vec2(SPACE_S, SPACE_S));
+                painter.rect_filled(square, 1.0, SHELL);
+                painter.rect_stroke(square, 1.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
+            }
+            if self.tool == Tool::Select
+                && response.hovered()
+                && self.drag.is_none()
+                && let Some(handle) = ui
+                    .input(|i| i.pointer.hover_pos())
+                    .and_then(|p| handle_at(rect, p))
+            {
+                ui.ctx().set_cursor_icon(resize_cursor(handle));
+            }
+            if let Some(node) = self.editor.selected_node() {
                 painter.text(
-                    rect.center_bottom() + vec2(0.0, 17.0),
+                    rect.center_bottom() + vec2(0.0, SPACE_L),
                     Align2::CENTER_CENTER,
                     format!("{:.0} × {:.0}", node.width, node.height),
-                    FontId::proportional(11.0),
+                    FontId::proportional(CAPTION),
                     ACCENT,
                 );
             }
         }
-        let zoom = self.zoom;
         let to_document = move |p: Pos2| ((p - origin) / zoom).to_pos2();
         if !panning
             && self.pending.is_none()
@@ -2599,8 +2825,16 @@ impl PaperCraftApp {
             }
         } else if !panning && self.pending.is_none() {
             let pointer = response.interact_pointer_pos();
-            // Shift adds to or removes from the selection.
-            let extend = ui.input(|i| i.modifiers.shift);
+            // Shift adds to or removes from the selection. A drag uses the modifiers of
+            // its press, so Shift pressed during the drag only constrains the resize.
+            if ui.input(|i| i.pointer.primary_pressed()) {
+                self.press_shift = ui.input(|i| i.modifiers.shift);
+            }
+            let extend = if response.drag_started() {
+                self.press_shift
+            } else {
+                ui.input(|i| i.modifiers.shift)
+            };
             if (response.clicked() || response.drag_started())
                 && let Some(pointer) = pointer
             {
@@ -2610,15 +2844,14 @@ impl PaperCraftApp {
                 } else {
                     pointer
                 };
-                let resize_id = (!extend)
-                    .then(|| self.editor.selected_node())
-                    .flatten()
-                    .filter(|n| !n.locked && !n.hidden)
-                    .and_then(|n| {
-                        let bottom = origin + vec2(n.x + n.width, n.y + n.height) * self.zoom;
-                        (bottom.distance(hit_point) < 12.0).then_some(n.id)
-                    });
-                let hit = resize_id.or_else(|| {
+                let handle =
+                    (!extend)
+                        .then_some(target.as_ref())
+                        .flatten()
+                        .and_then(|(frame, ids)| {
+                            Some((handle_at(to_screen(*frame), hit_point)?, *frame, ids))
+                        });
+                let hit = || {
                     if !artboard.contains(hit_point) {
                         return None;
                     }
@@ -2635,47 +2868,48 @@ impl PaperCraftApp {
                                     .contains(point)
                         })
                         .map(|n| n.id)
-                });
-                match hit {
-                    Some(id) if response.drag_started() => {
-                        // Dragging a selected layer moves the whole selection.
-                        if !self.editor.is_selected(id) {
-                            if extend {
-                                self.editor.toggle_selection(id);
-                            } else {
-                                self.editor.select(Some(id));
+                };
+                if let Some((handle, frame, ids)) = handle {
+                    // A click on a handle keeps the selection.
+                    if response.drag_started() {
+                        let ids = ids.clone();
+                        self.start_drag(hit_point, ids, Some(handle), frame);
+                    }
+                } else {
+                    match hit() {
+                        Some(id) if response.drag_started() => {
+                            // Dragging a selected layer moves the whole selection.
+                            if !self.editor.is_selected(id) {
+                                if extend {
+                                    self.editor.toggle_selection(id);
+                                } else {
+                                    self.editor.select(Some(id));
+                                }
+                            }
+                            let ids: IdSet = self.editor.arrangeable().into_iter().collect();
+                            if let Some(frame) = self.editor.selection_bounds() {
+                                self.start_drag(hit_point, ids, None, frame);
                             }
                         }
-                        self.drag = Some(Drag {
-                            before: self.editor.document.clone(),
-                            start: hit_point,
-                            nodes: if resize_id.is_some() {
-                                vec![id]
-                            } else {
-                                self.editor.arrangeable()
-                            },
-                            resize: resize_id.is_some(),
-                        });
-                    }
-                    Some(id) if extend => self.editor.toggle_selection(id),
-                    Some(id) => self.editor.select(Some(id)),
-                    None if response.drag_started() => {
-                        let start = to_document(hit_point);
-                        self.marquee = Some(Marquee {
-                            start,
-                            current: start,
-                            base: if extend {
+                        Some(id) if extend => self.editor.toggle_selection(id),
+                        Some(id) => self.editor.select(Some(id)),
+                        None if response.drag_started() => {
+                            // Dragging on empty canvas selects with a marquee.
+                            let base = if extend {
                                 self.editor.selection().to_vec()
                             } else {
                                 Vec::new()
-                            },
-                        });
-                        if !extend {
-                            self.editor.select(None);
+                            };
+                            self.editor.set_selection(base.iter().copied());
+                            self.marquee = Some(Marquee {
+                                start: to_document(hit_point),
+                                current: to_document(hit_point),
+                                base,
+                            });
                         }
+                        None if !extend => self.editor.select(None),
+                        None => {}
                     }
-                    None if !extend => self.editor.select(None),
-                    None => {}
                 }
             }
             // Double-clicking a text layer edits it in place.
@@ -2694,60 +2928,39 @@ impl PaperCraftApp {
                     self.begin_text_edit(id, false);
                 }
             }
-            if let (Some(marquee), Some(pointer)) = (&mut self.marquee, pointer)
-                && (response.dragged() || response.drag_stopped())
-            {
-                marquee.current = to_document(pointer);
-                let rect = Rect::from_two_pos(marquee.start, marquee.current)
-                    .intersect(Rect::from_min_size(Pos2::ZERO, size));
-                let mut selection = marquee.base.clone();
-                if rect.is_positive() {
-                    selection.extend(
-                        self.editor
-                            .document
-                            .layers_in([rect.min.x, rect.min.y, rect.max.x, rect.max.y]),
-                    );
-                }
-                self.editor.set_selection(selection);
-            }
-            if let Some(marquee) = &self.marquee {
-                let rect = Rect::from_two_pos(
-                    origin + marquee.start.to_vec2() * self.zoom,
-                    origin + marquee.current.to_vec2() * self.zoom,
-                );
-                painter.rect_filled(rect, 0.0, ACCENT.gamma_multiply(0.08));
-                painter.rect_stroke(rect, 0.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
-            }
             if (response.dragged() || response.drag_stopped())
-                && let (Some(drag), Some(pointer)) = (&self.drag, pointer)
+                && let Some(pointer) = pointer
             {
-                let delta = (pointer - drag.start) / self.zoom;
-                let translation = drag
-                    .before
-                    .clamp_translation(&drag.nodes, [delta.x.round(), delta.y.round()]);
-                for original in drag
-                    .before
-                    .nodes
-                    .iter()
-                    .filter(|n| drag.nodes.contains(&n.id))
-                {
-                    let Some(node) = self
+                let snapping = self.snapping && !ui.input(|i| i.modifiers.command);
+                let keep_aspect = ui.input(|i| i.modifiers.shift);
+                if let Some(drag) = self.drag.take() {
+                    let guides = self.apply_drag(&drag, pointer, snapping, keep_aspect);
+                    paint_guides(&painter, &guides, origin, self.zoom);
+                    self.drag = Some(drag);
+                }
+                if let Some(marquee) = &mut self.marquee {
+                    marquee.current = to_document(pointer);
+                    let area = Rect::from_two_pos(marquee.start, marquee.current);
+                    let area = [area.min.x, area.min.y, area.max.x, area.max.y];
+                    let inside: Vec<u64> = self
                         .editor
                         .document
                         .nodes
-                        .iter_mut()
-                        .find(|n| n.id == original.id)
-                    else {
-                        continue;
-                    };
-                    if drag.resize {
-                        node.width = (original.width + delta.x).round().clamp(1.0, 100_000.0);
-                        node.height = (original.height + delta.y).round().clamp(1.0, 100_000.0);
-                    } else {
-                        node.x = original.x + translation[0];
-                        node.y = original.y + translation[1];
-                    }
+                        .iter()
+                        .filter(|n| !n.hidden && !n.locked && snap::intersects(node_frame(n), area))
+                        .map(|n| n.id)
+                        .collect();
+                    let ids = marquee.base.iter().copied().chain(inside);
+                    self.editor.set_selection(ids);
                 }
+            }
+            if let Some(marquee) = &self.marquee {
+                let area = Rect::from_two_pos(
+                    origin + marquee.start.to_vec2() * self.zoom,
+                    origin + marquee.current.to_vec2() * self.zoom,
+                );
+                painter.rect_filled(area, 0.0, ACCENT.gamma_multiply(0.08));
+                painter.rect_stroke(area, 0.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
             }
         }
         self.text_overlay(ui, origin);
@@ -2892,6 +3105,95 @@ fn text_size(painter: &Painter, text: &str, font_size: f32, width: Option<f32>) 
     }
 }
 
+fn node_frame(node: &Node) -> Frame {
+    [node.x, node.y, node.x + node.width, node.y + node.height]
+}
+
+/// Resize handle under `pointer` for the screen bounds `rect`. Corners take a radius
+/// that shrinks with small layers so they stay movable; edges respond along their
+/// length once long enough to leave room for both corners.
+fn handle_at(rect: Rect, pointer: Pos2) -> Option<Handle> {
+    let corner = (rect.width().min(rect.height()) / 3.0).clamp(4.0, 12.0);
+    let frame = [rect.min.x, rect.min.y, rect.max.x, rect.max.y];
+    let mut handles = Handle::ALL.iter().copied();
+    if let Some(handle) = handles.by_ref().take(4).find(|h| {
+        let [x, y] = h.point(frame);
+        pointer.distance(pos2(x, y)) < corner
+    }) {
+        return Some(handle);
+    }
+    handles.find(|h| {
+        let [x, y] = h.point(frame);
+        if h.x == Side::Fixed {
+            rect.width() >= 3.0 * corner
+                && (pointer.y - y).abs() < 5.0
+                && (rect.min.x + corner..=rect.max.x - corner).contains(&pointer.x)
+        } else {
+            rect.height() >= 3.0 * corner
+                && (pointer.x - x).abs() < 5.0
+                && (rect.min.y + corner..=rect.max.y - corner).contains(&pointer.y)
+        }
+    })
+}
+
+fn resize_cursor(handle: Handle) -> egui::CursorIcon {
+    match (handle.x, handle.y) {
+        (Side::Fixed, _) => egui::CursorIcon::ResizeVertical,
+        (_, Side::Fixed) => egui::CursorIcon::ResizeHorizontal,
+        (x, y) if x == y => egui::CursorIcon::ResizeNwSe,
+        _ => egui::CursorIcon::ResizeNeSw,
+    }
+}
+
+/// Snapping guides, drawn across the snapped geometry and its targets.
+fn paint_guides(painter: &Painter, guides: &[Guide], origin: Pos2, zoom: f32) {
+    for guide in guides {
+        let [a, b] = if guide.vertical {
+            [pos2(guide.value, guide.low), pos2(guide.value, guide.high)]
+        } else {
+            [pos2(guide.low, guide.value), pos2(guide.high, guide.value)]
+        };
+        painter.line_segment(
+            [origin + a.to_vec2() * zoom, origin + b.to_vec2() * zoom],
+            Stroke::new(1.0, GUIDE),
+        );
+    }
+}
+
+/// Outside outlines of axis-aligned rectangles as one mesh. Large selections would
+/// otherwise tessellate one anti-aliased stroke per layer every frame. Edges snap to
+/// physical pixels, so the outlines stay crisp without feathering.
+fn outline_mesh(
+    rects: impl Iterator<Item = Rect>,
+    width: f32,
+    color: Color32,
+    pixels_per_point: f32,
+) -> egui::Mesh {
+    let snap = |v: f32| (v * pixels_per_point).round() / pixels_per_point;
+    let mut mesh = egui::Mesh::default();
+    let mut quad = |min: Pos2, max: Pos2| {
+        mesh.add_colored_rect(Rect::from_min_max(min, max), color);
+    };
+    for rect in rects {
+        let inner = Rect::from_min_max(
+            pos2(snap(rect.min.x), snap(rect.min.y)),
+            pos2(snap(rect.max.x), snap(rect.max.y)),
+        );
+        let outer = inner.expand(width);
+        quad(outer.min, pos2(outer.max.x, inner.min.y));
+        quad(pos2(outer.min.x, inner.max.y), outer.max);
+        quad(
+            pos2(outer.min.x, inner.min.y),
+            pos2(inner.min.x, inner.max.y),
+        );
+        quad(
+            pos2(inner.max.x, inner.min.y),
+            pos2(outer.max.x, inner.max.y),
+        );
+    }
+    mesh
+}
+
 fn color(c: [u8; 4]) -> Color32 {
     Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
 }
@@ -2912,14 +3214,21 @@ fn tab(
     closable: Option<usize>,
     max_width: f32,
 ) -> (egui::Response, Option<egui::Response>) {
-    let close_space = if closable.is_some() { 44.0 } else { 0.0 };
-    let text = ui::truncated(ui, label, BODY, TEXT, max_width - 46.0 - close_space);
-    let width = (34.0 + text.size().x + 12.0 + close_space).max(if closable.is_some() {
-        150.0_f32.min(max_width)
+    let text_x = SPACE_S + ICON_SMALL + SPACE_S;
+    let close_space = if closable.is_some() { ROW } else { 0.0 };
+    let text = ui::truncated(
+        ui,
+        label,
+        BODY,
+        TEXT,
+        (max_width - text_x - SPACE_M - close_space).max(0.0),
+    );
+    let width = (text_x + text.size().x + SPACE_M + close_space).max(if closable.is_some() {
+        120.0_f32.min(max_width)
     } else {
         0.0
     });
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 27.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, ROW), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
     });
@@ -2932,26 +3241,29 @@ fn tab(
     }
     let color = if selected || hovered { TEXT } else { TEXT_DIM };
     ui.painter().text(
-        pos2(rect.left() + 17.0, rect.center().y),
+        pos2(rect.left() + SPACE_S + ICON_SMALL / 2.0, rect.center().y),
         Align2::CENTER_CENTER,
         glyph,
-        ui::icon_font(17.0),
+        ui::icon_font(ICON_SMALL),
         color,
     );
     ui.painter().galley(
-        pos2(rect.left() + 34.0, rect.center().y - text.size().y / 2.0),
+        pos2(rect.left() + text_x, rect.center().y - text.size().y / 2.0),
         text,
         color,
     );
-    let close = closable.map(|index| {
-        let button =
-            Rect::from_center_size(pos2(rect.right() - 16.0, rect.center().y), vec2(20.0, 20.0));
+    // The close control appears while its document tab is hovered.
+    let close = closable.filter(|_| hovered).map(|index| {
+        let button = Rect::from_center_size(
+            pos2(rect.right() - SPACE_M, rect.center().y),
+            vec2(SPACE_L, SPACE_L),
+        );
         ui::icon_button_at(
             ui,
             button,
             egui::Id::new(("close_file_tab", index)),
             icon::X,
-            14.0,
+            ICON_SMALL,
             false,
             true,
             "Close file",
@@ -2962,18 +3274,19 @@ fn tab(
 
 /// Design/Theme switch. Returns `true` when the inactive segment was clicked.
 fn segmented(ui: &mut egui::Ui, theme: bool) -> bool {
-    let width = ui.available_width() - 24.0;
+    let width = ui.available_width() - 2.0 * SPACE_S;
     ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        let (rect, _) = ui.allocate_exact_size(vec2(width, 24.0), Sense::hover());
-        ui.painter().rect_filled(rect, 7, Color32::from_gray(53));
+        ui.add_space(SPACE_S);
+        let (rect, _) = ui.allocate_exact_size(vec2(width, ROW), Sense::hover());
+        ui.painter()
+            .rect_filled(rect, ui::RADIUS, Color32::from_gray(53));
         let (left, right) = rect.split_left_right_at_fraction(0.5);
         let selected = if theme { right } else { left }.shrink(1.0);
         ui.painter()
-            .rect_filled(selected, 6, Color32::from_gray(63));
+            .rect_filled(selected, ui::RADIUS, Color32::from_gray(63));
         ui.painter().rect_stroke(
             selected,
-            6,
+            ui::RADIUS,
             Stroke::new(1.0, Color32::from_gray(72)),
             StrokeKind::Inside,
         );
@@ -3023,25 +3336,28 @@ fn color_property(
         ui.spacing_mut().item_spacing.x = 4.0;
         let field_width = width - 48.0;
         ui.allocate_ui_with_layout(
-            vec2(field_width, ui::FIELD),
+            vec2(field_width, ROW),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_width(field_width);
                 match bound {
                     Some(token) => {
                         ui::field_frame().show(ui, |ui| {
-                            ui.set_width(field_width - 16.0);
-                            ui.set_height(ui::FIELD);
+                            ui.set_width(field_width - SPACE_L);
+                            ui.set_height(ROW);
                             ui.horizontal_centered(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-                                let (rect, _) =
-                                    ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                                ui.spacing_mut().item_spacing.x = SPACE_S;
+                                let (rect, _) = ui.allocate_exact_size(
+                                    vec2(ICON_SMALL, ICON_SMALL),
+                                    Sense::hover(),
+                                );
                                 swatch(ui.painter(), rect, token.value);
-                                // Leave room for the spacing and the 22 pt detach button.
-                                let name_width = (ui.available_width() - 30.0).max(0.0);
+                                // Leave room for the spacing and the 16 pt detach button.
+                                let name_width =
+                                    (ui.available_width() - SPACE_L - SPACE_S).max(0.0);
                                 let galley = ui::truncated(ui, &token.name, BODY, TEXT, name_width);
                                 let (rect, _) = ui.allocate_exact_size(
-                                    vec2(name_width, ui::FIELD - 6.0),
+                                    vec2(name_width, ROW - SPACE_S),
                                     Sense::hover(),
                                 );
                                 ui.painter().galley(
@@ -3052,8 +3368,8 @@ fn color_property(
                                 if ui::icon_button(
                                     ui,
                                     icon::LINK_BREAK,
-                                    vec2(22.0, 22.0),
-                                    15.0,
+                                    vec2(SPACE_L, SPACE_L),
+                                    ICON_SMALL,
                                     false,
                                     enabled,
                                     "Detach token · keeps the current color",
@@ -3092,13 +3408,14 @@ fn color_property(
             "Color tokens",
         );
         egui::Popup::menu(&menu).id(id.with("tokens")).show(|ui| {
-            ui.set_min_width(210.0);
+            ui.set_min_width(208.0);
             if tokens.is_empty() {
                 ui.label(RichText::new("No color tokens yet").color(TEXT_DIM));
             }
             for token in tokens {
                 ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                    let (rect, _) =
+                        ui.allocate_exact_size(vec2(ICON_SMALL, ICON_SMALL), Sense::hover());
                     swatch(ui.painter(), rect, token.value);
                     let current = binding == Some(token.id);
                     if ui
@@ -3128,10 +3445,10 @@ fn color_property(
 
 /// Color swatch with a faint outline so light and transparent colors stay visible.
 fn swatch(painter: &Painter, rect: Rect, value: [u8; 4]) {
-    painter.rect_filled(rect, 3, color(value));
+    painter.rect_filled(rect, 2, color(value));
     painter.rect_stroke(
         rect,
-        3,
+        2,
         Stroke::new(1.0, Color32::from_white_alpha(46)),
         StrokeKind::Inside,
     );
@@ -3143,10 +3460,10 @@ const INSPECTOR_PAD: f32 = 12.0;
 /// Inspector section heading. Open sections leave room above their controls;
 /// `active` false draws the dim title of a collapsed, empty section.
 fn inspector_heading(ui: &mut egui::Ui, title: &str, active: bool, caret: bool) -> egui::Response {
-    let height = if active { 36.0 } else { 33.0 };
+    let height = if active { 32.0 } else { ROW };
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-    let y = rect.top() + 16.5;
+    let y = rect.top() + ROW / 2.0;
     let color = if active { TEXT } else { TEXT_DIM };
     let galley = ui
         .painter()
@@ -3189,7 +3506,11 @@ fn inspector_body<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) ->
 
 /// Icon slot `index` counted from the right end of a heading.
 fn heading_slot(heading: Rect, index: usize) -> Rect {
-    trailing_slot(heading.right() - INSPECTOR_PAD, heading.top() + 16.5, index)
+    trailing_slot(
+        heading.right() - INSPECTOR_PAD,
+        heading.top() + ROW / 2.0,
+        index,
+    )
 }
 
 /// 24 pt icon slot `index` counted leftwards from the content edge `right`.
@@ -3199,18 +3520,18 @@ fn trailing_slot(right: f32, y: f32, index: usize) -> Rect {
 
 /// Fill type selector. Solid is the only supported type.
 fn fill_kinds(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(vec2(86.0, ui::FIELD), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(84.0, ROW), Sense::hover());
     let cell = (rect.width() - 4.0) / 3.0;
     let slot = |i: usize| {
         Rect::from_min_size(
             pos2(rect.left() + 2.0 + i as f32 * cell, rect.top() + 2.0),
-            vec2(cell, ui::FIELD - 4.0),
+            vec2(cell, ROW - 4.0),
         )
     };
     let painter = ui.painter();
     painter.rect_filled(rect, ui::RADIUS, CONTROL);
     painter.rect_filled(slot(0), 4, Color32::from_gray(74));
-    let mark = |i: usize| Rect::from_center_size(slot(i).center(), vec2(18.0, 12.0));
+    let mark = |i: usize| Rect::from_center_size(slot(i).center(), vec2(ICON, ICON_SMALL));
     painter.rect_filled(mark(0), 2, Color32::from_gray(150));
     let gradient = mark(1);
     let mut mesh = egui::Mesh::default();
@@ -3263,37 +3584,50 @@ fn section_toggle(
     }
     let hovered = response.hovered();
     ui.painter().text(
-        pos2(rect.left() + 9.0, rect.center().y),
+        pos2(rect.left() + SPACE_S + ICON_SMALL / 2.0, rect.center().y),
         Align2::CENTER_CENTER,
         if *open {
             icon::CARET_DOWN
         } else {
             icon::CARET_RIGHT
         },
-        ui::icon_font(12.0),
+        ui::icon_font(ICON_SMALL),
         if hovered { TEXT } else { TEXT_DIM },
     );
     ui.painter().text(
-        pos2(rect.left() + 20.0, rect.center().y),
+        pos2(
+            rect.left() + SPACE_S + ICON_SMALL + SPACE_XS,
+            rect.center().y,
+        ),
         Align2::LEFT_CENTER,
         title,
         ui::font(BODY),
         TEXT,
     );
     trailing.map(|(glyph, label, enabled)| {
-        let slot =
-            Rect::from_center_size(pos2(rect.right() - 19.0, rect.center().y), vec2(24.0, 24.0));
+        let slot = Rect::from_center_size(
+            pos2(rect.right() - SPACE_S - SPACE_M, rect.center().y),
+            vec2(ROW, ROW),
+        );
         ui::icon_button_at(
             ui,
             slot,
             egui::Id::new(("section_control", title)),
             glyph,
-            16.0,
+            ICON_SMALL,
             false,
             enabled,
             label,
         )
     })
+}
+
+/// Hairline between tool rail groups.
+fn rail_separator(ui: &mut egui::Ui) {
+    ui.add_space(SPACE_S);
+    let (rect, _) = ui.allocate_exact_size(vec2(SPACE_L, 1.0), Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, BORDER);
+    ui.add_space(SPACE_S);
 }
 
 impl eframe::App for PaperCraftApp {
@@ -3320,6 +3654,66 @@ impl eframe::App for PaperCraftApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tab_switches_preserve_dirty_state_and_document_local_text_styles() {
+        let mut app = PaperCraftApp::from_document(Document::example());
+        assert!(!app.dirty());
+        app.editor.add(NodeKind::Rectangle).unwrap();
+        app.text_style = TextStyle {
+            font_size: 44.0,
+            fill_token: Some(1),
+            ..Default::default()
+        };
+        assert!(app.dirty());
+        app.open_tab(Document::default(), None);
+        assert!(!app.dirty());
+        assert_eq!(app.text_style, TextStyle::default());
+        app.editor.add(NodeKind::Rectangle).unwrap();
+        app.set_saved(app.editor.document.clone());
+        assert!(!app.dirty());
+        app.activate_tab(0);
+        assert!(
+            app.dirty(),
+            "Equal revision numbers belong to different documents"
+        );
+        assert_eq!(app.text_style.font_size, 44.0);
+        assert_eq!(app.text_style.fill_token, Some(1));
+        app.activate_tab(1);
+        assert!(!app.dirty());
+        assert_eq!(app.text_style, TextStyle::default());
+        assert!(app.close_document());
+        assert!(app.dirty());
+        assert!(!app.close_document());
+    }
+
+    #[test]
+    fn live_text_edits_are_dirty_before_their_history_commit() {
+        let mut app = PaperCraftApp::from_document(Document::example());
+        let id = app
+            .editor
+            .document
+            .nodes
+            .iter()
+            .find(|n| n.kind == NodeKind::Text)
+            .unwrap()
+            .id;
+        let original = app.editor.document.clone();
+        assert!(!app.dirty());
+        app.begin_text_edit(id, false);
+        app.editor
+            .document
+            .nodes
+            .iter_mut()
+            .find(|n| n.id == id)
+            .unwrap()
+            .text = "Unsaved typing".into();
+        assert!(app.dirty());
+        assert!(!app.close_document());
+        app.editor.undo();
+        assert_eq!(app.editor.document, original);
+        assert!(!app.dirty());
+    }
 
     #[test]
     fn files_open_once_and_other_tabs_cannot_replace_them() {

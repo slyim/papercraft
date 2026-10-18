@@ -355,14 +355,17 @@ fn main() -> eframe::Result {
 }
 
 /// Screen position of artboard point `(x, y)` for the fitted starter view, from the
-/// editor's panel widths (left 180 + rail 40, inspector 280, tabs 41) and fit margins.
+/// editor's shared panel dimensions and fit margins.
 fn artboard_point(size: [f32; 2], document: &Document, x: f32, y: f32) -> egui::Pos2 {
     let canvas = egui::Rect::from_min_max(
-        egui::pos2(220.0, 41.0),
-        egui::pos2(size[0] - 280.0, size[1]),
+        egui::pos2(
+            papercraft::ui::SIDEBAR + papercraft::ui::RAIL,
+            papercraft::ui::TAB_BAR,
+        ),
+        egui::pos2(size[0] - papercraft::ui::INSPECTOR, size[1]),
     );
-    let zoom = ((canvas.width() - 110.0) / document.width)
-        .min((canvas.height() - 130.0) / document.height)
+    let zoom = ((canvas.width() - 2.0 * papercraft::ui::SPACE_3XL) / document.width)
+        .min((canvas.height() - 2.0 * papercraft::ui::SPACE_3XL) / document.height)
         .clamp(0.05, 2.0);
     let board = egui::vec2(document.width, document.height) * zoom;
     canvas.center() - board / 2.0 + egui::vec2(x, y) * zoom

@@ -109,7 +109,7 @@ PaperCraft decisions:
 - **Text placement.** A click places "New text" sized to its content (plus 2 units of slack against glyph rounding at other zooms) and its width follows the content until that edit ends. A drag sets a fixed width; editing grows the height to fit and never shrinks it. Both start editing with the content selected.
 - **In-place editing.** Enter on one visible, unlocked text layer, or a double-click on it, edits it on the canvas. Escape, a click elsewhere or any other command ends the edit, which is one history step; placement is its own preceding step. The layer stays selected.
 - **Text style.** New text takes the font size, color and color token of the text layer most recently selected in this session; a deleted token is not bound.
-- **Marquee.** Dragging from empty canvas with Select selects visible, unlocked layers overlapping the rectangle within the artboard, live; ⇧ adds to the existing selection. Selection changes create no history.
+- **Marquee.** Dragging from empty canvas with Select selects visible, unlocked layers intersecting or touching the rectangle, live; ⇧ at the press adds to the existing selection. Selection changes create no history.
 
 F still fits the view; the Frame tool (T2) will need that key, as in Paper (⇧1 fits there).
 
@@ -122,3 +122,17 @@ PaperCraft decisions; no document schema change. Each tab retains its document, 
 Double-clicking a layer name edits it. Enter, focus loss or a document command commits a valid nonempty name as one history step; Escape cancels. Switching tabs and closing flush pending names before checking for unsaved changes. Names retain the existing UTF-8 validation limit.
 
 The inspector keeps position, dimensions, text, color tokens, radius, visibility and arrangement controls. Radius has a slider plus a numeric field. Rotation, flip, flex, clipping, blend modes, extra fills, effects and per-layer export remain disabled with explanatory tooltips; no corresponding document fields or behavior are claimed.
+
+## Canvas and performance increment — 18 October 2026
+
+Baseline: `1ecd3b8`. Evidence: Paper documents resizing and pixel snapping ([support](https://paper.design/docs/support), [workflow evidence](../research/paper/workflow-evidence.md)); its handles, marquee rules and snapping heuristics are undocumented. Every rule below is a PaperCraft decision.
+
+**Marquee.** Dragging from a point with no unlocked visible layer (Select tool) draws a marquee. The selection becomes the visible, unlocked layers whose bounds intersect or touch it, updated live; with Shift held at the press, the earlier selection is kept and the marquee adds to it. Selection changes are not history.
+
+**Resize.** Handles act on the arrangeable selection's bounds: one layer resizes alone, several scale together. Corners are hit within 4–12 screen points (smaller for small layers, so they stay movable); edges respond along their length when long enough. Moving edges advance by whole units and stop 1 unit from the opposite edge. Group resize maps each layer's bounds proportionally and rounds to whole units; text size is not scaled. Shift held after the press keeps a corner resize's starting proportions. Shift at the press keeps its existing meaning (extend the selection), so a Shift-press on a handle selects instead of resizing. One gesture is one history step.
+
+**Snapping.** On by default; the tool-rail magnet toggles it for the session and ⌘/Ctrl held during a drag bypasses it. Targets are the left/center/right and top/middle/bottom lines of the artboard and every visible layer outside the gesture; hidden layers are excluded, locked layers are targets. A move snaps the nearest of the moving bounds' three lines per axis; a resize snaps each moving edge. The tolerance is 5 screen points, so snapping behaves the same at every zoom; a snapped value lands exactly on its target instead of being rounded. Guides span the snapped bounds and their targets.
+
+**Performance.** Selection membership, gesture layer lookup and the unsaved-changes check are indexed (an `Editor` revision identifies each committed state, so undoing to the saved state is clean). The layer list builds only visible rows. Inspector and Theme panels snapshot only the fields they edit instead of cloning the document each frame. Selection outlines are one mesh. `examples/bench.rs` measures the result.
+
+Acceptance and results: [verification](verification.md#canvas-and-performance-18-october-2026).

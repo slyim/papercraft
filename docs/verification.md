@@ -246,3 +246,44 @@ Not verified: physical keyboard/mouse input and IME composition; the caret is no
 Before merging the remote canvas work, formatting, warnings-denied Clippy and all 59 tests pass. Additional checks cover independent tab history, New/Open/close behavior, Quit visiting every dirty tab, existing-file aliases activating one tab, refusal to overwrite another tab's file, pending names surviving tab commands, one-step rename/undo, Escape cancellation and New File remaining visible with 13 tabs at 960×640.
 
 Regression tests first reproduced duplicate file tabs, pending-name loss and offscreen New File controls. File identity checks now cover every open entry point and Save As; document commands flush pending names before switching or checking dirty state; excess tabs scroll. Native checks for the combined local and remote implementations are recorded separately after integration.
+
+## Canvas and performance (18 October 2026)
+
+Contract: [canvas and performance increment](implementation-process.md#canvas-and-performance-increment--18-october-2026). Baseline `1ecd3b8`. Environment: Linux x86_64 cloud container, Rust 1.97.0, Xvfb with Mesa; not the macOS reference platform.
+
+### Frame time
+
+`cargo run --release --example bench`: headless egui frames at 1380×860 including tessellation, not GPU upload; layers are 32-unit squares on a 4000×4000 artboard, a quarter of them text. Median milliseconds, three runs each; the same harness was built against the baseline in a temporary worktree (removed afterwards). Timings on this shared machine vary by roughly ±20%.
+
+| Layers | Idle frame | Select all | Idle, all selected | Drag frame, all selected | Undo |
+|---|---|---|---|---|---|
+| 1,000 baseline → now | 2.1–2.5 → 0.5–0.8 | 0.3–0.5 → 0.03–0.04 | 3.4–3.7 → 1.0 | 3.9–4.5 → 1.1–1.5 | 0.18–0.31 → 0.03 |
+| 5,000 | 13–18 → 2.6–2.9 | 7.7–9.7 → 0.12–0.18 | 34–40 → 4.9–5.6 | 41–48 → 5.8–6.4 | 4.4–7.5 → 0.11–0.21 |
+| 10,000 | 26–33 → 4.0–4.3 | 31–45 → 0.30 | 122–134 → 10–11 | 157–167 → 11–13 | 20–32 → 0.40–0.51 |
+
+The baseline drag column already includes snapping work in the current build (snapping did not exist at baseline). A callgrind profile of the current build attributes about half of all instructions to egui tessellation of the visible layers; the remaining app-side cost is linear in the layer count.
+
+### Checks
+
+- `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` and `git diff --check` pass. `cargo test --locked`: 4 unit + 49 integration tests pass.
+- `tests/performance.rs`: revisions through undo/redo and no-op commits; undoing to the saved state needs no unsaved-changes prompt; a 10,000-layer document builds fewer than 100 layer rows, and select-all, toggle, delete and undo keep the selection consistent.
+- `tests/canvas.rs`, simulated egui input at 1380×860 and 960×640: marquee selection with hidden/locked exclusion, Shift-add and no history; top-left, right-edge, top-edge, minimum-size and aspect-locked resize, each one undo step; group scaling of two layers with hidden/locked layers unchanged; snapped move and resize land exactly on a target edge and draw a guide; ⌘/Ctrl and the toggle bypass snapping; a hidden layer is not a target while the same layer visible is. Geometry unit checks cover the snapping, resize and mapping helpers.
+- `tests/editor.rs` `native_editor_renders_at_supported_sizes_and_keyboard_actions_use_history` checks exact pointer alignment; it now turns snapping off because its drag ends within 5 points of another layer's edge, which snapping intentionally changes.
+- After merging `main` at `7220e9d` (release packaging, portable recent-file fixture), formatting, warnings-denied Clippy, all 53 tests, the release build and native `editor`/`selected`/`arranged` renders were rerun on the merged tree and pass.
+- Native rendering: `xvfb-run cargo run --locked --release --example verify_native -- target/verification/canvas selected|arranged 1380x860` rendered through OpenGL (Mesa). Screenshots were inspected: four corner handles on the single selection and on the group bounds, handles on the group outline, crisp per-layer outlines, the magnet toggle in the tool rail. The example's model workflows pass.
+
+### Not verified
+
+- Guides and the marquee in a native window: covered by simulated input only, as the native example captures a static frame.
+- Physical mouse and trackpad input, macOS rendering, GPU upload cost and large documents with long text.
+- Paper's own handle, marquee and snapping behavior; the rules above are PaperCraft decisions.
+
+## Compact layout scale (18 October 2026)
+
+Contract: [layout scale](../DESIGN.md#layout-scale). Environment: Linux x86_64 container, Xvfb with Mesa.
+
+**Reference measurement.** A user-supplied screenshot of the Paper dashboard (2000×1248 px) was measured. The macOS window controls are 31 px apart (20 pt on macOS), giving about 1.55 px per point; 38 px rows (≈24 pt) agree. Measured in points: tab strip ≈29, tabs and sidebar rows 24, sidebar ≈211 wide with ≈10 pt insets, search field 24, content side padding ≈70, title row ≈32 tall starting ≈32 below the strip, cards ≈292×240 with a ≈48 header, ≈4 pt preview inset and ≈22 pt gaps, body text ≈11–12 pt. Values were rounded to the nearest grid step. The earlier panel-width reference (240/180/40/280 pt) was not reproduced by this screenshot and was replaced. The editor was not visible in it; editor panels reuse the same scale and remain to be checked against a Paper editor screenshot.
+
+**Checks.** `cargo fmt --check`, warnings-denied Clippy and `cargo test --locked` (4 unit + 51 integration) pass. `tests/design_grid.rs` scans `src/ui.rs`, `src/app.rs` and `src/app/dashboard.rs` and fails on any off-grid layout literal. The panel-width tests now assert the shared constants. The tab test checks that the close control is hidden until the tab is hovered. Native renders of `dashboard`, `editor`, `selected` and `theme` at 1290×805 were inspected: no clipped or wrapped controls after sizing the New file button from its label.
+
+**Not verified.** macOS rendering and the title-bar inset (72 pt beside the window controls), physical input, and a side-by-side comparison of the editor with Paper.
