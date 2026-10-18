@@ -6,9 +6,19 @@ An original, local design editor built entirely in Rust with egui/eframe and Pho
 
 ## Download
 
-The [PaperCraft prerelease](https://github.com/slyim/papercraft/releases/tag/v0.1.1) includes an Apple Silicon macOS build and SHA-256 checksums. Unzip it and move `PaperCraft.app` to Applications. The app is ad-hoc signed and is not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt.
+The [PaperCraft v0.1.2 prerelease](https://github.com/slyim/papercraft/releases/tag/v0.1.2) includes ready-to-run downloads. Rust and Node.js are not required.
 
-This is an early preview. Windows, Linux and Intel macOS downloads are not provided.
+| Platform | Downloads |
+|---|---|
+| Linux x86_64 | [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-linux-x86_64.tar.gz) |
+| Linux ARM64 | [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-linux-arm64.tar.gz) |
+| Mac Apple Silicon | [ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-macos-arm64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-macos-arm64.tar.gz) |
+| Mac Intel | [ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-macos-x86_64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-macos-x86_64.tar.gz) |
+| Windows x86_64 | [ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-windows-x86_64.zip) |
+
+Extract the archive. On macOS, move `PaperCraft.app` to Applications; on Windows, run `papercraft.exe`; on Linux, run `./papercraft`. Linux requires glibc 2.35 or later, a desktop session and OpenGL/EGL drivers; file dialogs use a desktop portal. macOS apps are ad-hoc signed and not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt. Windows builds are unsigned.
+
+[SHA-256 checksums](https://github.com/slyim/papercraft/releases/download/v0.1.2/SHA256SUMS.txt) cover every archive. This remains an early preview; native file-dialog and physical-input checks are incomplete. The [release workflow](docs/releasing.md) records build targets and packaging checks.
 
 ## Run the editor
 
@@ -22,7 +32,7 @@ cargo run --locked
 cargo run --locked -- /path/to/design.papercraft
 ```
 
-Verified locally on Apple Silicon macOS with Rust 1.99.1. A prior Linux aarch64 rendering check is recorded in the verification notes; Linux release builds, Windows and Intel macOS remain unverified. The first build downloads and compiles the locked dependencies; Node.js is unnecessary for the application.
+The release workflow builds and runs Rust tests on Linux x86_64/ARM64, macOS Apple Silicon/Intel and Windows x86_64 with Rust 1.99.1. Native renderer checks run on Linux and macOS; Windows native interaction remains unverified. Local Apple Silicon checks and remaining gaps are recorded in the [verification notes](docs/verification.md). The first source build downloads and compiles the locked dependencies; Node.js is unnecessary for the application.
 
 The editor includes one artboard, rectangle/text layers, color tokens, multi-selection with align/distribute, a layer list and property inspector, dragging, bottom-right resizing, pan/zoom, ordering, hide/lock, undo/redo, validated `.papercraft` JSON files, and standalone HTML/SVG export. New/Open/Close prompt before discarding unsaved changes. macOS Quit uses the same preservation decision, including while minimized. Save writes a temporary file before replacing the destination.
 
@@ -67,7 +77,7 @@ The [integration plan](docs/artcraft.md) records the implemented SVG exchange, t
 
 ## License
 
-PaperCraft 0.1.1 and its original code, documentation and generated logo use the [MIT license](LICENSE-MIT). The native Craft apps offer MIT as one of their license options. The previously published v0.1.0 dual-license grant remains available with that release.
+PaperCraft and its original code, documentation and generated logo use the [MIT license](LICENSE-MIT). The native Craft apps offer MIT as one of their license options. The previously published v0.1.0 dual-license grant remains available with that release.
 
 Third-party tooling, fonts and icons retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). License alignment does not establish ArtCraft affiliation or file compatibility.
 
