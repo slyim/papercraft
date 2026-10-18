@@ -653,8 +653,8 @@ impl PaperCraftApp {
                 ui.label(RichText::new("Save this file in the new format?").size(16.0));
                 ui.label(
                     RichText::new(
-                        "Color tokens need document format version 2. PaperCraft 0.1 and \
-                         earlier cannot open version 2 files. Saving as a new file keeps \
+                        "Color tokens need document format version 2. Earlier builds, including \
+                         the published v0.1.1, cannot open it. Saving as a new file keeps \
                          the original unchanged.",
                     )
                     .color(TEXT_DIM),

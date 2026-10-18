@@ -31,7 +31,7 @@ Version 2 adds these fields. A version 1 document has none of them.
 
 ## Downgrade limits
 
-- PaperCraft 0.1.x, and this branch's baseline, cannot open version 2 files. They reject them without modifying them.
+- The published PaperCraft v0.1.1 build and this branch's baseline (`bc3c52b`) cannot open version 2 files. They reject them without modifying them. Source builds from the token increment support both versions; the package version alone does not distinguish these builds.
 - Token names and bindings exist only in version 2. HTML export keeps them as CSS custom properties (`--color-<name>`). SVG export contains only resolved colors.
 
 ## Rollback and export strategy

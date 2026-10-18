@@ -184,3 +184,20 @@ The two original commits, `5f004a9` and `0868ef3`, are reviewed separately and r
 ### Arrangement correction
 
 Three `coordinate_limits_*` regressions failed before correction. Nudging and dragging previously clamped each layer separately, changing the spacing of a selection when one layer reached ±100,000. They now share one bounded translation; canvas movement rounds the delta instead of rounding each absolute position, retaining fractional offsets. Align/distribute previously clamped individual results and could report success with misaligned edges or unequal gaps. An out-of-range arrangement now fails validation and restores the whole document without adding history. The regressions pass, covering both coordinate limits, both nudge axes, a simulated canvas drag, fractional positions, rejection and undo.
+
+### Independent gates and hygiene
+
+| Revision | `cargo fmt --check` | `cargo test --locked` | `cargo clippy --locked --all-targets -- -D warnings` |
+|---|---|---|---|
+| `5f004a9`, detached temporary worktree | Pass | 4 unit + 18 integration | Pass |
+| `0868ef3`, separate detached temporary worktree | Pass | 4 unit + 35 integration | Pass |
+| Corrected branch | Pass | 4 unit + 40 integration | Pass |
+
+- The original tip and corrected branch both pass `cargo build --release --locked` and `cargo run --locked --example verify_native -- target/verification/final theme 1380x860`. Both screenshots were opened and inspected: readable Theme token controls, propagated accent colors, bound artboard color and stable inspector widths. The original image is retained under `target/verification/review-original-0868ef3/`; the corrected image is `target/verification/final/papercraft-theme-1380x860.png`. The example's model lifecycle/token/arrangement/export assertions pass.
+- Native runs inside the sandbox stalled with macOS Launch Services/XPC errors. Only the two owned verification PIDs were stopped; the same checks passed outside the sandbox. These are environment failures, not application defects. Both temporary worktrees were clean after verification and removed.
+- The working tree was initially clean. A fresh fetch confirmed `origin/main` remained at `bc3c52b` before review. Each original commit was inspected separately, including its message and final `Co-Authored-By` trailer. New fix messages also retain that trailer; the original commits were not amended or rewritten.
+- `git ls-files research/private` prints nothing. Tracked-file scans detect no credential patterns or personal absolute paths in the corrected tree. Personal paths in the original Craft runtime reproduction document were replaced with repository-relative instructions; the original commits remain in history. No Paper application source, fonts, branding or assets were added. Required MIT and third-party notices remain present; the craft-libs MIT notice matches the pinned dependency's notice byte for byte.
+- README, product/design documents, all `docs/*.md` and `research/paper/*.md` were checked against the implementation and historical verification boundaries. All 52 local links/anchors resolve across 12 Markdown files. Published v0.1.1 compatibility wording, including the upgrade dialog, now distinguishes the older published build from token-capable source builds with the same package version. The existing upgrade-prompt regression passes after that text correction.
+- The retained D2 documentation record and both Craft imported-document JSON records match their recorded SHA-256 hashes. Paper runtime behavior and Craft imports were not rerun; earlier source/runtime evidence remains explicitly historical. Research tooling is unchanged; `npm test` was not rerun. `git diff --check` passes. No package, tag or release was created.
+
+Physical native keyboard/mouse input, native file dialogs, screen-reader interaction, other-platform builds and large-document performance remain unverified. Version 2 documents require a token-capable build or the documented downgrade procedure.

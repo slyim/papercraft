@@ -93,14 +93,15 @@ Target-model assertions checked dimensions, order, text strings, mask bounds, Fi
 
 FigCraft's parsing log warns that the stand-in parsing font lacks three CJK glyphs, but its final rendered output visibly includes those glyphs. VectorCraft's native view contains pink highlights behind text; its offscreen export does not. Its [render source](https://github.com/storytold/vectorcraft/blob/cdba0aac03f83bbc633f5e2aa9500354648938d3/crates/render/src/lib.rs) implements substituted-font/glyph highlights for the screen, so substitution is the source-supported explanation rather than exported content. Neither observation changes the preserved text strings. A verification-helper cleanup parser expected an object where VectorCraft's successful `app.quit` returned null; all import/model/render/screenshot checks had already completed, and cleanup addressed only the launched process. That helper error is separate from target application behavior.
 
-Reproduction used each installed executable, confined input/output roots and only disposable files:
+Reproduction used each installed executable, confined input/output roots and only disposable files. Run from the repository root:
 
-```text
-/Applications/VectorCraft.app/Contents/MacOS/VectorCraft --control 18771 --automation-read-root /Users/slimy/Desktop/crumbs/target/verification/exchange --automation-write-root /Users/slimy/Desktop/crumbs/target/verification/exchange /Users/slimy/Desktop/crumbs/target/verification/exchange/starter.svg
-/Applications/FigCraft.app/Contents/MacOS/FigCraft --control 18772 --automation-read-root /Users/slimy/Desktop/crumbs/target/verification/exchange --automation-write-root /Users/slimy/Desktop/crumbs/target/verification/exchange /Users/slimy/Desktop/crumbs/target/verification/exchange/starter.svg
+```sh
+exchange_root="$(pwd)/target/verification/exchange"
+/Applications/VectorCraft.app/Contents/MacOS/VectorCraft --control 18771 --automation-read-root "$exchange_root" --automation-write-root "$exchange_root" "$exchange_root/starter.svg"
+/Applications/FigCraft.app/Contents/MacOS/FigCraft --control 18772 --automation-read-root "$exchange_root" --automation-write-root "$exchange_root" "$exchange_root/starter.svg"
 ```
 
-VectorCraft also used `VECTORCRAFT_CONFIG_DIR=/Users/slimy/Desktop/crumbs/research/private/craft-source/runtime/vectorcraft-profile`. FigCraft used its normal profile; no existing target document or settings file was overwritten by the verification helper. Each connection sent JSON-lines requests in order: `document.inspect {depth:12}`, `ui.inspect {}`, `ui.render {path:...,scale:1}`, `ui.screenshot {path:...}`, then close/quit. FigCraft's `file.close {force:true}` discarded only its imported disposable document. Processes were checked before launch; cleanup addressed only the owned PIDs.
+VectorCraft also set `VECTORCRAFT_CONFIG_DIR` to the absolute path of the repository's `research/private/craft-source/runtime/vectorcraft-profile`. FigCraft used its normal profile; no existing target document or settings file was overwritten by the verification helper. Each connection sent JSON-lines requests in order: `document.inspect {depth:12}`, `ui.inspect {}`, `ui.render {path:...,scale:1}`, `ui.screenshot {path:...}`, then close/quit. FigCraft's `file.close {force:true}` discarded only its imported disposable document. Processes were checked before launch; cleanup addressed only the owned PIDs.
 
 | Retained record | SHA-256 |
 |---|---|
