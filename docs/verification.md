@@ -171,3 +171,11 @@ No baseline defect was reproduced in the selection, history, persistence or expo
 
 - **Format:** documents without tokens remain version 1 and still open in earlier builds. Documents with tokens are version 2, which earlier builds refuse without modifying them. Rollback is to delete the tokens, or to strip the version 2 keys as described in [document format](document-format.md). Recent-file storage is unchanged.
 - **Not implemented:** marquee selection, multi-layer resize, grouping, snapping, theme modes, non-color tokens, token copy/duplicate, and multi-selection property editing.
+
+## Review before landing (18 October 2026)
+
+The two original commits, `5f004a9` and `0868ef3`, are reviewed separately and retained unchanged. Corrections are added on `codex/theme-tokens-arrangement`.
+
+### Persistence corrections
+
+- `version_1_rejects_every_token_field_even_when_empty` failed before correction: the loader accepted `tokens: []` in version 1, contrary to the documented format. The loader now checks field presence before deserializing, rejecting all version 2 keys in version 1, including empty arrays, default identifiers and null bindings. The regression passes and checks that rejected input bytes remain unchanged.

@@ -445,16 +445,28 @@ impl Document {
         }
         // Check the version first so newer files get a clear message rather than an
         // unknown-field error.
-        #[derive(Deserialize)]
-        struct Version {
-            version: u32,
-        }
-        if let Ok(Version { version }) = serde_json::from_slice::<Version>(&data)
-            && version > CURRENT_VERSION
-        {
+        let fields: serde_json::Value = serde_json::from_slice(&data)
+            .map_err(|e| format!("Invalid PaperCraft document: {e}"))?;
+        let version = fields["version"].as_u64();
+        if version.is_some_and(|version| version > u64::from(CURRENT_VERSION)) {
             return Err(
                 "This document was created by a newer PaperCraft and cannot be opened.".into(),
             );
+        }
+        if version == Some(1)
+            && ([
+                "tokens",
+                "next_token_id",
+                "background_token",
+                "canvas_token",
+            ]
+            .iter()
+            .any(|key| fields.get(key).is_some())
+                || fields["nodes"]
+                    .as_array()
+                    .is_some_and(|nodes| nodes.iter().any(|node| node.get("fill_token").is_some())))
+        {
+            return Err("Version 1 documents cannot contain color token fields.".into());
         }
         let mut doc: Self = serde_json::from_slice(&data)
             .map_err(|e| format!("Invalid PaperCraft document: {e}"))?;

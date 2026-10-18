@@ -167,6 +167,32 @@ fn invalid_references_are_rejected_without_replacing_work() {
 }
 
 #[test]
+fn version_1_rejects_every_token_field_even_when_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("malformed.papercraft");
+    let original = serde_json::to_value(Document::example()).unwrap();
+    for (key, field) in [
+        ("tokens", serde_json::json!([])),
+        ("next_token_id", serde_json::json!(1)),
+        ("background_token", serde_json::Value::Null),
+        ("canvas_token", serde_json::Value::Null),
+        ("fill_token", serde_json::Value::Null),
+    ] {
+        let mut value = original.clone();
+        let target = if key == "fill_token" {
+            &mut value["nodes"][0]
+        } else {
+            &mut value
+        };
+        target[key] = field;
+        let bytes = serde_json::to_vec(&value).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(Document::load(&path).is_err(), "Accepted v1 {key}");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+}
+
+#[test]
 fn deleting_a_token_detaches_bindings_and_preserves_their_colors() {
     let directory = tempfile::tempdir().unwrap();
     let mut editor = Editor::new(Document::load(&fixture(directory.path())).unwrap());
