@@ -171,7 +171,7 @@ def main():
         f"PaperCraft {version} ({args.platform}) — early preview\n\n"
         + ("Move PaperCraft.app to Applications. This app is ad-hoc signed, not notarized; macOS may require approval in Privacy & Security.\n" if mac
            else "Run papercraft.exe. No Rust or Node installation is needed.\n" if executable.endswith(".exe")
-           else "Run ./papercraft from this folder. Requires glibc 2.35+, a desktop session and OpenGL/EGL drivers. File dialogs use a desktop portal.\n")
+           else "Run ./papercraft from this folder. Requires glibc 2.35+, libxkbcommon-x11, a desktop session and OpenGL/EGL drivers. File dialogs use a desktop portal.\n")
         + "\nUse SHA256SUMS.txt from the release page to verify downloads.\n"
         "Documents with tokens use format version 2; older published builds cannot open them.\n"
         "https://github.com/slyim/papercraft/releases/tag/v" + version + "\n",

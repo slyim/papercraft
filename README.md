@@ -16,7 +16,7 @@ The [PaperCraft v0.1.2 prerelease](https://github.com/slyim/papercraft/releases/
 | Mac Intel | [ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-macos-x86_64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-macos-x86_64.tar.gz) |
 | Windows x86_64 | [ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-windows-x86_64.zip) |
 
-Extract the archive. On macOS, move `PaperCraft.app` to Applications; on Windows, run `papercraft.exe`; on Linux, run `./papercraft`. Linux requires glibc 2.35 or later, a desktop session and OpenGL/EGL drivers; file dialogs use a desktop portal. macOS apps are ad-hoc signed and not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt. Windows builds are unsigned.
+Extract the archive. On macOS, move `PaperCraft.app` to Applications; on Windows, run `papercraft.exe`; on Linux, run `./papercraft`. Linux requires glibc 2.35 or later, libxkbcommon-x11, a desktop session and OpenGL/EGL drivers; file dialogs use a desktop portal. On Ubuntu/Debian, missing runtime libraries can be installed with `sudo apt install libxkbcommon-x11-0 libegl1 libgl1`. macOS apps are ad-hoc signed and not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt. Windows builds are unsigned.
 
 [SHA-256 checksums](https://github.com/slyim/papercraft/releases/download/v0.1.2/SHA256SUMS.txt) cover every archive. This remains an early preview; native file-dialog and physical-input checks are incomplete. The [release workflow](docs/releasing.md) records build targets and packaging checks.
 
