@@ -447,13 +447,28 @@ fn dashboard_opens_recents_and_tabs_protect_unsaved_work() {
     assert_eq!(text_rects(&output, "A place to begin").len(), 2);
     let card = text_rect(&output, "Second document").expect("Recent file card");
     click(&ctx, &mut app, size, card.center());
-    // The modal asks before replacing unsaved work; cancel keeps everything.
+    // The file opens in a second tab; the unsaved starter document stays open.
+    assert_eq!(app.tab_count(), 2);
+    assert_eq!(app.active_tab(), 1);
+    assert_eq!(app.editor.document, other);
+    assert_eq!(app.view, View::Editor);
     let output = run(&ctx, &mut app, size, Vec::new());
-    let cancel = text_rect(&output, "Cancel").expect("Unsaved changes prompt");
-    click(&ctx, &mut app, size, cancel.center());
-    assert_eq!(app.editor.document.name, "A place to begin");
-    assert_eq!(app.view, View::Dashboard);
+    assert!(
+        text_rect(&output, "A place to begin").is_some(),
+        "First tab"
+    );
 
+    // Switching tabs restores each document with its history.
+    let first = text_rect(&output, "A place to begin").unwrap();
+    click(&ctx, &mut app, size, first.center());
+    assert_eq!(app.active_tab(), 0);
+    assert_eq!(app.editor.document.name, "A place to begin");
+    assert!(app.editor.can_undo());
+
+    // Opening an already open file switches to its tab.
+    let output = run(&ctx, &mut app, size, Vec::new());
+    let dashboard_tab = text_rect(&output, "Dashboard").unwrap();
+    click(&ctx, &mut app, size, dashboard_tab.center());
     // Search filters the cards.
     ctx.memory_mut(|m| m.request_focus(egui::Id::new("dashboard_search")));
     run(
@@ -468,19 +483,46 @@ fn dashboard_opens_recents_and_tabs_protect_unsaved_work() {
         1,
         "Only the tab remains"
     );
-    let card = text_rect(&output, "Second document").expect("Search result");
+    let cards = text_rects(&output, "Second document");
+    assert_eq!(cards.len(), 2, "Tab and card");
+    let card = cards
+        .iter()
+        .max_by(|a, b| a.top().total_cmp(&b.top()))
+        .unwrap();
     click(&ctx, &mut app, size, card.center());
-    let output = run(&ctx, &mut app, size, Vec::new());
-    let discard = text_rect(&output, "Discard changes").expect("Unsaved changes prompt");
-    click(&ctx, &mut app, size, discard.center());
-    assert_eq!(app.editor.document, other);
+    assert_eq!(app.tab_count(), 2);
+    assert_eq!(app.active_tab(), 1);
     assert_eq!(app.view, View::Editor);
 
-    // Closing a clean document returns to the dashboard; the file stays in recents.
+    // Closing a clean tab activates the remaining one without asking.
+    let output = run(&ctx, &mut app, size, Vec::new());
+    let closes = text_rects(&output, egui_phosphor::regular::X);
+    assert_eq!(closes.len(), 2, "One close button per tab");
+    let close = closes
+        .iter()
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap();
+    click(&ctx, &mut app, size, close.center());
+    assert_eq!(app.tab_count(), 1);
+    assert_eq!(app.editor.document.name, "A place to begin");
+    assert_eq!(app.view, View::Editor);
+
+    // Closing the unsaved tab asks first; cancel keeps it.
     let output = run(&ctx, &mut app, size, Vec::new());
     let close = text_rect(&output, egui_phosphor::regular::X).expect("Close tab button");
     click(&ctx, &mut app, size, close.center());
+    let output = run(&ctx, &mut app, size, Vec::new());
+    let cancel = text_rect(&output, "Cancel").expect("Unsaved changes prompt");
+    click(&ctx, &mut app, size, cancel.center());
+    assert!(app.document_open());
+    let output = run(&ctx, &mut app, size, Vec::new());
+    let close = text_rect(&output, egui_phosphor::regular::X).unwrap();
+    click(&ctx, &mut app, size, close.center());
+    let output = run(&ctx, &mut app, size, Vec::new());
+    let discard = text_rect(&output, "Discard changes").expect("Unsaved changes prompt");
+    click(&ctx, &mut app, size, discard.center());
     assert!(!app.document_open());
+    assert_eq!(app.tab_count(), 0);
     assert_eq!(app.view, View::Dashboard);
     let output = run(&ctx, &mut app, size, Vec::new());
     assert!(text_rect(&output, "Second document").is_some());
@@ -488,6 +530,37 @@ fn dashboard_opens_recents_and_tabs_protect_unsaved_work() {
         text_rect(&output, "Untitled").is_none(),
         "No tab without a document"
     );
+}
+
+#[test]
+fn new_files_open_in_their_own_tabs() {
+    let size = [1380.0, 860.0];
+    let ctx = egui::Context::default();
+    PaperCraftApp::configure(&ctx);
+    let mut app = PaperCraftApp::from_document(Document::example());
+    run(&ctx, &mut app, size, Vec::new());
+    for expected in 2..=3 {
+        let output = run(&ctx, &mut app, size, Vec::new());
+        let plus = text_rect(&output, egui_phosphor::regular::PLUS).expect("New file button");
+        click(&ctx, &mut app, size, plus.center());
+        assert_eq!(app.tab_count(), expected);
+        assert_eq!(app.active_tab(), expected - 1);
+    }
+    let output = run(&ctx, &mut app, size, Vec::new());
+    let tabs = text_rects(&output, "Untitled");
+    assert_eq!(
+        tabs.iter().filter(|r| r.top() < 40.0).count(),
+        2,
+        "Two new tabs"
+    );
+    assert!(app.close_document());
+    assert_eq!(app.tab_count(), 2);
+    assert_eq!(app.active_tab(), 1);
+    app.activate_tab(0);
+    assert_eq!(app.editor.document.name, "A place to begin");
+    assert!(app.close_document());
+    assert!(app.close_document());
+    assert!(!app.document_open());
 }
 
 #[test]
@@ -520,4 +593,109 @@ fn page_color_field_edits_hex_and_records_one_history_step() {
         "One undo restores the page color"
     );
     assert!(!app.editor.can_undo());
+}
+
+#[test]
+fn many_document_tabs_keep_the_new_file_button_in_the_window() {
+    let size = [960.0, 640.0];
+    let ctx = egui::Context::default();
+    PaperCraftApp::configure(&ctx);
+    let mut app = PaperCraftApp::from_document(Document::default());
+    for _ in 0..12 {
+        run(
+            &ctx,
+            &mut app,
+            size,
+            vec![egui::Event::Key {
+                key: egui::Key::N,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+        );
+    }
+    assert_eq!(app.tab_count(), 13);
+    let output = run(&ctx, &mut app, size, Vec::new());
+    let plus = text_rects(&output, egui_phosphor::regular::PLUS)
+        .into_iter()
+        .find(|r| r.top() < 40.0)
+        .expect("New file button");
+    assert!(
+        plus.right() <= size[0],
+        "New file button is offscreen: {plus:?}"
+    );
+}
+
+#[test]
+fn layer_renaming_commits_once_and_escape_cancels() {
+    let size = [1380.0, 860.0];
+    for finish in [egui::Key::Enter, egui::Key::Escape] {
+        let ctx = egui::Context::default();
+        PaperCraftApp::configure(&ctx);
+        let mut editor = Editor::new(Document::default());
+        editor.add(NodeKind::Rectangle).unwrap();
+        let original = editor.document.clone();
+        let name = original.nodes[0].name.clone();
+        let mut app = PaperCraftApp::from_document(original.clone());
+        let output = run(&ctx, &mut app, size, Vec::new());
+        let row = text_rect(&output, &name).expect("Layer row");
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                run(
+                    &ctx,
+                    &mut app,
+                    size,
+                    vec![
+                        egui::Event::PointerMoved(row.center()),
+                        egui::Event::PointerButton {
+                            pos: row.center(),
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+        }
+        run(&ctx, &mut app, size, Vec::new());
+        assert!(
+            ctx.egui_wants_keyboard_input(),
+            "Rename takes focus: {finish:?}"
+        );
+        run(
+            &ctx,
+            &mut app,
+            size,
+            vec![egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+        );
+        run(
+            &ctx,
+            &mut app,
+            size,
+            vec![egui::Event::Text("Renamed".into())],
+        );
+        run(
+            &ctx,
+            &mut app,
+            size,
+            vec![key(finish, true), key(finish, false)],
+        );
+        run(&ctx, &mut app, size, Vec::new());
+        if finish == egui::Key::Enter {
+            assert_eq!(app.editor.document.nodes[0].name, "Renamed");
+            app.editor.undo();
+            assert_eq!(app.editor.document, original);
+            assert!(!app.editor.can_undo());
+        } else {
+            assert_eq!(app.editor.document, original);
+            assert!(!app.editor.can_undo());
+        }
+    }
 }

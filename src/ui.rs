@@ -26,6 +26,8 @@ pub const ACCENT: Color32 = Color32::from_rgb(134, 178, 255);
 
 pub const BODY: f32 = 13.5;
 pub const ROW: f32 = 28.0;
+/// Height of inspector fields, buttons and sliders.
+pub const FIELD: f32 = 24.0;
 pub const RADIUS: u8 = 6;
 /// Height of the window tab strip.
 pub const TAB_BAR: f32 = 41.0;
@@ -331,7 +333,7 @@ pub fn color_field(ui: &mut Ui, id: egui::Id, color: &mut [u8; 4]) -> bool {
     let width = ui.available_width();
     field_frame().show(ui, |ui| {
         ui.set_width(width - 16.0);
-        ui.set_height(ROW);
+        ui.set_height(FIELD);
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let (swatch, response) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::click());
@@ -400,7 +402,7 @@ pub fn color_field(ui: &mut Ui, id: egui::Id, color: &mut [u8; 4]) -> bool {
                 plain_drag_style(ui);
                 ui.spacing_mut().button_padding = vec2(2.0, 0.0);
                 ui.add_sized(
-                    [opacity_width, ROW - 6.0],
+                    [opacity_width, FIELD - 6.0],
                     egui::DragValue::new(&mut percent)
                         .range(0.0..=100.0)
                         .max_decimals(0)
@@ -418,10 +420,208 @@ pub fn color_field(ui: &mut Ui, id: egui::Id, color: &mut [u8; 4]) -> bool {
     finished
 }
 
+/// Read-only field for a property the document model does not store yet.
+pub fn inert_field(
+    ui: &mut Ui,
+    lead: &str,
+    text: &str,
+    trailing: Option<&str>,
+    width: f32,
+    hint: &str,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, FIELD), Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, false, hint));
+    let painter = ui.painter();
+    painter.rect_filled(rect, RADIUS, CONTROL);
+    let mut x = rect.left() + 8.0;
+    if !lead.is_empty() {
+        let galley = painter.layout_no_wrap(lead.to_owned(), font(BODY), TEXT_FAINT);
+        let lead_width = galley.size().x;
+        painter.galley(
+            egui::pos2(x, rect.center().y - galley.size().y / 2.0),
+            galley,
+            TEXT_FAINT,
+        );
+        x += lead_width + 8.0;
+    }
+    painter.text(
+        egui::pos2(x, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        font(BODY),
+        TEXT_DIM,
+    );
+    if let Some(glyph) = trailing {
+        painter.text(
+            egui::pos2(rect.right() - 12.0, rect.center().y),
+            Align2::CENTER_CENTER,
+            glyph,
+            icon_font(12.0),
+            TEXT_FAINT,
+        );
+    }
+    response.on_hover_text(hint)
+}
+
+/// Icon buttons joined in one field, separated by thin rules.
+/// Returns the index of the clicked item.
+pub fn segmented(ui: &mut Ui, width: f32, items: &[(&str, &str)], enabled: bool) -> Option<usize> {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD), Sense::hover());
+    ui.painter().rect_filled(rect, RADIUS, CONTROL);
+    let cell = width / items.len().max(1) as f32;
+    let mut clicked = None;
+    for (index, (glyph, label)) in items.iter().enumerate() {
+        let slot = Rect::from_min_size(
+            egui::pos2(rect.left() + index as f32 * cell, rect.top()),
+            vec2(cell, FIELD),
+        );
+        if index > 0 {
+            ui.painter()
+                .vline(slot.left(), rect.y_range(), Stroke::new(1.0, SHELL));
+        }
+        let id = ui.id().with(("segment", *label));
+        if icon_button_at(ui, slot, id, glyph, 16.0, false, enabled, label).clicked() {
+            clicked = Some(index);
+        }
+    }
+    clicked
+}
+
+/// Full-width filled button with a centered label and dim shortcut.
+pub fn wide_button(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool) -> Response {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), FIELD), sense);
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+    let fill = if enabled && response.hovered() {
+        PRESSED
+    } else {
+        CONTROL
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, RADIUS, fill);
+    let color = if enabled { TEXT } else { TEXT_DIM };
+    let text = painter.layout_no_wrap(label.to_owned(), font(BODY), color);
+    let keys = painter.layout_no_wrap(shortcut.to_owned(), font(BODY), TEXT_FAINT);
+    let gap = if shortcut.is_empty() { 0.0 } else { 8.0 };
+    let total = text.size().x + gap + keys.size().x;
+    let x = rect.center().x - total / 2.0;
+    let text_width = text.size().x;
+    painter.galley(
+        egui::pos2(x, rect.center().y - text.size().y / 2.0),
+        text,
+        color,
+    );
+    painter.galley(
+        egui::pos2(x + text_width + gap, rect.center().y - keys.size().y / 2.0),
+        keys,
+        TEXT_FAINT,
+    );
+    response
+}
+
+/// Checkbox with a label and dim shortcut.
+pub fn check_row(
+    ui: &mut Ui,
+    checked: &mut bool,
+    label: &str,
+    shortcut: &str,
+    enabled: bool,
+) -> Response {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, mut response) = ui.allocate_exact_size(vec2(ui.available_width(), FIELD), sense);
+    if response.clicked() {
+        *checked = !*checked;
+        response.mark_changed();
+    }
+    let value = *checked;
+    response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, value, label));
+    let painter = ui.painter();
+    let mark = Rect::from_min_size(
+        egui::pos2(rect.left(), rect.center().y - 8.0),
+        vec2(16.0, 16.0),
+    );
+    painter.rect_filled(mark, 4, if response.hovered() { PRESSED } else { CONTROL });
+    let color = if enabled { TEXT } else { TEXT_DIM };
+    if value {
+        painter.text(
+            mark.center(),
+            Align2::CENTER_CENTER,
+            egui_phosphor::regular::CHECK,
+            icon_font(12.0),
+            color,
+        );
+    }
+    let text = painter.layout_no_wrap(label.to_owned(), font(BODY), color);
+    let text_width = text.size().x;
+    let x = mark.right() + 10.0;
+    painter.galley(
+        egui::pos2(x, rect.center().y - text.size().y / 2.0),
+        text,
+        color,
+    );
+    painter.text(
+        egui::pos2(x + text_width + 8.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        shortcut,
+        font(BODY),
+        TEXT_FAINT,
+    );
+    response
+}
+
+/// Horizontal slider from 0 to `max` with a pill-shaped knob. Values are whole numbers.
+pub fn slider(ui: &mut Ui, value: &mut f32, max: f32, width: f32, label: &str) -> Response {
+    const TRACK: f32 = 11.0;
+    const KNOB: f32 = 20.0;
+    let (rect, mut response) = ui.allocate_exact_size(vec2(width, FIELD), Sense::click_and_drag());
+    let track = Rect::from_center_size(rect.center(), vec2(width, TRACK));
+    let travel = (track.width() - KNOB).max(1.0);
+    if response.is_pointer_button_down_on()
+        && let Some(pointer) = response.interact_pointer_pos()
+    {
+        let t = ((pointer.x - track.left() - KNOB / 2.0) / travel).clamp(0.0, 1.0);
+        let next = (t * max).round();
+        if next != *value {
+            *value = next;
+            response.mark_changed();
+        }
+    }
+    let shown = *value;
+    response.widget_info(|| WidgetInfo::slider(ui.is_enabled(), shown as f64, label));
+    let t = if max > 0.0 {
+        (shown / max).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let knob = Rect::from_min_size(
+        egui::pos2(track.left() + t * travel, track.top()),
+        vec2(KNOB, TRACK),
+    );
+    let painter = ui.painter();
+    painter.rect_filled(track, TRACK / 2.0, CONTROL);
+    let knob_color = if !ui.is_enabled() {
+        TEXT_FAINT
+    } else if response.hovered() || response.dragged() {
+        Color32::WHITE
+    } else {
+        TEXT
+    };
+    painter.rect_filled(knob, TRACK / 2.0, knob_color);
+    response.on_hover_text(label)
+}
+
 /// Removes the frame from drag values inside an existing field container.
 pub fn plain_drag_style(ui: &mut Ui) {
-    // Keep the value centered inside the 22 px slot of a 28 px field.
-    ui.spacing_mut().interact_size.y = ROW - 6.0;
+    // Keep the value centered inside the 18 px slot of a 24 px field.
+    ui.spacing_mut().interact_size.y = FIELD - 6.0;
     let visuals = &mut ui.visuals_mut().widgets;
     for w in [
         &mut visuals.inactive,
@@ -448,29 +648,37 @@ pub fn number_field(
     field_frame()
         .show(ui, |ui| {
             ui.set_width(width - 16.0);
-            ui.set_height(ROW);
+            ui.set_height(FIELD);
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                let galley = ui
-                    .painter()
-                    .layout_no_wrap(label.to_owned(), font(BODY), TEXT_DIM);
-                let (slot, _) =
-                    ui.allocate_exact_size(vec2(galley.size().x, ROW - 6.0), Sense::hover());
-                ui.painter().galley(
-                    egui::pos2(slot.left(), slot.center().y - galley.size().y / 2.0),
-                    galley,
-                    TEXT_DIM,
-                );
+                if !label.is_empty() {
+                    let galley =
+                        ui.painter()
+                            .layout_no_wrap(label.to_owned(), font(BODY), TEXT_DIM);
+                    let (slot, _) =
+                        ui.allocate_exact_size(vec2(galley.size().x, FIELD - 6.0), Sense::hover());
+                    ui.painter().galley(
+                        egui::pos2(slot.left(), slot.center().y - galley.size().y / 2.0),
+                        galley,
+                        TEXT_DIM,
+                    );
+                }
                 plain_drag_style(ui);
+                // Keep the value left-aligned rather than centered in a minimum-width button.
+                ui.spacing_mut().interact_size.x = 0.0;
                 ui.visuals_mut().widgets.inactive.fg_stroke.color = TEXT;
                 ui.spacing_mut().button_padding = vec2(2.0, 0.0);
                 let value_width = ui.available_width();
                 ui.allocate_ui_with_layout(
-                    vec2(value_width, ROW - 6.0),
+                    vec2(value_width, FIELD - 6.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                        ui.add(egui::DragValue::new(value).speed(1.0).range(range))
-                            .on_hover_text(label)
+                        let response = ui.add(egui::DragValue::new(value).speed(1.0).range(range));
+                        if label.is_empty() {
+                            response
+                        } else {
+                            response.on_hover_text(label)
+                        }
                     },
                 )
                 .inner

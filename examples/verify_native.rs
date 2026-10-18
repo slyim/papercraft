@@ -13,6 +13,8 @@ struct NativeCheck {
     hover: Option<egui::Pos2>,
     quit_check: bool,
     export_menu: bool,
+    /// Input events sent on each frame, by frame index.
+    script: Vec<Vec<egui::Event>>,
 }
 
 impl eframe::App for NativeCheck {
@@ -23,6 +25,9 @@ impl eframe::App for NativeCheck {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if let Some(pos) = self.hover {
             raw_input.events.push(egui::Event::PointerMoved(pos));
+        }
+        if let Some(events) = self.script.get(self.frames) {
+            raw_input.events.extend(events.iter().cloned());
         }
         if self.export_menu && (self.frames == 2 || self.frames == 3) {
             let pos = egui::pos2(ctx.content_rect().right() - 42.0, 65.0);
@@ -89,6 +94,10 @@ impl eframe::App for NativeCheck {
                 assert_eq!(self.app.editor.document.name, "Unsaved native quit check");
                 self.app.editor.undo(); // Restore the saved state before ending this check.
                 println!("Unsaved document survived simulated native Quit/minimize dispatch.");
+            }
+            // Scripted edits are discarded so that closing does not prompt.
+            while self.app.editor.can_undo() {
+                self.app.editor.undo();
             }
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -339,7 +348,62 @@ fn main() -> eframe::Result {
                 hover,
                 quit_check: scenario == "quit",
                 export_menu: scenario == "export",
+                script: script(&scenario, size, &document),
             }))
         }),
     )
+}
+
+/// Screen position of artboard point `(x, y)` for the fitted starter view, from the
+/// editor's panel widths (left 180 + rail 40, inspector 280, tabs 41) and fit margins.
+fn artboard_point(size: [f32; 2], document: &Document, x: f32, y: f32) -> egui::Pos2 {
+    let canvas = egui::Rect::from_min_max(
+        egui::pos2(220.0, 41.0),
+        egui::pos2(size[0] - 280.0, size[1]),
+    );
+    let zoom = ((canvas.width() - 110.0) / document.width)
+        .min((canvas.height() - 130.0) / document.height)
+        .clamp(0.05, 2.0);
+    let board = egui::vec2(document.width, document.height) * zoom;
+    canvas.center() - board / 2.0 + egui::vec2(x, y) * zoom
+}
+
+/// Scripted input for the `text` (place and type) and `marquee` (mid-drag) scenarios.
+fn script(scenario: &str, size: [f32; 2], document: &Document) -> Vec<Vec<egui::Event>> {
+    let at = |x, y| artboard_point(size, document, x, y);
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let key = |key, pressed| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    match scenario {
+        "text" => {
+            let p = at(560.0, 440.0);
+            vec![
+                vec![key(egui::Key::T, true), key(egui::Key::T, false)],
+                vec![egui::Event::PointerMoved(p), button(p, true)],
+                vec![button(p, false)],
+                vec![],
+                vec![egui::Event::Text("Launch notes, draft two".into())],
+            ]
+        }
+        "marquee" => vec![
+            vec![],
+            vec![
+                egui::Event::PointerMoved(at(10.0, 10.0)),
+                button(at(10.0, 10.0), true),
+            ],
+            vec![egui::Event::PointerMoved(at(200.0, 200.0))],
+            vec![egui::Event::PointerMoved(at(450.0, 380.0))],
+        ],
+        _ => Vec::new(),
+    }
 }

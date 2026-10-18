@@ -55,6 +55,38 @@ pub struct Node {
     pub fill_token: Option<u64>,
 }
 
+/// Content of a newly placed text layer.
+pub const NEW_TEXT: &str = "New text";
+
+/// Text properties a new text layer inherits.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextStyle {
+    pub font_size: f32,
+    pub fill: [u8; 4],
+    pub fill_token: Option<u64>,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        Self {
+            font_size: 28.0,
+            fill: [35, 40, 48, 255],
+            fill_token: None,
+        }
+    }
+}
+
+impl TextStyle {
+    /// The style of a text layer; `None` for other kinds.
+    pub fn of(node: &Node) -> Option<Self> {
+        (node.kind == NodeKind::Text).then_some(Self {
+            font_size: node.font_size,
+            fill: node.fill,
+            fill_token: node.fill_token,
+        })
+    }
+}
+
 /// A named color shared by bound properties.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -381,6 +413,22 @@ impl Document {
             return Err(format!("A token named “{name}” already exists."));
         }
         Ok(())
+    }
+
+    /// Visible, unlocked layers whose bounds overlap `bounds` (`[left, top, right,
+    /// bottom]`, artboard units) with a positive area, in paint order.
+    pub fn layers_in(&self, bounds: [f32; 4]) -> Vec<u64> {
+        let [left, top, right, bottom] = bounds;
+        self.nodes
+            .iter()
+            .filter(|n| {
+                !n.hidden
+                    && !n.locked
+                    && n.x.max(left) < (n.x + n.width).min(right)
+                    && n.y.max(top) < (n.y + n.height).min(bottom)
+            })
+            .map(|n| n.id)
+            .collect()
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -827,7 +875,23 @@ impl Editor {
         width: f32,
         height: f32,
     ) -> Result<(), String> {
-        let [x, y, width, height] = [x, y, width, height].map(|v| v.round());
+        self.insert(kind, [x, y, width, height], TextStyle::default())
+            .map(|_| ())
+    }
+
+    /// Adds a text layer using `style`, as one history step, selects it and returns its
+    /// identifier. A token that no longer exists is not bound.
+    pub fn add_text_at(&mut self, geometry: [f32; 4], style: TextStyle) -> Result<u64, String> {
+        self.insert(NodeKind::Text, geometry, style)
+    }
+
+    fn insert(
+        &mut self,
+        kind: NodeKind,
+        geometry: [f32; 4],
+        style: TextStyle,
+    ) -> Result<u64, String> {
+        let [x, y, width, height] = geometry.map(|v| v.round());
         if ![x, y, width, height].iter().all(|v| v.is_finite()) {
             return Err("Layer geometry contains an invalid number.".into());
         }
@@ -838,6 +902,10 @@ impl Editor {
             .ok_or("Layer identifiers are exhausted.")?;
         let before = self.document.clone();
         let id = self.document.next_id;
+        let text = kind == NodeKind::Text;
+        let fill_token = style
+            .fill_token
+            .filter(|token| text && self.document.token(*token).is_some());
         self.document.nodes.push(Node {
             id,
             name: match kind {
@@ -850,26 +918,22 @@ impl Editor {
             y: clamp_coordinate(y),
             width: width.clamp(1.0, MAX_COORDINATE),
             height: height.clamp(1.0, MAX_COORDINATE),
-            fill: if kind == NodeKind::Text {
-                [35, 40, 48, 255]
-            } else {
-                [124, 155, 214, 255]
+            fill: match fill_token.and_then(|t| self.document.token(t)) {
+                Some(token) => token.value,
+                None if text => style.fill,
+                None => [124, 155, 214, 255],
             },
             radius: 0.0,
-            text: if kind == NodeKind::Text {
-                "New text".into()
-            } else {
-                String::new()
-            },
-            font_size: 28.0,
+            text: if text { NEW_TEXT.into() } else { String::new() },
+            font_size: if text { style.font_size } else { 28.0 },
             hidden: false,
             locked: false,
-            fill_token: None,
+            fill_token,
         });
         self.document.next_id = next;
         self.commit(before)?;
         self.select(Some(id));
-        Ok(())
+        Ok(id)
     }
 
     /// Deletes every selected unlocked layer (hidden ones included) as one step.

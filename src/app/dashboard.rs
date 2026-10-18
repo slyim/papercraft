@@ -1,6 +1,6 @@
 //! Dashboard: recent local files, search, and file creation.
 
-use super::{Intent, PaperCraftApp, View, color, paint_document};
+use super::{Intent, PaperCraftApp, color, paint_document};
 use crate::document::Document;
 use crate::recents::edited_label;
 use crate::ui::{self, BODY, BORDER, MAIN, ROW, Row, SHELL, TEXT, TEXT_DIM, TEXT_FAINT};
@@ -68,12 +68,13 @@ struct Card<'a> {
     title: String,
     subtitle: String,
     document: Option<&'a Document>,
-    current: bool,
+    /// Open document tab this card shows.
+    tab: Option<usize>,
 }
 
 enum Action {
     Open(PathBuf),
-    ShowCurrent,
+    ShowTab(usize),
     Remove(PathBuf),
 }
 
@@ -91,7 +92,7 @@ impl PaperCraftApp {
             .inner;
         match action {
             Some(Action::Open(path)) => self.request(Intent::OpenPath(path), ctx),
-            Some(Action::ShowCurrent) => self.view = View::Editor,
+            Some(Action::ShowTab(index)) => self.activate_tab(index),
             Some(Action::Remove(path)) => {
                 if let Err(error) = self.recents.remove(&path) {
                     self.status = error;
@@ -232,29 +233,38 @@ impl PaperCraftApp {
     fn collect_cards(&self) -> Vec<Card<'_>> {
         let now = SystemTime::now();
         let mut cards = Vec::new();
-        let current_path = self.path.as_deref().filter(|_| self.document_open);
-        if self.document_open
-            && current_path.is_none_or(|p| !self.recents.files().iter().any(|r| r == p))
-        {
+        let open = if self.document_open {
+            0..self.tabs.len()
+        } else {
+            0..0
+        };
+        // Open documents that are not in recents come first.
+        for index in open.clone() {
+            let path = self.tab_path(index);
+            if path.is_some_and(|p| self.recents.files().iter().any(|r| r == p)) {
+                continue;
+            }
             cards.push(Card {
-                path: current_path,
-                title: self.editor.document.name.clone(),
-                subtitle: if self.dirty() {
-                    "Open · unsaved changes".into()
-                } else {
-                    "Open · not saved yet".into()
+                path,
+                title: self.tab_document(index).name.clone(),
+                subtitle: match (self.tab_dirty(index), path) {
+                    (true, _) => "Open · unsaved changes".into(),
+                    (false, None) => "Open · not saved yet".into(),
+                    (false, Some(_)) => "Open".into(),
                 },
-                document: Some(&self.editor.document),
-                current: true,
+                document: Some(self.tab_document(index)),
+                tab: Some(index),
             });
         }
         for path in self.recents.files() {
-            let current = current_path == Some(path.as_path());
+            let tab = open
+                .clone()
+                .find(|&i| self.tab_path(i) == Some(path.as_path()));
             let loaded = self.cards.loaded.get(path);
-            let (document, subtitle) = if current {
+            let (document, subtitle) = if let Some(index) = tab {
                 (
-                    Some(&self.editor.document),
-                    if self.dirty() {
+                    Some(self.tab_document(index)),
+                    if self.tab_dirty(index) {
                         "Open · unsaved changes".to_string()
                     } else {
                         loaded
@@ -283,7 +293,7 @@ impl PaperCraftApp {
                 title,
                 subtitle,
                 document,
-                current,
+                tab,
             });
         }
         let query = self.search.trim().to_lowercase();
@@ -462,8 +472,8 @@ fn card_action(response: &egui::Response, card: &Card) -> Option<Action> {
         });
     }
     if response.clicked() {
-        action = if card.current {
-            Some(Action::ShowCurrent)
+        action = if let Some(index) = card.tab {
+            Some(Action::ShowTab(index))
         } else {
             card.path.map(|p| Action::Open(p.to_path_buf()))
         };
@@ -569,5 +579,13 @@ fn thumbnail(ui: &egui::Ui, rect: Rect, document: Option<&Document>, radius: u8)
     let inner = rect.shrink(rect.width().min(rect.height()) * 0.08);
     let zoom = (inner.width() / document.width).min(inner.height() / document.height);
     let origin = rect.center() - vec2(document.width, document.height) * zoom / 2.0;
-    paint_document(&painter, document, origin, zoom, painter.clip_rect(), true);
+    paint_document(
+        &painter,
+        document,
+        origin,
+        zoom,
+        painter.clip_rect(),
+        true,
+        None,
+    );
 }

@@ -1,5 +1,6 @@
 use crate::document::{
-    Align, Axis, ColorTarget, ColorToken, Document, Editor, NodeKind, atomic_write,
+    Align, Axis, ColorTarget, ColorToken, Document, Editor, NEW_TEXT, NodeKind, TextStyle,
+    atomic_write,
 };
 use crate::recents::Recents;
 use crate::ui::{self, ACCENT, BODY, BORDER, CONTROL, ROW, Row, SHELL, TEXT, TEXT_DIM};
@@ -15,8 +16,11 @@ mod dashboard;
 /// Left inset of the tab strip. On macOS the strip shares the title bar with the window
 /// controls.
 const TAB_INSET: f32 = if cfg!(target_os = "macos") { 80.0 } else { 8.0 };
-/// Default geometry for a layer placed with a single click.
+/// Default geometry for a rectangle placed with a single click.
 const CLICK_SIZE: Vec2 = vec2(220.0, 80.0);
+/// Extra width, in artboard units, given to auto-width text so that glyph rounding at
+/// other zoom levels does not wrap it.
+const AUTO_WIDTH_SLACK: f32 = 2.0;
 
 #[derive(Clone, Debug, PartialEq)]
 enum Intent {
@@ -46,6 +50,48 @@ pub enum Tool {
     Rectangle,
     Text,
 }
+
+/// A tool rail entry. The rail and the single-key shortcuts both read [`TOOLS`].
+pub struct ToolSpec {
+    pub tool: Tool,
+    pub glyph: &'static str,
+    pub label: &'static str,
+    pub key: Key,
+    /// Rail group; a separator is drawn between groups.
+    pub group: u8,
+}
+
+/// Tools in rail order. Only implemented tools are listed.
+pub const TOOLS: [ToolSpec; 4] = [
+    ToolSpec {
+        tool: Tool::Select,
+        glyph: icon::CURSOR,
+        label: "Select",
+        key: Key::V,
+        group: 0,
+    },
+    ToolSpec {
+        tool: Tool::Hand,
+        glyph: icon::HAND,
+        label: "Hand",
+        key: Key::H,
+        group: 0,
+    },
+    ToolSpec {
+        tool: Tool::Rectangle,
+        glyph: icon::SQUARE,
+        label: "Rectangle",
+        key: Key::R,
+        group: 1,
+    },
+    ToolSpec {
+        tool: Tool::Text,
+        glyph: icon::TEXT_AA,
+        label: "Text",
+        key: Key::T,
+        group: 1,
+    },
+];
 
 impl Tool {
     fn creates(self) -> Option<NodeKind> {
@@ -79,6 +125,73 @@ struct Creation {
     current: Pos2,
 }
 
+/// A selection rectangle dragged from empty canvas, in artboard coordinates.
+struct Marquee {
+    start: Pos2,
+    current: Pos2,
+    /// Selection kept when the drag started (Shift); otherwise empty.
+    base: Vec<u64>,
+}
+
+/// A text layer edited in place on the canvas.
+struct TextEditing {
+    id: u64,
+    /// Document before the edit; the whole edit is one history step.
+    before: Document,
+    /// The layer width follows its content (layers placed with a click).
+    auto_width: bool,
+    /// Focus and select all once possible.
+    start: bool,
+}
+
+/// Rectangle drawn from `start` to `current`. `square` constrains it to equal sides;
+/// `centered` draws it outward from `start`.
+pub fn creation_rect(start: Pos2, current: Pos2, square: bool, centered: bool) -> Rect {
+    let mut delta = current - start;
+    if square {
+        let side = delta.x.abs().max(delta.y.abs());
+        delta = vec2(side.copysign(delta.x), side.copysign(delta.y));
+    }
+    if centered {
+        Rect::from_center_size(start, delta.abs() * 2.0)
+    } else {
+        Rect::from_two_pos(start, start + delta)
+    }
+}
+
+/// An open document that is not the active tab. The active tab's state lives in the
+/// `PaperCraftApp` fields with the same names; its slot in `tabs` holds a placeholder.
+struct Tab {
+    editor: Editor,
+    saved: Document,
+    path: Option<PathBuf>,
+    zoom: f32,
+    pan: Vec2,
+    fit: bool,
+    file_version: u32,
+    selected_token: Option<u64>,
+}
+
+impl Tab {
+    fn placeholder() -> Self {
+        let document = Document::default();
+        Self {
+            file_version: document.version,
+            saved: document.clone(),
+            editor: Editor::new(document),
+            path: None,
+            zoom: 1.0,
+            pan: Vec2::ZERO,
+            fit: true,
+            selected_token: None,
+        }
+    }
+
+    fn dirty(&self) -> bool {
+        self.editor.document != self.saved
+    }
+}
+
 pub struct PaperCraftApp {
     pub editor: Editor,
     saved: Document,
@@ -89,6 +202,10 @@ pub struct PaperCraftApp {
     fit: bool,
     drag: Option<Drag>,
     creation: Option<Creation>,
+    marquee: Option<Marquee>,
+    text_edit: Option<TextEditing>,
+    /// Style of the text layer most recently selected; new text layers use it.
+    text_style: TextStyle,
     property_before: Option<Document>,
     pending: Option<Intent>,
     allow_close: bool,
@@ -96,6 +213,10 @@ pub struct PaperCraftApp {
     pub view: View,
     pub tool: Tool,
     document_open: bool,
+    /// One entry per open document, in tab order; empty when no document is open.
+    tabs: Vec<Tab>,
+    /// Index of the active tab in `tabs`.
+    active: usize,
     recents: Recents,
     cards: dashboard::CardCache,
     search: String,
@@ -108,6 +229,8 @@ pub struct PaperCraftApp {
     pub theme: bool,
     colors_open: bool,
     pub selected_token: Option<u64>,
+    /// Layer being renamed in the layer list, with its edited name.
+    renaming: Option<(u64, String)>,
     /// Format version of the file at `path` when it was opened or last saved.
     file_version: u32,
     /// Save is waiting for confirmation to upgrade a version 1 file.
@@ -126,6 +249,9 @@ impl PaperCraftApp {
             fit: true,
             drag: None,
             creation: None,
+            marquee: None,
+            text_edit: None,
+            text_style: TextStyle::default(),
             property_before: None,
             pending: None,
             allow_close: false,
@@ -133,6 +259,8 @@ impl PaperCraftApp {
             view: View::Editor,
             tool: Tool::Select,
             document_open: true,
+            tabs: vec![Tab::placeholder()],
+            active: 0,
             recents: Recents::in_memory(),
             cards: Default::default(),
             search: String::new(),
@@ -144,6 +272,7 @@ impl PaperCraftApp {
             theme: false,
             colors_open: true,
             selected_token: None,
+            renaming: None,
             file_version: 1,
             upgrade_prompt: false,
         }
@@ -226,23 +355,139 @@ impl PaperCraftApp {
         self.document_open
     }
 
-    /// Closes the document and shows the dashboard. Refuses (returns `false`) when the
-    /// document has unsaved changes; interactive closing asks first instead.
+    /// Number of open documents, one per window tab.
+    pub fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+
+    /// Index of the active document tab.
+    pub fn active_tab(&self) -> usize {
+        self.active
+    }
+
+    /// Closes the active document. Another open document becomes active; with none left
+    /// the dashboard is shown. Refuses (returns `false`) when the document has unsaved
+    /// changes; interactive closing asks first instead.
     pub fn close_document(&mut self) -> bool {
         self.flush_properties();
         if self.dirty() {
             return false;
         }
-        self.replace_document(Document::default(), None);
-        self.document_open = false;
-        self.view = View::Dashboard;
+        self.close_tab();
+        true
+    }
+
+    /// Removes the active tab without checking for unsaved changes.
+    fn close_tab(&mut self) {
+        self.clear_transient();
         self.cards.invalidate();
         self.status = "Document closed".into();
-        true
+        if self.document_open {
+            self.tabs.remove(self.active);
+        }
+        if self.tabs.is_empty() {
+            self.replace_document(Document::default(), None);
+            self.document_open = false;
+            self.active = 0;
+            self.view = View::Dashboard;
+        } else {
+            self.active = self.active.min(self.tabs.len() - 1);
+            self.swap_tab(self.active);
+            self.view = View::Editor;
+        }
+    }
+
+    /// Makes tab `index` the active document and shows the editor.
+    pub fn activate_tab(&mut self, index: usize) {
+        if !self.document_open || index >= self.tabs.len() {
+            return;
+        }
+        self.view = View::Editor;
+        if index == self.active {
+            return;
+        }
+        self.flush_properties();
+        self.clear_transient();
+        self.swap_tab(self.active);
+        self.swap_tab(index);
+        self.active = index;
+    }
+
+    /// Exchanges the active document state with the state stored in tab `index`.
+    fn swap_tab(&mut self, index: usize) {
+        let tab = &mut self.tabs[index];
+        std::mem::swap(&mut self.editor, &mut tab.editor);
+        std::mem::swap(&mut self.saved, &mut tab.saved);
+        std::mem::swap(&mut self.path, &mut tab.path);
+        std::mem::swap(&mut self.zoom, &mut tab.zoom);
+        std::mem::swap(&mut self.pan, &mut tab.pan);
+        std::mem::swap(&mut self.fit, &mut tab.fit);
+        std::mem::swap(&mut self.file_version, &mut tab.file_version);
+        std::mem::swap(&mut self.selected_token, &mut tab.selected_token);
+    }
+
+    /// Drops in-progress gestures and edits that belong to the active document.
+    fn clear_transient(&mut self) {
+        self.property_before = None;
+        self.text_edit = None;
+        self.drag = None;
+        self.creation = None;
+        self.marquee = None;
+        self.renaming = None;
+        self.upgrade_prompt = false;
+    }
+
+    /// Opens `document` in a new tab after the active one and makes it active.
+    fn open_tab(&mut self, document: Document, path: Option<PathBuf>) {
+        if self.document_open {
+            self.flush_properties();
+            self.swap_tab(self.active);
+            self.active += 1;
+            self.tabs.insert(self.active, Tab::placeholder());
+        } else {
+            self.tabs = vec![Tab::placeholder()];
+            self.active = 0;
+        }
+        self.replace_document(document, path);
+        self.document_open = true;
+        self.view = View::Editor;
+        self.cards.invalidate();
     }
 
     fn dirty(&self) -> bool {
         self.document_open && self.editor.document != self.saved
+    }
+
+    fn tab_dirty(&self, index: usize) -> bool {
+        if index == self.active {
+            self.dirty()
+        } else {
+            self.tabs[index].dirty()
+        }
+    }
+
+    fn tab_document(&self, index: usize) -> &Document {
+        if index == self.active {
+            &self.editor.document
+        } else {
+            &self.tabs[index].editor.document
+        }
+    }
+
+    fn tab_path(&self, index: usize) -> Option<&std::path::Path> {
+        if index == self.active {
+            self.path.as_deref()
+        } else {
+            self.tabs[index].path.as_deref()
+        }
+    }
+
+    /// First tab with unsaved changes, preferring the active one.
+    fn first_dirty_tab(&self) -> Option<usize> {
+        if self.dirty() {
+            return Some(self.active);
+        }
+        (0..self.tabs.len()).find(|&i| self.tab_dirty(i))
     }
 
     fn result(&mut self, result: Result<(), String>) {
@@ -252,9 +497,25 @@ impl PaperCraftApp {
     }
 
     fn flush_properties(&mut self) {
+        if let Some(edit) = self.text_edit.take() {
+            let result = self.editor.commit(edit.before);
+            self.result(result);
+        }
         if let Some(before) = self.property_before.take() {
             let result = self.editor.commit(before);
             self.result(result);
+        }
+        if let Some((id, text)) = self.renaming.take() {
+            let name = text.trim();
+            if !name.is_empty()
+                && let Some(index) = self.editor.document.nodes.iter().position(|n| n.id == id)
+                && self.editor.document.nodes[index].name != name
+            {
+                let before = self.editor.document.clone();
+                self.editor.document.nodes[index].name = name.into();
+                let result = self.editor.commit(before);
+                self.result(result);
+            }
         }
     }
 
@@ -268,6 +529,7 @@ impl PaperCraftApp {
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
         self.file_version = document.version;
         self.selected_token = None;
+        self.renaming = None;
         self.upgrade_prompt = false;
         self.saved = document.clone();
         self.editor = Editor::new(document);
@@ -276,7 +538,11 @@ impl PaperCraftApp {
         self.property_before = None;
         self.drag = None;
         self.creation = None;
+        self.marquee = None;
+        self.text_edit = None;
         self.tool = Tool::Select;
+        self.zoom = 1.0;
+        self.pan = Vec2::ZERO;
     }
 
     fn save_document(&mut self, save_as: bool) -> bool {
@@ -297,7 +563,10 @@ impl PaperCraftApp {
         };
         // Saving in place must not silently make a version 1 file unreadable to older
         // PaperCraft; see docs/document-format.md.
-        let upgrading = self.path.as_ref() == Some(&path)
+        let upgrading = self
+            .path
+            .as_ref()
+            .is_some_and(|p| document_path(p.clone()) == document_path(path.clone()))
             && self.file_version < self.editor.document.required_version();
         if upgrading {
             self.upgrade_prompt = true;
@@ -308,6 +577,18 @@ impl PaperCraftApp {
 
     fn write_document(&mut self, path: PathBuf) -> bool {
         self.upgrade_prompt = false;
+        let path = std::path::absolute(&path).unwrap_or(path);
+        let identity = document_path(path.clone());
+        if (0..self.tabs.len()).any(|i| {
+            i != self.active
+                && self
+                    .tab_path(i)
+                    .is_some_and(|p| document_path(p.to_path_buf()) == identity)
+        }) {
+            self.status =
+                "This file is open in another tab. Close that tab before replacing it.".into();
+            return false;
+        }
         match self.editor.document.save(&path) {
             Ok(()) => {
                 self.file_version = self.editor.document.required_version();
@@ -325,17 +606,24 @@ impl PaperCraftApp {
     }
 
     fn open_path(&mut self, path: PathBuf) {
+        let path = std::path::absolute(&path).unwrap_or(path);
+        let identity = document_path(path.clone());
+        if let Some(index) = (0..self.tabs.len()).find(|&i| {
+            self.tab_path(i)
+                .is_some_and(|p| document_path(p.to_path_buf()) == identity)
+        }) {
+            self.activate_tab(index);
+            return;
+        }
         match Document::load(&path) {
             Ok(document) => {
                 self.remember(&path);
-                self.replace_document(document, Some(path));
-                self.document_open = true;
-                self.view = View::Editor;
+                self.open_tab(document, Some(path));
                 self.status = "Document opened".into();
             }
             Err(error) => {
                 self.status = if self.document_open {
-                    format!("{error} Current document was kept.")
+                    format!("{error} Open documents were kept.")
                 } else {
                     error
                 }
@@ -345,26 +633,24 @@ impl PaperCraftApp {
 
     fn request(&mut self, intent: Intent, ctx: &egui::Context) {
         self.flush_properties();
-        if let Intent::OpenPath(path) = &intent
-            && self.document_open
-            && self.path.as_ref() == Some(path)
-        {
-            self.view = View::Editor;
-            return;
-        }
-        if self.dirty() {
-            self.pending = Some(intent);
-        } else {
-            self.perform(intent, ctx);
+        match intent {
+            // New and opened documents get their own tabs; only closing can lose work.
+            Intent::CloseDocument if self.dirty() => self.pending = Some(intent),
+            Intent::Close => match self.first_dirty_tab() {
+                Some(index) => {
+                    self.activate_tab(index);
+                    self.pending = Some(intent);
+                }
+                None => self.perform(intent, ctx),
+            },
+            intent => self.perform(intent, ctx),
         }
     }
 
     fn perform(&mut self, intent: Intent, ctx: &egui::Context) {
         match intent {
             Intent::New => {
-                self.replace_document(Document::default(), None);
-                self.document_open = true;
-                self.view = View::Editor;
+                self.open_tab(Document::default(), None);
                 self.status = "New document".into();
             }
             Intent::Open => {
@@ -376,14 +662,20 @@ impl PaperCraftApp {
                 }
             }
             Intent::OpenPath(path) => self.open_path(path),
-            Intent::CloseDocument => {
-                // Unsaved changes were confirmed or discarded before reaching here.
-                self.saved = self.editor.document.clone();
-                self.close_document();
-            }
+            // Unsaved changes were confirmed or discarded before reaching here.
+            Intent::CloseDocument => self.close_tab(),
             Intent::Close => {
-                self.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                // The active document was saved or discarded; ask about the next one.
+                if self.dirty() {
+                    self.close_tab();
+                }
+                if let Some(index) = self.first_dirty_tab() {
+                    self.activate_tab(index);
+                    self.pending = Some(Intent::Close);
+                } else {
+                    self.allow_close = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
             }
         }
     }
@@ -439,8 +731,40 @@ impl PaperCraftApp {
     }
 
     fn set_tool(&mut self, tool: Tool) {
+        if self.text_edit.is_some() {
+            self.flush_properties();
+        }
         self.tool = tool;
         self.creation = None;
+    }
+
+    /// Edits text layer `id` in place. `auto_width` makes its width follow the content.
+    fn begin_text_edit(&mut self, id: u64, auto_width: bool) {
+        self.flush_properties();
+        self.editor.select(Some(id));
+        self.text_edit = Some(TextEditing {
+            id,
+            before: self.editor.document.clone(),
+            auto_width,
+            start: true,
+        });
+    }
+
+    /// Adds a text layer at `at` and edits it. Without `rect` the layer is sized to its
+    /// content and keeps following it while edited.
+    fn place_text(&mut self, painter: &Painter, at: Pos2, rect: Option<Rect>) {
+        let style = self.text_style;
+        let geometry = match rect {
+            Some(rect) => [rect.min.x, rect.min.y, rect.width(), rect.height()],
+            None => {
+                let size = text_size(painter, NEW_TEXT, style.font_size, None);
+                [at.x, at.y, size.x, size.y]
+            }
+        };
+        match self.editor.add_text_at(geometry, style) {
+            Ok(id) => self.begin_text_edit(id, rect.is_none()),
+            Err(error) => self.status = error,
+        }
     }
 
     /// Zooms around the canvas center by `factor`.
@@ -532,21 +856,29 @@ impl PaperCraftApp {
             self.result(result);
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) {
-            if self.tool != Tool::Select {
+            // egui has already taken focus from an in-place text edit; end it and keep
+            // the layer selected.
+            if self.text_edit.is_some() {
+                self.flush_properties();
+            } else if self.tool != Tool::Select {
                 self.set_tool(Tool::Select);
             } else {
                 self.editor.select(None);
             }
         }
         if !ctx.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.alt) {
-            for (key, tool) in [
-                (Key::V, Tool::Select),
-                (Key::H, Tool::Hand),
-                (Key::R, Tool::Rectangle),
-                (Key::T, Tool::Text),
-            ] {
-                if ctx.input(|i| i.key_pressed(key)) {
-                    self.set_tool(tool);
+            if let Some(id) = self
+                .editor
+                .selected_node()
+                .filter(|n| n.kind == NodeKind::Text && !n.hidden && !n.locked)
+                .map(|n| n.id)
+                && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter))
+            {
+                self.begin_text_edit(id, false);
+            }
+            for spec in &TOOLS {
+                if ctx.input(|i| i.key_pressed(spec.key)) {
+                    self.set_tool(spec.tool);
                 }
             }
             if ctx.input(|i| i.key_pressed(Key::F)) {
@@ -590,7 +922,8 @@ impl PaperCraftApp {
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let finish_gesture_first = self.drag.is_some() || self.creation.is_some();
+        let finish_gesture_first =
+            self.drag.is_some() || self.creation.is_some() || self.marquee.is_some();
         if !finish_gesture_first && self.pending.is_none() && !ctx.input(|i| i.pointer.any_down()) {
             self.shortcuts(&ctx);
         }
@@ -746,7 +1079,8 @@ impl PaperCraftApp {
                 icon::SQUARES_FOUR,
                 "Dashboard",
                 self.view == View::Dashboard,
-                false,
+                None,
+                260.0,
             )
             .0
             .clicked()
@@ -759,26 +1093,57 @@ impl PaperCraftApp {
                 let (rect, _) = ui.allocate_exact_size(vec2(9.0, 18.0), Sense::hover());
                 ui.painter()
                     .vline(rect.center().x, rect.y_range(), Stroke::new(1.0, BORDER));
-                let name = self.editor.document.name.clone();
-                let (response, close) = tab(ui, icon::FILE, &name, self.view == View::Editor, true);
-                let dirty = self.dirty();
-                if dirty {
-                    // Unsaved marker before the close control.
-                    ui.painter().circle_filled(
-                        pos2(response.rect.right() - 34.0, response.rect.center().y),
-                        3.0,
-                        TEXT_DIM,
-                    );
-                }
-                let response = response.on_hover_text(match (&self.path, dirty) {
-                    (Some(path), true) => format!("{} · unsaved changes", path.display()),
-                    (Some(path), false) => path.display().to_string(),
-                    (None, _) => "Not saved yet".into(),
-                });
-                if close.is_some_and(|c| c.clicked()) {
+                // Tabs share the space left of the new-file button.
+                let count = self.tabs.len() as f32;
+                let room = ui.available_width() - 40.0 - 6.0 * count;
+                let max_width = (room / count).clamp(96.0, 260.0);
+                let mut select = None;
+                let mut close_tab = None;
+                egui::ScrollArea::horizontal()
+                    .id_salt("document_tabs")
+                    .max_width((ui.available_width() - 40.0).max(0.0))
+                    .max_height(28.0)
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            for index in 0..self.tabs.len() {
+                                let name = self.tab_document(index).name.clone();
+                                let selected = self.view == View::Editor && index == self.active;
+                                let (response, close) =
+                                    tab(ui, icon::FILE, &name, selected, Some(index), max_width);
+                                let dirty = self.tab_dirty(index);
+                                if dirty {
+                                    // Unsaved marker before the close control.
+                                    ui.painter().circle_filled(
+                                        pos2(
+                                            response.rect.right() - 34.0,
+                                            response.rect.center().y,
+                                        ),
+                                        3.0,
+                                        TEXT_DIM,
+                                    );
+                                }
+                                let response =
+                                    response.on_hover_text(match (self.tab_path(index), dirty) {
+                                        (Some(path), true) => {
+                                            format!("{} · unsaved changes", path.display())
+                                        }
+                                        (Some(path), false) => path.display().to_string(),
+                                        (None, _) => "Not saved yet".into(),
+                                    });
+                                if close.is_some_and(|c| c.clicked()) {
+                                    close_tab = Some(index);
+                                } else if response.clicked() {
+                                    select = Some(index);
+                                }
+                            }
+                        })
+                    });
+                if let Some(index) = close_tab {
+                    self.activate_tab(index);
                     self.request(Intent::CloseDocument, ctx);
-                } else if response.clicked() {
-                    self.view = View::Editor;
+                } else if let Some(index) = select {
+                    self.activate_tab(index);
                 }
             }
             ui.add_space(6.0);
@@ -1007,12 +1372,15 @@ impl PaperCraftApp {
                     response.widget_info(|| {
                         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, &name)
                     });
-                    let hovered = ui.rect_contains_pointer(rect);
                     let glyph = if kind == NodeKind::Text {
                         icon::TEXT_AA
                     } else {
                         icon::SQUARE
                     };
+                    if self.rename_row(ui, id, rect, &response, glyph, selected) {
+                        continue;
+                    }
+                    let hovered = ui.rect_contains_pointer(rect);
                     Row::new(glyph, &name)
                         .indent(17.0)
                         .selected(selected)
@@ -1073,6 +1441,10 @@ impl PaperCraftApp {
                         }
                         let result = self.editor.commit(before);
                         self.result(result);
+                    } else if response.double_clicked() {
+                        self.flush_properties();
+                        self.renaming = Some((id, name.clone()));
+                        ui.memory_mut(|m| m.request_focus(egui::Id::new(("rename_layer", id))));
                     } else if response.clicked() {
                         self.flush_properties();
                         // Shift or ⌘/Ctrl adds or removes the row; locked and hidden
@@ -1098,6 +1470,55 @@ impl PaperCraftApp {
                         });
                 }
             });
+    }
+
+    /// Draws the name editor over a layer row while that layer is renamed.
+    /// Enter or clicking elsewhere commits one history step; Escape cancels.
+    /// Returns `true` when the row was drawn here.
+    fn rename_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: u64,
+        rect: Rect,
+        response: &egui::Response,
+        glyph: &str,
+        selected: bool,
+    ) -> bool {
+        let Some((_, text)) = self.renaming.as_mut().filter(|(rid, _)| *rid == id) else {
+            return false;
+        };
+        Row::new(glyph, "")
+            .indent(17.0)
+            .selected(selected)
+            .paint(ui, rect, response, 8.0);
+        let edit_id = egui::Id::new(("rename_layer", id));
+        let field = Rect::from_min_max(
+            pos2(rect.left() + 37.0, rect.top() + 3.0),
+            pos2(rect.right() - 12.0, rect.bottom() - 3.0),
+        );
+        let edit = ui.put(
+            field,
+            egui::TextEdit::singleline(text)
+                .id(edit_id)
+                .frame(
+                    egui::Frame::NONE
+                        .fill(SHELL)
+                        .stroke(Stroke::new(1.0, ACCENT))
+                        .corner_radius(4),
+                )
+                .margin(vec2(4.0, 2.0))
+                .font(ui::font(BODY))
+                .desired_width(f32::INFINITY),
+        );
+        if !edit.lost_focus() {
+            return true;
+        }
+        if ui.input(|i| i.key_pressed(Key::Escape)) {
+            self.renaming = None;
+        } else {
+            self.flush_properties();
+        }
+        true
     }
 
     fn status_footer(&mut self, ui: &mut egui::Ui) {
@@ -1291,7 +1712,9 @@ impl PaperCraftApp {
         if before != self.editor.document && self.property_before.is_none() {
             self.property_before = Some(before);
         }
-        if finish || (!ctx.egui_wants_keyboard_input() && !ctx.egui_is_using_pointer()) {
+        // An in-place text edit takes focus later in the frame and ends itself.
+        let idle = !ctx.egui_wants_keyboard_input() && !ctx.egui_is_using_pointer();
+        if self.renaming.is_none() && (finish || (idle && self.text_edit.is_none())) {
             self.flush_properties();
         }
     }
@@ -1333,37 +1756,26 @@ impl PaperCraftApp {
         ui.spacing_mut().item_spacing = vec2(0.0, 4.0);
         ui.add_space(6.0);
         ui.vertical_centered(|ui| {
-            let groups: [&[(Tool, &str, &str)]; 2] = [
-                &[
-                    (Tool::Select, icon::CURSOR, "Select · V"),
-                    (Tool::Hand, icon::HAND, "Hand · H"),
-                ],
-                &[
-                    (Tool::Rectangle, icon::SQUARE, "Rectangle · R"),
-                    (Tool::Text, icon::TEXT_AA, "Text · T"),
-                ],
-            ];
-            for (index, group) in groups.into_iter().enumerate() {
-                if index > 0 {
+            for (index, spec) in TOOLS.iter().enumerate() {
+                if index > 0 && TOOLS[index - 1].group != spec.group {
                     ui.add_space(10.0);
                     let (rect, _) = ui.allocate_exact_size(vec2(18.0, 1.0), Sense::hover());
                     ui.painter().rect_filled(rect, 0.0, BORDER);
                     ui.add_space(10.0);
                 }
-                for &(tool, glyph, label) in group {
-                    if ui::icon_button(
-                        ui,
-                        glyph,
-                        vec2(32.0, 32.0),
-                        20.0,
-                        self.tool == tool,
-                        true,
-                        label,
-                    )
-                    .clicked()
-                    {
-                        self.set_tool(tool);
-                    }
+                let label = format!("{} · {}", spec.label, spec.key.name());
+                if ui::icon_button(
+                    ui,
+                    spec.glyph,
+                    vec2(32.0, 32.0),
+                    20.0,
+                    self.tool == spec.tool,
+                    true,
+                    &label,
+                )
+                .clicked()
+                {
+                    self.set_tool(spec.tool);
                 }
             }
         });
@@ -1430,7 +1842,6 @@ impl PaperCraftApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                 self.inspector(ui);
             });
     }
@@ -1439,21 +1850,10 @@ impl PaperCraftApp {
         let before = self.editor.document.clone();
         let mut finish = false;
         let mut choice = None;
+        let mut toggle_hidden = false;
         let tokens = self.editor.document.tokens.clone();
-        let section = |ui: &mut egui::Ui, title: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
-            ui::section_title(ui, title);
-            egui::Frame::NONE
-                .inner_margin(egui::Margin {
-                    left: 12,
-                    right: 12,
-                    top: 0,
-                    bottom: 14,
-                })
-                .show(ui, |ui| add(ui));
-            ui::hline(ui);
-        };
         // TextEdit sizes its text from `margin`, so the frame margin must match it.
-        let text_margin = egui::Margin::symmetric(8, 6);
+        let text_margin = egui::Margin::symmetric(8, 4);
         let text_frame = egui::Frame::NONE
             .fill(CONTROL)
             .corner_radius(ui::RADIUS)
@@ -1466,7 +1866,8 @@ impl PaperCraftApp {
                 .filter(|n| self.editor.is_selected(n.id) && (n.hidden || n.locked))
                 .count();
             let bounds = self.editor.selection_bounds();
-            section(ui, &format!("{count} layers selected"), &mut |ui| {
+            inspector_heading(ui, &format!("{count} layers selected"), true, false);
+            inspector_body(ui, |ui| {
                 if let Some([left, top, right, bottom]) = bounds {
                     ui.label(
                         RichText::new(format!(
@@ -1507,75 +1908,62 @@ impl PaperCraftApp {
         {
             let node = &mut self.editor.document.nodes[index];
             let locked = node.locked;
+            let hidden = node.hidden;
             let kind = node.kind;
             let id = node.id;
-            section(
-                ui,
-                if kind == NodeKind::Text {
-                    "Text layer"
-                } else {
-                    "Rectangle"
-                },
-                &mut |ui| {
-                    finish |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut node.name)
-                                .frame(text_frame)
-                                .margin(text_margin)
-                                .desired_width(f32::INFINITY),
-                        )
-                        .on_hover_text("Layer name")
-                        .lost_focus();
-                },
-            );
             ui.add_enabled_ui(!locked, |ui| {
-                section(ui, "Position and size", &mut |ui| {
-                    let half = (ui.available_width() - 8.0) / 2.0;
+                inspector_heading(ui, "Layout", true, true)
+                    .on_hover_text("Layout modes are not available yet");
+                inspector_body(ui, |ui| {
+                    let third = (ui.available_width() - 16.0) / 3.0;
                     let range = -100_000.0..=100_000.0;
                     ui.horizontal(|ui| {
-                        let r = ui::number_field(ui, "X", &mut node.x, range.clone(), half);
+                        let r = ui::number_field(ui, "X", &mut node.x, range.clone(), third);
                         finish |= r.drag_stopped() || r.lost_focus();
-                        let r = ui::number_field(ui, "Y", &mut node.y, range.clone(), half);
+                        let r = ui::number_field(ui, "Y", &mut node.y, range.clone(), third);
                         finish |= r.drag_stopped() || r.lost_focus();
+                        ui::inert_field(
+                            ui,
+                            icon::ANGLE,
+                            "0°",
+                            None,
+                            third,
+                            "Rotation is not available yet",
+                        );
                     });
                     ui.horizontal(|ui| {
-                        let r = ui::number_field(ui, "W", &mut node.width, 1.0..=100_000.0, half);
+                        let r = ui::number_field(ui, "W", &mut node.width, 1.0..=100_000.0, third);
                         finish |= r.drag_stopped() || r.lost_focus();
-                        let r = ui::number_field(ui, "H", &mut node.height, 1.0..=100_000.0, half);
+                        let r = ui::number_field(ui, "H", &mut node.height, 1.0..=100_000.0, third);
                         finish |= r.drag_stopped() || r.lost_focus();
-                    });
-                });
-                section(
-                    ui,
-                    if kind == NodeKind::Text {
-                        "Text color"
-                    } else {
-                        "Fill"
-                    },
-                    &mut |ui| {
-                        finish |= color_property(
+                        ui::segmented(
                             ui,
-                            egui::Id::new("node_fill"),
-                            &tokens,
-                            &mut node.fill,
-                            node.fill_token,
-                            ColorTarget::Node(id),
-                            &mut choice,
+                            third,
+                            &[
+                                (
+                                    icon::ARROW_COUNTER_CLOCKWISE,
+                                    "Rotate 90° · not available yet",
+                                ),
+                                (icon::FLIP_HORIZONTAL, "Flip horizontal · not available yet"),
+                                (icon::FLIP_VERTICAL, "Flip vertical · not available yet"),
+                            ],
+                            false,
                         );
-                        if kind == NodeKind::Rectangle {
-                            let r = ui::number_field(
-                                ui,
-                                "Radius",
-                                &mut node.radius,
-                                0.0..=100_000.0,
-                                ui.available_width(),
-                            );
-                            finish |= r.drag_stopped() || r.lost_focus();
-                        }
-                    },
-                );
+                    });
+                    ui::wide_button(ui, "Add flex", &format!("{} A", icon::ARROW_FAT_UP), false)
+                        .on_hover_text("Flex layout is not available yet");
+                    ui::check_row(
+                        ui,
+                        &mut false,
+                        "Clip content",
+                        &format!("{} C", icon::OPTION),
+                        false,
+                    )
+                    .on_hover_text("Clipping is not available yet");
+                });
                 if kind == NodeKind::Text {
-                    section(ui, "Typography", &mut |ui| {
+                    inspector_heading(ui, "Typography", true, false);
+                    inspector_body(ui, |ui| {
                         let r = ui::number_field(
                             ui,
                             "Size",
@@ -1595,11 +1983,159 @@ impl PaperCraftApp {
                             .on_hover_text("Text content")
                             .lost_focus();
                     });
+                } else {
+                    let heading = inspector_heading(ui, "Radius", true, false);
+                    ui::icon_button_at(
+                        ui,
+                        heading_slot(heading.rect, 0),
+                        egui::Id::new("radius_corners"),
+                        icon::FRAME_CORNERS,
+                        16.0,
+                        false,
+                        false,
+                        "Independent corners are not available yet",
+                    );
+                    inspector_body(ui, |ui| {
+                        let third = (ui.available_width() - 16.0) / 3.0;
+                        let max = (node.width.min(node.height) / 2.0).floor().max(0.0);
+                        ui.horizontal(|ui| {
+                            let r = ui::slider(
+                                ui,
+                                &mut node.radius,
+                                max,
+                                third * 2.0 + 8.0,
+                                "Corner radius",
+                            );
+                            finish |= r.drag_stopped() || r.clicked();
+                            let r =
+                                ui::number_field(ui, "", &mut node.radius, 0.0..=100_000.0, third);
+                            finish |= r.drag_stopped() || r.lost_focus();
+                        });
+                    });
                 }
             });
+            // Visibility stays available on locked layers, as in the layer list.
+            let heading = inspector_heading(ui, "Blending", true, false);
+            if ui::icon_button_at(
+                ui,
+                heading_slot(heading.rect, 0),
+                egui::Id::new("inspector_visibility"),
+                if hidden { icon::EYE_SLASH } else { icon::EYE },
+                16.0,
+                false,
+                true,
+                if hidden { "Show layer" } else { "Hide layer" },
+            )
+            .clicked()
+            {
+                toggle_hidden = true;
+            }
+            inspector_body(ui, |ui| {
+                let half = (ui.available_width() - 8.0) / 2.0;
+                ui.horizontal(|ui| {
+                    ui::inert_field(
+                        ui,
+                        icon::CHECKERBOARD,
+                        "100%",
+                        None,
+                        half,
+                        "Layer opacity is not available yet; Fill sets color opacity",
+                    );
+                    ui::inert_field(
+                        ui,
+                        icon::DROP,
+                        "Normal",
+                        Some(icon::CARET_DOWN),
+                        half,
+                        "Blend modes are not available yet",
+                    );
+                });
+            });
+            let node = &mut self.editor.document.nodes[index];
+            ui.add_enabled_ui(!locked, |ui| {
+                let heading = inspector_heading(ui, "Fill", true, false);
+                ui::icon_button_at(
+                    ui,
+                    heading_slot(heading.rect, 0),
+                    egui::Id::new("fill_add"),
+                    icon::PLUS,
+                    16.0,
+                    false,
+                    false,
+                    "Multiple fills are not available yet",
+                );
+                inspector_body(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        fill_kinds(ui);
+                        let right = ui.max_rect().right();
+                        let y = ui.min_rect().center().y;
+                        for (index, glyph, label) in [
+                            (1, icon::EYE, "Fill visibility is not available yet"),
+                            (0, icon::MINUS, "Removing the fill is not available yet"),
+                        ] {
+                            ui::icon_button_at(
+                                ui,
+                                trailing_slot(right, y, index),
+                                egui::Id::new(("fill_control", index)),
+                                glyph,
+                                16.0,
+                                false,
+                                false,
+                                label,
+                            );
+                        }
+                    });
+                    finish |= color_property(
+                        ui,
+                        egui::Id::new("node_fill"),
+                        &tokens,
+                        &mut node.fill,
+                        node.fill_token,
+                        ColorTarget::Node(id),
+                        &mut choice,
+                    );
+                });
+            });
+            for title in [
+                "Outline",
+                "Border",
+                "Shadow",
+                "Inner shadow",
+                "Filters",
+                "Guides",
+                "Video",
+                "Export",
+            ] {
+                let heading = inspector_heading(ui, title, false, false);
+                let rect = heading.rect;
+                ui::hline(ui);
+                if title == "Export" {
+                    ui::icon_button_at(
+                        ui,
+                        heading_slot(rect, 1),
+                        egui::Id::new("layer_export_format"),
+                        icon::COPY,
+                        16.0,
+                        false,
+                        false,
+                        "Layer export is not available yet; the Export button exports the artboard",
+                    );
+                }
+                ui::icon_button_at(
+                    ui,
+                    heading_slot(rect, 0),
+                    egui::Id::new(("inspector_add", title)),
+                    icon::PLUS,
+                    16.0,
+                    false,
+                    false,
+                    &format!("{title} is not available yet"),
+                );
+            }
         } else {
             let document = &mut self.editor.document;
-            section(ui, "Page", &mut |ui| {
+            inspector_heading(ui, "Page", true, false);
+            inspector_body(ui, |ui| {
                 finish |= color_property(
                     ui,
                     egui::Id::new("page_color"),
@@ -1610,7 +2146,8 @@ impl PaperCraftApp {
                     &mut choice,
                 );
             });
-            section(ui, "Artboard", &mut |ui| {
+            inspector_heading(ui, "Artboard", true, false);
+            inspector_body(ui, |ui| {
                 finish |= ui
                     .add(
                         egui::TextEdit::singleline(&mut document.name)
@@ -1638,12 +2175,13 @@ impl PaperCraftApp {
                 );
             });
             egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(16, 14))
+                .inner_margin(egui::Margin::symmetric(12, 14))
                 .show(ui, |ui| {
                     ui.label(
                         RichText::new(
                             "Select a layer on the canvas or in the layer list to edit it. \
-                             Shift-click adds layers to the selection.",
+                             Shift-click adds layers to the selection. \
+                             Double-click a layer in the list to rename it.",
                         )
                         .color(TEXT_DIM),
                     );
@@ -1661,6 +2199,11 @@ impl PaperCraftApp {
             };
             self.result(result);
         }
+        if toggle_hidden {
+            self.flush_properties();
+            let result = self.editor.toggle_hidden();
+            self.result(result);
+        }
         if count == 0 {
             return;
         }
@@ -1671,87 +2214,79 @@ impl PaperCraftApp {
     /// Align and distribute controls. Disabled controls state the requirement.
     fn arrange_section(&mut self, ui: &mut egui::Ui) {
         let arrangeable = self.editor.arrangeable().len();
-        ui::section_title(ui, "Arrange");
+        inspector_heading(ui, "Arrange", true, false);
         let mut align = None;
         let mut distribute = None;
-        egui::Frame::NONE
-            .inner_margin(egui::Margin {
-                left: 10,
-                right: 12,
-                top: 0,
-                bottom: 14,
-            })
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = vec2(2.0, 8.0);
-                let reason = match arrangeable {
-                    0 => "Hidden and locked layers are not arranged",
-                    1 => "One layer aligns to the artboard",
-                    _ => "Layers align to their shared bounds",
-                };
-                ui.horizontal(|ui| {
-                    for (glyph, label, value) in [
-                        (icon::ALIGN_LEFT, "Align left · ⌥A", Align::Left),
-                        (
-                            icon::ALIGN_CENTER_HORIZONTAL,
-                            "Align horizontal centers · ⌥H",
-                            Align::CenterX,
-                        ),
-                        (icon::ALIGN_RIGHT, "Align right · ⌥D", Align::Right),
-                        (icon::ALIGN_TOP, "Align top · ⌥W", Align::Top),
-                        (
-                            icon::ALIGN_CENTER_VERTICAL,
-                            "Align vertical centers · ⌥V",
-                            Align::CenterY,
-                        ),
-                        (icon::ALIGN_BOTTOM, "Align bottom · ⌥S", Align::Bottom),
-                    ] {
-                        let label = format!("{label}\n{reason}");
-                        if ui::icon_button(
-                            ui,
-                            glyph,
-                            vec2(30.0, 30.0),
-                            18.0,
-                            false,
-                            arrangeable >= 1,
-                            &label,
-                        )
-                        .clicked()
-                        {
-                            align = Some(value);
-                        }
+        inspector_body(ui, |ui| {
+            ui.spacing_mut().item_spacing = vec2(2.0, 8.0);
+            let reason = match arrangeable {
+                0 => "Hidden and locked layers are not arranged",
+                1 => "One layer aligns to the artboard",
+                _ => "Layers align to their shared bounds",
+            };
+            ui.horizontal(|ui| {
+                for (glyph, label, value) in [
+                    (icon::ALIGN_LEFT, "Align left · ⌥A", Align::Left),
+                    (
+                        icon::ALIGN_CENTER_HORIZONTAL,
+                        "Align horizontal centers · ⌥H",
+                        Align::CenterX,
+                    ),
+                    (icon::ALIGN_RIGHT, "Align right · ⌥D", Align::Right),
+                    (icon::ALIGN_TOP, "Align top · ⌥W", Align::Top),
+                    (
+                        icon::ALIGN_CENTER_VERTICAL,
+                        "Align vertical centers · ⌥V",
+                        Align::CenterY,
+                    ),
+                    (icon::ALIGN_BOTTOM, "Align bottom · ⌥S", Align::Bottom),
+                ] {
+                    let label = format!("{label}\n{reason}");
+                    if ui::icon_button(
+                        ui,
+                        glyph,
+                        vec2(30.0, 30.0),
+                        18.0,
+                        false,
+                        arrangeable >= 1,
+                        &label,
+                    )
+                    .clicked()
+                    {
+                        align = Some(value);
                     }
-                });
-                ui.horizontal(|ui| {
-                    for (glyph, label, axis) in [
-                        (
-                            icon::COLUMNS,
-                            "Distribute horizontally · ⌃⌥H",
-                            Axis::Horizontal,
-                        ),
-                        (icon::ROWS, "Distribute vertically · ⌃⌥V", Axis::Vertical),
-                    ] {
-                        let label = if arrangeable >= 3 {
-                            format!("{label}\nEqual gaps; the outer layers stay in place")
-                        } else {
-                            format!("{label}\nNeeds three or more visible, unlocked layers")
-                        };
-                        if ui::icon_button(
-                            ui,
-                            glyph,
-                            vec2(30.0, 30.0),
-                            18.0,
-                            false,
-                            arrangeable >= 3,
-                            &label,
-                        )
-                        .clicked()
-                        {
-                            distribute = Some(axis);
-                        }
-                    }
-                });
+                }
             });
-        ui::hline(ui);
+            ui.horizontal(|ui| {
+                for (glyph, label, axis) in [
+                    (
+                        icon::COLUMNS,
+                        "Distribute horizontally · ⌃⌥H",
+                        Axis::Horizontal,
+                    ),
+                    (icon::ROWS, "Distribute vertically · ⌃⌥V", Axis::Vertical),
+                ] {
+                    let label = if arrangeable >= 3 {
+                        format!("{label}\nEqual gaps; the outer layers stay in place")
+                    } else {
+                        format!("{label}\nNeeds three or more visible, unlocked layers")
+                    };
+                    if ui::icon_button(
+                        ui,
+                        glyph,
+                        vec2(30.0, 30.0),
+                        18.0,
+                        false,
+                        arrangeable >= 3,
+                        &label,
+                    )
+                    .clicked()
+                    {
+                        distribute = Some(axis);
+                    }
+                }
+            });
+        });
         if align.is_some() || distribute.is_some() {
             self.arrange(align, distribute);
         }
@@ -1774,66 +2309,68 @@ impl PaperCraftApp {
         let any_unlocked = selected.iter().any(|(locked, _)| !locked);
         let all_locked = !any_unlocked;
         let any_hidden = selected.iter().any(|(_, hidden)| *hidden);
-        ui::section_title(ui, if single { "Layer" } else { "Layers" });
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_space(10.0);
-            let action = |ui: &mut egui::Ui, glyph: &str, label: &str, enabled: bool| {
-                ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, false, enabled, label).clicked()
-            };
-            let order = single && any_unlocked;
-            let order_label = |label: &str| {
-                if single {
-                    label.to_string()
-                } else {
-                    format!("{label} · select one layer")
+        inspector_heading(ui, if single { "Layer" } else { "Layers" }, true, false);
+        inspector_body(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let action = |ui: &mut egui::Ui, glyph: &str, label: &str, enabled: bool| {
+                    ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, false, enabled, label)
+                        .clicked()
+                };
+                let order = single && any_unlocked;
+                let order_label = |label: &str| {
+                    if single {
+                        label.to_string()
+                    } else {
+                        format!("{label} · select one layer")
+                    }
+                };
+                if action(ui, icon::ARROW_UP, &order_label("Bring forward"), order) {
+                    self.flush_properties();
+                    let r = self.editor.reorder(true);
+                    self.result(r);
                 }
-            };
-            if action(ui, icon::ARROW_UP, &order_label("Bring forward"), order) {
-                self.flush_properties();
-                let r = self.editor.reorder(true);
-                self.result(r);
-            }
-            if action(ui, icon::ARROW_DOWN, &order_label("Send backward"), order) {
-                self.flush_properties();
-                let r = self.editor.reorder(false);
-                self.result(r);
-            }
-            if action(ui, icon::COPY, "Duplicate unlocked layers", any_unlocked) {
-                self.flush_properties();
-                let r = self.editor.duplicate();
-                self.result(r);
-            }
-            if action(ui, icon::TRASH, "Delete unlocked layers", any_unlocked) {
-                self.flush_properties();
-                let r = self.editor.delete();
-                self.result(r);
-            }
-            let toggle = |ui: &mut egui::Ui, glyph, label, on| {
-                ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, on, true, label).clicked()
-            };
-            let hide_label = if any_hidden { "Show" } else { "Hide" };
-            let hide_glyph = if any_hidden {
-                icon::EYE_SLASH
-            } else {
-                icon::EYE
-            };
-            let lock_label = if all_locked { "Unlock" } else { "Lock" };
-            let lock_glyph = if all_locked {
-                icon::LOCK
-            } else {
-                icon::LOCK_OPEN
-            };
-            if toggle(ui, hide_glyph, hide_label, any_hidden) {
-                self.flush_properties();
-                let r = self.editor.toggle_hidden();
-                self.result(r);
-            }
-            if toggle(ui, lock_glyph, lock_label, all_locked) {
-                self.flush_properties();
-                let r = self.editor.toggle_locked();
-                self.result(r);
-            }
+                if action(ui, icon::ARROW_DOWN, &order_label("Send backward"), order) {
+                    self.flush_properties();
+                    let r = self.editor.reorder(false);
+                    self.result(r);
+                }
+                if action(ui, icon::COPY, "Duplicate unlocked layers", any_unlocked) {
+                    self.flush_properties();
+                    let r = self.editor.duplicate();
+                    self.result(r);
+                }
+                if action(ui, icon::TRASH, "Delete unlocked layers", any_unlocked) {
+                    self.flush_properties();
+                    let r = self.editor.delete();
+                    self.result(r);
+                }
+                let toggle = |ui: &mut egui::Ui, glyph, label, on| {
+                    ui::icon_button(ui, glyph, vec2(32.0, 30.0), 18.0, on, true, label).clicked()
+                };
+                let hide_label = if any_hidden { "Show" } else { "Hide" };
+                let hide_glyph = if any_hidden {
+                    icon::EYE_SLASH
+                } else {
+                    icon::EYE
+                };
+                let lock_label = if all_locked { "Unlock" } else { "Lock" };
+                let lock_glyph = if all_locked {
+                    icon::LOCK
+                } else {
+                    icon::LOCK_OPEN
+                };
+                if toggle(ui, hide_glyph, hide_label, any_hidden) {
+                    self.flush_properties();
+                    let r = self.editor.toggle_hidden();
+                    self.result(r);
+                }
+                if toggle(ui, lock_glyph, lock_label, all_locked) {
+                    self.flush_properties();
+                    let r = self.editor.toggle_locked();
+                    self.result(r);
+                }
+            })
         });
     }
 
@@ -1908,6 +2445,9 @@ impl PaperCraftApp {
             FontId::proportional(12.0),
             TEXT_DIM,
         );
+        if let Some(style) = self.editor.selected_node().and_then(TextStyle::of) {
+            self.text_style = style;
+        }
         paint_document(
             &painter,
             &self.editor.document,
@@ -1915,6 +2455,7 @@ impl PaperCraftApp {
             self.zoom,
             canvas,
             false,
+            self.text_edit.as_ref().map(|e| e.id),
         );
         let screen = |n: &crate::document::Node| {
             Rect::from_min_size(
@@ -2004,11 +2545,12 @@ impl PaperCraftApp {
             if let (Some(creation), Some(pointer)) = (&mut self.creation, pointer) {
                 creation.current = to_document(pointer);
             }
+            let modifiers = ui.input(|i| i.modifiers);
+            // A click, or a drag too small to see, places a layer at the pointer.
             let finished = if response.clicked() {
                 pointer.and_then(|p| {
                     if artboard.contains(p) {
-                        let start = to_document(p);
-                        Some((kind, Rect::from_min_size(start, CLICK_SIZE)))
+                        Some((kind, to_document(p), None))
                     } else {
                         self.status = "Click inside the artboard to add a layer.".into();
                         None
@@ -2016,33 +2558,41 @@ impl PaperCraftApp {
                 })
             } else if response.drag_stopped() {
                 self.creation.take().map(|c| {
-                    let rect = Rect::from_two_pos(c.start, c.current);
-                    // A tiny drag is treated as a click.
-                    if rect.width() * self.zoom < 4.0 && rect.height() * self.zoom < 4.0 {
-                        (c.kind, Rect::from_min_size(c.start, CLICK_SIZE))
-                    } else {
-                        (c.kind, rect)
-                    }
+                    let rect = creation_rect(c.start, c.current, modifiers.shift, modifiers.alt);
+                    let tiny = rect.width() * self.zoom < 4.0 && rect.height() * self.zoom < 4.0;
+                    (c.kind, c.start, (!tiny).then_some(rect))
                 })
             } else {
                 None
             };
-            if let Some((kind, rect)) = finished {
+            if let Some((kind, at, rect)) = finished {
                 self.flush_properties();
-                let result = self.editor.add_at(
-                    kind,
-                    rect.min.x,
-                    rect.min.y,
-                    rect.width().max(1.0),
-                    rect.height().max(1.0),
-                );
-                self.result(result);
                 self.set_tool(Tool::Select);
+                match kind {
+                    NodeKind::Rectangle => {
+                        let rect = rect.unwrap_or(Rect::from_min_size(at, CLICK_SIZE));
+                        let result = self.editor.add_at(
+                            kind,
+                            rect.min.x,
+                            rect.min.y,
+                            rect.width().max(1.0),
+                            rect.height().max(1.0),
+                        );
+                        self.result(result);
+                    }
+                    NodeKind::Text => self.place_text(&painter, at, rect),
+                }
             }
             if let Some(creation) = &self.creation {
-                let preview = Rect::from_two_pos(
-                    origin + creation.start.to_vec2() * self.zoom,
-                    origin + creation.current.to_vec2() * self.zoom,
+                let rect = creation_rect(
+                    creation.start,
+                    creation.current,
+                    modifiers.shift,
+                    modifiers.alt,
+                );
+                let preview = Rect::from_min_max(
+                    origin + rect.min.to_vec2() * self.zoom,
+                    origin + rect.max.to_vec2() * self.zoom,
                 );
                 painter.rect_filled(preview, 0.0, ACCENT.gamma_multiply(0.12));
                 painter.rect_stroke(preview, 0.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
@@ -2109,9 +2659,64 @@ impl PaperCraftApp {
                     }
                     Some(id) if extend => self.editor.toggle_selection(id),
                     Some(id) => self.editor.select(Some(id)),
+                    None if response.drag_started() => {
+                        let start = to_document(hit_point);
+                        self.marquee = Some(Marquee {
+                            start,
+                            current: start,
+                            base: if extend {
+                                self.editor.selection().to_vec()
+                            } else {
+                                Vec::new()
+                            },
+                        });
+                        if !extend {
+                            self.editor.select(None);
+                        }
+                    }
                     None if !extend => self.editor.select(None),
                     None => {}
                 }
+            }
+            // Double-clicking a text layer edits it in place.
+            if response.double_clicked()
+                && let Some(pointer) = pointer
+                && artboard.contains(pointer)
+            {
+                let point = to_document(pointer);
+                let hit = self.editor.document.nodes.iter().rev().find(|n| {
+                    !n.hidden
+                        && !n.locked
+                        && Rect::from_min_size(pos2(n.x, n.y), vec2(n.width, n.height))
+                            .contains(point)
+                });
+                if let Some(id) = hit.filter(|n| n.kind == NodeKind::Text).map(|n| n.id) {
+                    self.begin_text_edit(id, false);
+                }
+            }
+            if let (Some(marquee), Some(pointer)) = (&mut self.marquee, pointer)
+                && (response.dragged() || response.drag_stopped())
+            {
+                marquee.current = to_document(pointer);
+                let rect = Rect::from_two_pos(marquee.start, marquee.current)
+                    .intersect(Rect::from_min_size(Pos2::ZERO, size));
+                let mut selection = marquee.base.clone();
+                if rect.is_positive() {
+                    selection.extend(
+                        self.editor
+                            .document
+                            .layers_in([rect.min.x, rect.min.y, rect.max.x, rect.max.y]),
+                    );
+                }
+                self.editor.set_selection(selection);
+            }
+            if let Some(marquee) = &self.marquee {
+                let rect = Rect::from_two_pos(
+                    origin + marquee.start.to_vec2() * self.zoom,
+                    origin + marquee.current.to_vec2() * self.zoom,
+                );
+                painter.rect_filled(rect, 0.0, ACCENT.gamma_multiply(0.08));
+                painter.rect_stroke(rect, 0.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
             }
             if (response.dragged() || response.drag_stopped())
                 && let (Some(drag), Some(pointer)) = (&self.drag, pointer)
@@ -2145,18 +2750,81 @@ impl PaperCraftApp {
                 }
             }
         }
+        self.text_overlay(ui, origin);
         if response.drag_stopped() {
             self.creation = None;
+            self.marquee = None;
             if let Some(drag) = self.drag.take() {
                 let result = self.editor.commit(drag.before);
                 self.result(result);
             }
         }
     }
+
+    /// Shows the in-place text editor over the edited layer and keeps the layer sized
+    /// to its content. Ends the edit when the editor loses focus.
+    fn text_overlay(&mut self, ui: &mut egui::Ui, origin: Pos2) {
+        let Some(edit) = &mut self.text_edit else {
+            return;
+        };
+        let document = &mut self.editor.document;
+        let Some(index) = document.nodes.iter().position(|n| n.id == edit.id) else {
+            self.text_edit = None;
+            return;
+        };
+        let fill = color(document.node_fill(&document.nodes[index]));
+        let node = &mut document.nodes[index];
+        let id = egui::Id::new("canvas_text").with(node.id);
+        // egui takes focus from a widget that is new on a frame with a click, so focus
+        // waits for a frame without one.
+        if edit.start && !ui.input(|i| i.pointer.any_click()) {
+            edit.start = false;
+            let mut state = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(node.text.chars().count()),
+                )));
+            state.store(ui.ctx(), id);
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+        let zoom = self.zoom;
+        let rect = Rect::from_min_size(
+            origin + vec2(node.x, node.y) * zoom,
+            vec2(node.width, node.height) * zoom,
+        );
+        let response = ui.put(
+            rect,
+            egui::TextEdit::multiline(&mut node.text)
+                .id(id)
+                .font(FontId::proportional(node.font_size * zoom))
+                .text_color(fill)
+                .frame(egui::Frame::NONE)
+                .margin(egui::Margin::ZERO)
+                .desired_width(rect.width())
+                .desired_rows(1),
+        );
+        if response.changed() {
+            let painter = ui.painter();
+            if edit.auto_width {
+                let size = text_size(painter, &node.text, node.font_size, None);
+                node.width = size.x.max(1.0);
+                node.height = size.y.max(1.0);
+            } else {
+                let size = text_size(painter, &node.text, node.font_size, Some(node.width));
+                node.height = node.height.max(size.y);
+            }
+        }
+        if !edit.start && !response.has_focus() {
+            self.flush_properties();
+        }
+    }
 }
 
 /// Paints the artboard and its visible layers. `preview` rounds font sizes so small
-/// thumbnails do not rasterize a separate glyph set for every scale.
+/// thumbnails do not rasterize a separate glyph set for every scale. The text of
+/// `editing` is left to the in-place editor.
 fn paint_document(
     painter: &Painter,
     document: &Document,
@@ -2164,6 +2832,7 @@ fn paint_document(
     zoom: f32,
     clip: Rect,
     preview: bool,
+    editing: Option<u64>,
 ) {
     let artboard = Rect::from_min_size(origin, vec2(document.width, document.height) * zoom);
     let painter = painter.with_clip_rect(clip);
@@ -2185,6 +2854,7 @@ fn paint_document(
                     color(document.node_fill(node)),
                 );
             }
+            NodeKind::Text if editing == Some(node.id) => {}
             NodeKind::Text => {
                 let mut size = node.font_size * zoom;
                 if preview {
@@ -2208,21 +2878,47 @@ fn paint_document(
     }
 }
 
+/// Size in artboard units of `text` at `font_size`, wrapped at `width` when given.
+fn text_size(painter: &Painter, text: &str, font_size: f32, width: Option<f32>) -> Vec2 {
+    let font = FontId::proportional(font_size);
+    let galley = match width {
+        Some(width) => painter.layout(text.into(), font, Color32::WHITE, width),
+        None => painter.layout_no_wrap(text.into(), font, Color32::WHITE),
+    };
+    let size = galley.size().ceil();
+    match width {
+        Some(_) => size,
+        None => size + vec2(AUTO_WIDTH_SLACK, 0.0),
+    }
+}
+
 fn color(c: [u8; 4]) -> Color32 {
     Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
 }
 
-/// A window tab. Returns the tab response and, for closable tabs, the close button.
+/// Existing files use their canonical path so aliases cannot open competing tabs.
+fn document_path(path: PathBuf) -> PathBuf {
+    path.canonicalize()
+        .unwrap_or_else(|_| std::path::absolute(&path).unwrap_or(path))
+}
+
+/// A window tab at most `max_width` wide. Document tabs pass their index in `closable`
+/// and get a close button. Returns the tab response and the close button.
 fn tab(
     ui: &mut egui::Ui,
     glyph: &str,
     label: &str,
     selected: bool,
-    closable: bool,
+    closable: Option<usize>,
+    max_width: f32,
 ) -> (egui::Response, Option<egui::Response>) {
-    let text = ui::truncated(ui, label, BODY, TEXT, 180.0);
-    let close_space = if closable { 44.0 } else { 0.0 };
-    let width = (34.0 + text.size().x + 12.0 + close_space).max(if closable { 150.0 } else { 0.0 });
+    let close_space = if closable.is_some() { 44.0 } else { 0.0 };
+    let text = ui::truncated(ui, label, BODY, TEXT, max_width - 46.0 - close_space);
+    let width = (34.0 + text.size().x + 12.0 + close_space).max(if closable.is_some() {
+        150.0_f32.min(max_width)
+    } else {
+        0.0
+    });
     let (rect, response) = ui.allocate_exact_size(vec2(width, 27.0), Sense::click());
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label)
@@ -2247,13 +2943,13 @@ fn tab(
         text,
         color,
     );
-    let close = closable.then(|| {
+    let close = closable.map(|index| {
         let button =
             Rect::from_center_size(pos2(rect.right() - 16.0, rect.center().y), vec2(20.0, 20.0));
         ui::icon_button_at(
             ui,
             button,
-            egui::Id::new("close_file_tab"),
+            egui::Id::new(("close_file_tab", index)),
             icon::X,
             14.0,
             false,
@@ -2325,9 +3021,9 @@ fn color_property(
     let bound = binding.and_then(|id| tokens.iter().find(|t| t.id == id));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let field_width = width - 32.0;
+        let field_width = width - 48.0;
         ui.allocate_ui_with_layout(
-            vec2(field_width, ROW),
+            vec2(field_width, ui::FIELD),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_width(field_width);
@@ -2335,7 +3031,7 @@ fn color_property(
                     Some(token) => {
                         ui::field_frame().show(ui, |ui| {
                             ui.set_width(field_width - 16.0);
-                            ui.set_height(ROW);
+                            ui.set_height(ui::FIELD);
                             ui.horizontal_centered(|ui| {
                                 ui.spacing_mut().item_spacing.x = 8.0;
                                 let (rect, _) =
@@ -2345,7 +3041,7 @@ fn color_property(
                                 let name_width = (ui.available_width() - 30.0).max(0.0);
                                 let galley = ui::truncated(ui, &token.name, BODY, TEXT, name_width);
                                 let (rect, _) = ui.allocate_exact_size(
-                                    vec2(name_width, ROW - 6.0),
+                                    vec2(name_width, ui::FIELD - 6.0),
                                     Sense::hover(),
                                 );
                                 ui.painter().galley(
@@ -2373,11 +3069,24 @@ fn color_property(
                 }
             },
         );
-        let menu = ui::icon_button(
+        let right = ui.max_rect().right();
+        let y = ui.min_rect().center().y;
+        ui::icon_button_at(
             ui,
+            trailing_slot(right, y, 0),
+            id.with("eyedropper"),
+            icon::EYEDROPPER,
+            16.0,
+            false,
+            false,
+            "Picking a color from the screen is not available yet",
+        );
+        let menu = ui::icon_button_at(
+            ui,
+            trailing_slot(right, y, 1),
+            id.with("token_menu"),
             icon::CIRCLES_FOUR,
-            vec2(28.0, 28.0),
-            17.0,
+            16.0,
             bound.is_some(),
             enabled,
             "Color tokens",
@@ -2426,6 +3135,114 @@ fn swatch(painter: &Painter, rect: Rect, value: [u8; 4]) {
         Stroke::new(1.0, Color32::from_white_alpha(46)),
         StrokeKind::Inside,
     );
+}
+
+/// Horizontal inset of inspector headings and controls.
+const INSPECTOR_PAD: f32 = 12.0;
+
+/// Inspector section heading. Open sections leave room above their controls;
+/// `active` false draws the dim title of a collapsed, empty section.
+fn inspector_heading(ui: &mut egui::Ui, title: &str, active: bool, caret: bool) -> egui::Response {
+    let height = if active { 36.0 } else { 33.0 };
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    let y = rect.top() + 16.5;
+    let color = if active { TEXT } else { TEXT_DIM };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(title.to_owned(), ui::font(BODY), color);
+    let width = galley.size().x;
+    ui.painter().galley(
+        pos2(rect.left() + INSPECTOR_PAD, y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    if caret {
+        ui.painter().text(
+            pos2(rect.left() + INSPECTOR_PAD + width + 9.0, y),
+            Align2::CENTER_CENTER,
+            icon::CARET_DOWN,
+            ui::icon_font(12.0),
+            TEXT_DIM,
+        );
+    }
+    response
+}
+
+/// Inspector section controls, followed by the section rule.
+fn inspector_body<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let inner = egui::Frame::NONE
+        .inner_margin(egui::Margin {
+            left: INSPECTOR_PAD as i8,
+            right: INSPECTOR_PAD as i8,
+            top: 0,
+            bottom: 12,
+        })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+            add(ui)
+        })
+        .inner;
+    ui::hline(ui);
+    inner
+}
+
+/// Icon slot `index` counted from the right end of a heading.
+fn heading_slot(heading: Rect, index: usize) -> Rect {
+    trailing_slot(heading.right() - INSPECTOR_PAD, heading.top() + 16.5, index)
+}
+
+/// 24 pt icon slot `index` counted leftwards from the content edge `right`.
+fn trailing_slot(right: f32, y: f32, index: usize) -> Rect {
+    Rect::from_center_size(pos2(right - 8.0 - 24.0 * index as f32, y), vec2(24.0, 24.0))
+}
+
+/// Fill type selector. Solid is the only supported type.
+fn fill_kinds(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(vec2(86.0, ui::FIELD), Sense::hover());
+    let cell = (rect.width() - 4.0) / 3.0;
+    let slot = |i: usize| {
+        Rect::from_min_size(
+            pos2(rect.left() + 2.0 + i as f32 * cell, rect.top() + 2.0),
+            vec2(cell, ui::FIELD - 4.0),
+        )
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, ui::RADIUS, CONTROL);
+    painter.rect_filled(slot(0), 4, Color32::from_gray(74));
+    let mark = |i: usize| Rect::from_center_size(slot(i).center(), vec2(18.0, 12.0));
+    painter.rect_filled(mark(0), 2, Color32::from_gray(150));
+    let gradient = mark(1);
+    let mut mesh = egui::Mesh::default();
+    for (corner, gray) in [
+        (gradient.left_top(), 110),
+        (gradient.left_bottom(), 110),
+        (gradient.right_top(), 62),
+        (gradient.right_bottom(), 62),
+    ] {
+        mesh.colored_vertex(corner, Color32::from_gray(gray));
+    }
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(1, 2, 3);
+    painter.add(mesh);
+    painter.text(
+        slot(2).center(),
+        Align2::CENTER_CENTER,
+        icon::IMAGE,
+        ui::icon_font(16.0),
+        ui::TEXT_FAINT,
+    );
+    for (i, label) in [
+        "Solid fill",
+        "Gradient fills are not available yet",
+        "Image fills are not available yet",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        ui.interact(slot(i), egui::Id::new(("fill_kind", i)), Sense::hover())
+            .on_hover_text(label);
+    }
 }
 
 /// Collapsible panel heading with an optional trailing icon control
@@ -2481,12 +3298,15 @@ fn section_toggle(
 
 impl eframe::App for PaperCraftApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.dirty() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            self.request(Intent::Close, ctx);
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
+            self.flush_properties();
+            if self.first_dirty_tab().is_some() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                self.request(Intent::Close, ctx);
+            }
         }
         #[cfg(target_os = "macos")]
         craft_quit::on_close_request(ctx);
@@ -2494,5 +3314,73 @@ impl eframe::App for PaperCraftApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_open_once_and_other_tabs_cannot_replace_them() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("open.papercraft");
+        let document = Document::example();
+        document.save(&path).unwrap();
+        let mut app = PaperCraftApp::from_document(Document::default());
+        app.open_path(path.clone());
+        let before = app.editor.document.clone();
+        app.editor.document.name = "Unsaved file".into();
+        app.editor.commit(before).unwrap();
+        app.activate_tab(0);
+        app.open_path(directory.path().join(".").join("open.papercraft"));
+        assert_eq!(app.tab_count(), 2);
+        assert_eq!(app.editor.document.name, "Unsaved file");
+        assert!(app.editor.can_undo());
+
+        app.activate_tab(0);
+        assert!(!app.write_document(path.clone()));
+        assert_eq!(Document::load(&path).unwrap(), document);
+        app.activate_tab(1);
+        assert!(app.write_document(path.clone()));
+        assert_eq!(Document::load(&path).unwrap(), app.editor.document);
+    }
+
+    #[test]
+    fn renames_survive_tab_switches_and_quit_checks_every_dirty_tab() {
+        let ctx = egui::Context::default();
+        let mut app = PaperCraftApp::from_document(Document::example());
+        let id = app.editor.document.nodes[0].id;
+        let original = app.editor.document.clone();
+        app.renaming = Some((id, "Renamed before switching".into()));
+        app.request(Intent::New, &ctx);
+        assert_eq!(app.tab_count(), 2);
+        app.activate_tab(0);
+        assert_eq!(
+            app.editor.document.nodes[0].name,
+            "Renamed before switching"
+        );
+        app.editor.undo();
+        assert_eq!(app.editor.document, original);
+
+        app.renaming = Some((id, "Renamed before quit".into()));
+        app.request(Intent::Close, &ctx);
+        assert_eq!(app.pending, Some(Intent::Close));
+        assert_eq!(app.editor.document.nodes[0].name, "Renamed before quit");
+        app.pending = None;
+        app.activate_tab(1);
+        app.editor.add(NodeKind::Rectangle).unwrap();
+        app.request(Intent::Close, &ctx);
+        assert_eq!(app.active_tab(), 1);
+        assert_eq!(app.pending, Some(Intent::Close));
+        app.pending = None;
+        app.perform(Intent::Close, &ctx);
+        assert_eq!(app.active_tab(), 0);
+        assert_eq!(app.pending, Some(Intent::Close));
+        assert!(!app.allow_close);
+        app.pending = None;
+        app.perform(Intent::Close, &ctx);
+        assert_eq!(app.tab_count(), 0);
+        assert!(app.allow_close);
     }
 }
