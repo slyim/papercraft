@@ -260,6 +260,68 @@ impl Document {
         html.push_str("</main></body></html>\n");
         Ok(html)
     }
+
+    /// Exports the artboard in document units. Text keeps explicit line breaks;
+    /// fonts are resolved by the receiving application.
+    pub fn export_svg(&self) -> Result<String, String> {
+        self.validate()?;
+        let visible = self.nodes.iter().filter(|n| !n.hidden);
+        if std::iter::once(self.name.as_str())
+            .chain(visible.clone().flat_map(|n| [n.name.as_str(), n.text.as_str()]))
+            .any(|value| value.chars().any(|c| !matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}')))
+        {
+            return Err("SVG export failed: remove XML-incompatible control characters from names or text.".into());
+        }
+        let mut svg = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\" overflow=\"hidden\" role=\"img\" aria-labelledby=\"document-title\">\n<title id=\"document-title\">{}</title>\n<rect width=\"{}\" height=\"{}\" {}/>\n",
+            self.width,
+            self.height,
+            self.width,
+            self.height,
+            escape(&self.name),
+            self.width,
+            self.height,
+            svg_fill(self.background)
+        );
+        for node in visible {
+            let label = format!(
+                "id=\"layer-{}\" aria-label=\"{}\"",
+                node.id,
+                escape(&node.name)
+            );
+            match node.kind {
+                NodeKind::Rectangle => svg.push_str(&format!(
+                    "<rect {label} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{}\" {}/>\n",
+                    node.x,
+                    node.y,
+                    node.width,
+                    node.height,
+                    node.radius.min(node.width.min(node.height) / 2.0),
+                    svg_fill(node.fill)
+                )),
+                NodeKind::Text => {
+                    svg.push_str(&format!(
+                        "<defs><clipPath id=\"clip-{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/></clipPath></defs>\n<text {label} clip-path=\"url(#clip-{})\" font-family=\"sans-serif\" font-size=\"{}\" xml:space=\"preserve\" {}>",
+                        node.id, node.x, node.y, node.width, node.height,
+                        node.id, node.font_size, svg_fill(node.fill)
+                    ));
+                    // shortcut: explicit lines only; share native text layout when wrapped SVG text is required.
+                    let text = node.text.replace("\r\n", "\n").replace('\r', "\n");
+                    for (line, text) in text.split('\n').enumerate() {
+                        svg.push_str(&format!(
+                            "<tspan x=\"{}\" y=\"{}\">{}</tspan>",
+                            node.x,
+                            node.y + node.font_size * (1.0 + line as f32 * 1.2),
+                            escape(text)
+                        ));
+                    }
+                    svg.push_str("</text>\n");
+                }
+            }
+        }
+        svg.push_str("</svg>\n");
+        Ok(svg)
+    }
 }
 
 fn valid_size(n: f32) -> bool {
@@ -268,6 +330,15 @@ fn valid_size(n: f32) -> bool {
 fn css_color(c: [u8; 4]) -> String {
     format!(
         "rgba({},{},{},{:.4})",
+        c[0],
+        c[1],
+        c[2],
+        c[3] as f32 / 255.0
+    )
+}
+fn svg_fill(c: [u8; 4]) -> String {
+    format!(
+        "fill=\"#{:02x}{:02x}{:02x}\" fill-opacity=\"{:.4}\"",
         c[0],
         c[1],
         c[2],
@@ -444,7 +515,12 @@ impl Editor {
         node.id = self.document.next_id;
         node.x = (node.x + 20.0).min(MAX_COORDINATE);
         node.y = (node.y + 20.0).min(MAX_COORDINATE);
-        node.name = format!("{} copy", node.name.chars().take(200).collect::<String>());
+        let mut name_end = node.name.len().min(251);
+        while !node.name.is_char_boundary(name_end) {
+            name_end -= 1;
+        }
+        node.name.truncate(name_end);
+        node.name.push_str(" copy");
         let id = node.id;
         self.document.nodes.push(node);
         self.document.next_id = next;

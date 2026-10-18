@@ -13,6 +13,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "PaperCraft",
         options,
-        Box::new(|cc| Ok(Box::new(papercraft::app::PaperCraftApp::new(cc)))),
+        Box::new(|cc| {
+            #[cfg(target_os = "macos")]
+            craft_quit::install_app_menu(&cc.egui_ctx, "PaperCraft")?;
+            Ok(Box::new(papercraft::app::PaperCraftApp::new(cc)))
+        }),
     )
 }

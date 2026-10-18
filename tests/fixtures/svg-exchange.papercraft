@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "name": "SVG exchange <&> \"İstanbul\"",
+  "width": 640.0,
+  "height": 400.0,
+  "background": [248, 247, 243, 255],
+  "canvas": [40, 40, 40, 255],
+  "next_id": 6,
+  "nodes": [
+    {
+      "id": 1, "name": "Rounded base", "kind": "rectangle",
+      "x": 30.0, "y": 30.0, "width": 360.0, "height": 200.0,
+      "fill": [40, 100, 180, 255], "radius": 28.0,
+      "text": "", "font_size": 28.0, "hidden": false, "locked": false
+    },
+    {
+      "id": 2, "name": "Transparent overlap", "kind": "rectangle",
+      "x": 210.0, "y": 120.0, "width": 260.0, "height": 140.0,
+      "fill": [230, 80, 60, 128], "radius": 200.0,
+      "text": "", "font_size": 28.0, "hidden": false, "locked": true
+    },
+    {
+      "id": 3, "name": "Editable Unicode <&> text", "kind": "text",
+      "x": 50.0, "y": 60.0, "width": 520.0, "height": 80.0,
+      "fill": [255, 255, 255, 255], "radius": 0.0,
+      "text": "İstanbul · café <&> \"quotes\"\n第二行 · Ελληνικά",
+      "font_size": 24.0, "hidden": false, "locked": false
+    },
+    {
+      "id": 4, "name": "Hidden sentinel", "kind": "rectangle",
+      "x": 0.0, "y": 0.0, "width": 640.0, "height": 400.0,
+      "fill": [255, 0, 255, 255], "radius": 0.0,
+      "text": "", "font_size": 28.0, "hidden": true, "locked": false
+    },
+    {
+      "id": 5, "name": "Clipped text", "kind": "text",
+      "x": 420.0, "y": 290.0, "width": 180.0, "height": 28.0,
+      "fill": [30, 35, 45, 200], "radius": 0.0,
+      "text": "One deliberately long explicit line\nThis line is below the clip",
+      "font_size": 24.0, "hidden": false, "locked": false
+    }
+  ]
+}

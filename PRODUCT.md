@@ -18,8 +18,8 @@ Create a free alternative to Paper for visual interface design. Use observed beh
 
 - Rust and egui own the application, including its document model and editor.
 - Use Phosphor Icons. The native integration is `egui-phosphor`; no React runtime is required.
-- The first implementation slice covers one artboard, text and rectangle nodes, layer controls, selection, drag/resize, a property inspector, undo/redo, local documents and HTML export.
-- Native egui painting is not a browser CSS engine. Layout fidelity, editable HTML import, rich text, SVG, multiple artboards and MCP editing require later milestones.
+- Implemented behavior covers one artboard, text and rectangle nodes, layer controls, selection, drag/resize, a property inspector, undo/redo, local documents and HTML/SVG export. SVG retains explicit text lines; fonts and automatic wrapping differ between renderers.
+- Native egui painting is not a browser CSS engine. Layout fidelity, editable HTML/SVG import, vector/image layers, rich text, multiple artboards and MCP editing require later milestones.
 - No backend service or account is required for the first local editing workflow.
 
 ## Brand Commitments
@@ -36,4 +36,4 @@ Audience beyond the requesting user, platform release targets, collaboration and
 
 ## Ecosystem and License
 
-Original PaperCraft code, documentation and the generated paper-crane logo use MIT, an option also offered by the native Craft apps. PaperCraft remains independently maintained. The phased plan in `docs/artcraft.md` targets open-format exchange, shared Rust utilities where needed, and command-based automation. No Craft app adapter or launcher enrollment is implemented yet.
+Original PaperCraft code, documentation and the generated paper-crane logo use MIT, an option also offered by the native Craft apps. PaperCraft remains independently maintained. The phased plan in `docs/artcraft.md` records SVG fixture imports into VectorCraft/FigCraft, the pinned macOS `craft-quit` integration, and proposed raster/automation work. No native-format adapter or launcher enrollment is implemented.

@@ -6,6 +6,8 @@ Build an original, local design editor in Rust with egui. Paper research informs
 
 The first slice is implemented. The [verification record](verification.md) lists completed checks and remaining manual/platform checks separately. The milestones below remain the acceptance checklist for further work.
 
+The current increment also implements bounded SVG export and the reliability corrections described below. The [gap assessment](gap-assessment.md) ranks remaining work; the [Craft source review](craft-source-review.md) and [Paper workflow evidence](../research/paper/workflow-evidence.md) separate source/documentation claims from runtime checks.
+
 ## Constraints
 
 - All application logic and UI use Rust and egui. Existing npm/REA tooling remains research tooling.
@@ -42,6 +44,7 @@ The saved [analysis](../research/paper/analysis.md) and [compact evidence](../re
 | Undo/redo | Present in public [build-log references](https://paper.design/build-log); batching unknown | One completed drag/resize is one history step; redo restores the result; a new edit clears redo. This is a PaperCraft decision. |
 | Save/open | E1 `src/lib/storage.ts:12–24,33–47,76–126` proves shell JSON storage only | Versioned `.crumbs` JSON stores the original document. Validate before replacing the open document; failed writes preserve existing files. Paper document compatibility is unknown and out of scope. |
 | HTML export | Code export [documented](https://paper.design/docs/support) | Export supported primitives, geometry, colors and escaped text as a standalone file. Browser typography may differ from egui; arbitrary CSS and import round trips deferred. |
+| SVG exchange | Paper's [SVG documentation](https://paper.design/docs/svg) and build log, plus inspected VectorCraft/FigCraft importers | Implemented: export the current artboard background and visible rectangle/text nodes, preserving order, alpha, clamped radii, explicit lines and clipping. Export button/file menu offer HTML and SVG. Reuse validation and atomic writes. XML-incompatible controls reject export before writing; fonts and automatic wrapping differ. Actual fixture imports are recorded separately in verification. |
 | Dashboard and editor chrome | User-supplied Paper screenshots (dashboard, empty editor), 18 October 2026; runtime behavior behind account/team/MCP controls unknown | PaperCraft decisions: a Dashboard tab and one document tab; recents store local paths only and tolerate missing or invalid lists; opening, creating or closing via tabs/cards uses the unsaved-changes prompt; V/H/R/T tools place a layer by click or drag inside the artboard, as one history step, then return to Select; the page color is stored in the document (`canvas`, optional for earlier version 1 files) and exported as the HTML body background. Theme tokens and multiple pages are shown disabled; account, sharing, MCP, vector, frame, component and image-generation controls are omitted. |
 | Agent interface | E1 bridge sources above; [public MCP behavior](https://paper.design/docs/mcp) | Later milestone only. First establish one authoritative document model; protocol, mutation batching and screenshot semantics remain undecided. |
 
@@ -62,6 +65,17 @@ The saved [analysis](../research/paper/analysis.md) and [compact evidence](../re
 | 3. Local files and export | Save/open round trip preserves supported document values and ordering. Invalid/version-incompatible JSON leaves the current document intact. Write errors are visible and preserve prior files. Export text containing `<`, `&` and quotes safely; inspect the exported HTML in a browser. |
 | 4. Release check for this slice | Rust formatting, compilation and focused tests pass; launch the egui app and complete one create→edit→undo→save→reopen→export session. Record supported platform, check results and rendering differences. Confirm icons are Phosphor and required license notices are present. |
 
-Later planning may cover tokens, nested layouts, images/SVG, imports and local MCP. Each requires separate behavior proof and acceptance checks. Full CSS layout, Paper file compatibility and multiplayer remain outside this slice.
+Later planning may cover tokens, nested layouts, image/vector layers, HTML/SVG imports and local MCP. Each requires separate behavior proof and acceptance checks. Full CSS layout, Paper file compatibility and multiplayer remain outside this slice.
 
 The [ArtCraft interoperability plan](artcraft.md) defines proposed cross-application work separately from Paper parity. PaperCraft uses MIT, an option also offered by the native Craft apps; license alignment does not imply implemented adapters or official suite membership. New files use `.papercraft`; legacy `.crumbs` documents remain compatible with the unchanged version 1 schema.
+
+## Reliability and SVG increment — 18 October 2026
+
+Baseline: `bc3c52bf75491510a7d5a7515a5dce5c0bb12f1d`. Implemented on `codex/reliability-svg-exchange`.
+
+- **Preservation:** close decisions run in `eframe::App::logic`, which runs while hidden/minimized. Dirty close cancels termination, restores/focuses the window and shows the existing Save/Discard/Cancel prompt. macOS installs `craft-quit`'s menu, pinned at `82a24b006eefa036b43c09a67fb9a3fbd17ffe63`, so Quit reaches that decision. The crate's compatible egui version and MIT option were checked before adoption; no other Craft architecture is imported.
+- **Transactions:** release coordinates apply before the gesture commits. Shortcuts arriving with release run after that commit; Undo restores the complete gesture and Delete gets its own history step. Valid long Unicode layer names duplicate within the 256-byte UTF-8 limit.
+- **Exchange:** choosing SVG flushes the current property transaction, serializes the authoritative Document and atomically replaces the destination only on success. Export does not clear the source dirty state or modify its history. The committed fixture covers overlap, transparency, radii, hidden layers, clipping and multilingual text; both installed target importers/renderers were exercised.
+- **Compatibility/rollback:** no document fields, version, extension behavior or recent-file paths change. Existing `.crumbs` and `.papercraft` v1 files remain readable by the baseline implementation. SVG is derived output and can be discarded/regenerated; the source remains editable. Rolling back application code requires no document/data migration.
+
+Acceptance: focused failing regressions first, then locked Rust tests, formatting, warnings-denied Clippy, optimized native build, actual native screenshots, model create→edit→undo/redo→save→reopen→HTML/SVG export, and target-app importer/model/render inspection. The [verification record](verification.md) states which input was simulated and which platform/file-dialog interactions remain untested. Work stops at this contract; hierarchy, images, richer typography and automation require later slices.

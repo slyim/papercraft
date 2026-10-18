@@ -24,15 +24,15 @@ cargo run --locked -- /path/to/design.papercraft
 
 Verified locally on Apple Silicon macOS with Rust 1.99.1. A prior Linux aarch64 rendering check is recorded in the verification notes; Linux release builds, Windows and Intel macOS remain unverified. The first build downloads and compiles the locked dependencies; Node.js is unnecessary for the application.
 
-The first slice includes one artboard, rectangle/text layers, a layer list and property inspector, dragging, bottom-right resizing, pan/zoom, ordering, hide/lock, undo/redo, validated `.papercraft` JSON files, and standalone HTML export. New/Open/Close prompt before discarding unsaved changes. Save writes a temporary file before replacing the destination.
+The editor includes one artboard, rectangle/text layers, a layer list and property inspector, dragging, bottom-right resizing, pan/zoom, ordering, hide/lock, undo/redo, validated `.papercraft` JSON files, and standalone HTML/SVG export. New/Open/Close prompt before discarding unsaved changes. macOS Quit uses the same preservation decision, including while minimized. Save writes a temporary file before replacing the destination.
 
 PaperCraft was previously named Crumbs. Existing `.crumbs` documents still open and save in place; Save As defaults to `.papercraft`. The document schema remains version 1, so both extensions contain the same format. Recent-file history continues to use the legacy Crumbs configuration folder so both versions retain access to it. The older v0.1.0 release remains available under its original name.
 
 The window has a Dashboard tab and one document tab. The dashboard lists recently opened and saved files (paths only, stored in a local `recents.json` under the platform configuration folder), with search, grid/list views, document thumbnails and New file. The editor has a file menu on the document name, a Pages/Layers panel, a tool rail, a zoom menu, Export, and an inspector with page color, artboard and layer properties.
 
-Tools: **V** select, **H** hand, **R** rectangle, **T** text. With a creation tool, click inside the artboard to place a layer or drag to size it; the tool then returns to selection. **Esc** leaves a tool, then clears the selection. **F** fits the artboard, arrow keys move a selection, and **Delete** removes an unlocked layer. Command/Ctrl shortcuts cover New, Open, Save, Undo, Redo, Duplicate and dashboard search. The file menu lists Save As, Export HTML, shortcuts and Close file.
+Tools: **V** select, **H** hand, **R** rectangle, **T** text. With a creation tool, click inside the artboard to place a layer or drag to size it; the tool then returns to selection. **Esc** leaves a tool, then clears the selection. **F** fits the artboard, arrow keys move a selection, and **Delete** removes an unlocked layer. Command/Ctrl shortcuts cover New, Open, Save, Undo, Redo, Duplicate and dashboard search. The file menu lists Save As, Export HTML/SVG, shortcuts and Close file; the Export button also offers both formats.
 
-HTML export uses positioned rectangles and text. Browser typography can differ from egui. Nested layouts, images, SVG, Paper file compatibility, arbitrary CSS editing, collaboration and a local MCP interface are deferred.
+HTML export uses positioned rectangles and wrapped text. SVG exports the artboard background, visible rectangles and editable plain text with explicit line breaks, alpha and clipping. It excludes the surrounding page color and does not reproduce automatic wrapping. Receiving applications resolve fonts; typography and glyph coverage differ from egui. A committed exchange fixture was imported and rendered in VectorCraft 0.13.1 and FigCraft 0.7.0; this is bounded exchange, not a lossless document round trip. Nested layouts, image/vector editing, SVG import, Paper file compatibility, arbitrary CSS editing, collaboration and a local MCP interface are deferred.
 
 ## Development and verification
 
@@ -41,12 +41,14 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked --example verify_native
-# Other states and sizes (editor, selected, tool, dashboard, list, empty):
+# Other states and sizes (editor, selected, tool, exchange, export, quit, dashboard, list, empty):
 cargo run --locked --example verify_native -- target/verification dashboard 960x640
 cargo run --locked --example verify_native -- target/verification selected 1470x922 hover=90,305
+cargo run --locked --example verify_native -- target/verification/exchange exchange
+cargo run --locked --example verify_native -- target/verification/quit quit 960x640
 ```
 
-The native verification example opens a real egui window, captures the renderer output, saves and reopens the starter document, exports HTML, and closes its own window. Outputs are ignored under `target/verification/`. The model and simulated-input tests cover history, validation, file preservation and editing gestures. Native file-dialog interactions still need a manual check.
+The native verification example opens a real egui window and captures stable renderer output. A separate model preflight creates/edits/undoes/redoes/saves/reopens/exports HTML and SVG; the `quit` scenario uses simulated menu/minimize dispatch through the actual native event loop. Outputs are ignored under `target/verification/`. Model and simulated-input tests cover history, validation, file preservation and editing gestures. Native file-dialog clicks and physical keyboard Quit still need a manual check.
 
 - [Evidence-to-implementation process and feature contracts](docs/implementation-process.md)
 - [Verification record](docs/verification.md)
@@ -56,7 +58,7 @@ The native verification example opens a real egui window, captures the renderer 
 
 PaperCraft is an independently maintained companion project targeting interoperability with the [Craft app ecosystem](https://getartcraft.com/apps). It is not an official ArtCraft app or currently included in Craft Launcher.
 
-The [integration plan](docs/artcraft.md) starts with SVG exchange for VectorCraft and FigCraft, then PNG/image exchange for PhotoCraft and motion tools, followed by shared command-based automation. These integrations are planned; the current release exports HTML only. The plan records the upstream interfaces, shared Rust libraries, acceptance checks and launcher enrollment requirements.
+The [integration plan](docs/artcraft.md) records the implemented SVG exchange, then proposes PNG/image exchange and shared command-based automation. The [source review](docs/craft-source-review.md) pins inspected Craft revisions and licenses. macOS uses the audited `craft-quit` library for native Quit handling; PaperCraft retains its document model, atomic file writer, Phosphor controls and branding. The [ranked gap assessment](docs/gap-assessment.md) separates current behavior from proposals.
 
 ## License
 

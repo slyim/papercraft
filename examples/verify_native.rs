@@ -1,7 +1,7 @@
 use eframe::egui;
 use papercraft::{
     app::{PaperCraftApp, Tool, View},
-    document::{Document, atomic_write},
+    document::{Document, Editor, NodeKind, atomic_write},
     recents::Recents,
 };
 use std::path::PathBuf;
@@ -11,18 +11,48 @@ struct NativeCheck {
     output: PathBuf,
     frames: usize,
     hover: Option<egui::Pos2>,
+    quit_check: bool,
+    export_menu: bool,
 }
 
 impl eframe::App for NativeCheck {
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        eframe::App::logic(&mut self.app, ctx, frame);
+    }
+
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if let Some(pos) = self.hover {
             raw_input.events.push(egui::Event::PointerMoved(pos));
+        }
+        if self.export_menu && (self.frames == 2 || self.frames == 3) {
+            let pos = egui::pos2(ctx.content_rect().right() - 42.0, 65.0);
+            raw_input.events.push(egui::Event::PointerMoved(pos));
+            raw_input.events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: self.frames == 2,
+                modifiers: egui::Modifiers::NONE,
+            });
         }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.show(ui);
         self.frames += 1;
+        if self.quit_check && self.frames == 2 {
+            let before = self.app.editor.document.clone();
+            self.app.editor.document.name = "Unsaved native quit check".into();
+            self.app.editor.commit(before).unwrap();
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            #[cfg(target_os = "macos")]
+            assert!(craft_quit::on_menu_event(
+                ui.ctx(),
+                craft_quit::QUIT_MENU_ID
+            ));
+            #[cfg(not(target_os = "macos"))]
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         if self.frames == 6 {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
@@ -55,6 +85,11 @@ impl eframe::App for NativeCheck {
                 "Screenshot contains no visible light content"
             );
             println!("Native rendering verified: {}", self.output.display());
+            if self.quit_check {
+                assert_eq!(self.app.editor.document.name, "Unsaved native quit check");
+                self.app.editor.undo(); // Restore the saved state before ending this check.
+                println!("Unsaved document survived simulated native Quit/minimize dispatch.");
+            }
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         assert!(
@@ -66,7 +101,7 @@ impl eframe::App for NativeCheck {
 }
 
 /// Usage: `verify_native [directory] [scenario] [WIDTHxHEIGHT] [hover=X,Y]`.
-/// Scenarios: `editor` (default), `selected`, `tool`, `dashboard`, `list`, `empty`.
+/// Scenarios: `editor` (default), `selected`, `tool`, `exchange`, `export`, `quit`, `dashboard`, `list`, `empty`.
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let directory = args
@@ -85,7 +120,37 @@ fn main() -> eframe::Result {
         .and_then(|s| s.split_once(','))
         .and_then(|(x, y)| Some(egui::pos2(x.parse().ok()?, y.parse().ok()?)));
     std::fs::create_dir_all(&directory).expect("Cannot create verification directory");
-    let document = Document::example();
+    // Model lifecycle check, separate from native UI interaction.
+    let mut editor = Editor::new(Document::default());
+    editor.add(NodeKind::Text).unwrap();
+    let before = editor.document.clone();
+    editor.document.nodes[0].text = "İstanbul <&> 第二行".into();
+    editor.commit(before.clone()).unwrap();
+    let edited = editor.document.clone();
+    editor.undo();
+    assert_eq!(editor.document, before);
+    editor.redo();
+    assert_eq!(editor.document, edited);
+    let lifecycle = directory.join("lifecycle.papercraft");
+    editor.document.save(&lifecycle).unwrap();
+    let reopened = Document::load(&lifecycle).unwrap();
+    assert_eq!(reopened, edited);
+    atomic_write(
+        &directory.join("lifecycle.html"),
+        reopened.export_html().unwrap().as_bytes(),
+    )
+    .unwrap();
+    atomic_write(
+        &directory.join("lifecycle.svg"),
+        reopened.export_svg().unwrap().as_bytes(),
+    )
+    .unwrap();
+    println!("Model create/edit/undo/redo/save/reopen/HTML+SVG export verified.");
+    let document = if scenario == "exchange" {
+        serde_json::from_str(include_str!("../tests/fixtures/svg-exchange.papercraft")).unwrap()
+    } else {
+        Document::example()
+    };
     document
         .save(&directory.join("starter.papercraft"))
         .expect("Cannot save starter document");
@@ -98,6 +163,11 @@ fn main() -> eframe::Result {
         document.export_html().unwrap().as_bytes(),
     )
     .expect("Cannot export starter HTML");
+    atomic_write(
+        &directory.join("starter.svg"),
+        document.export_svg().unwrap().as_bytes(),
+    )
+    .expect("Cannot export starter SVG");
     let output = if scenario == "editor" && args.len() < 3 {
         directory.join("papercraft-desktop.png")
     } else {
@@ -177,12 +247,19 @@ fn main() -> eframe::Result {
         "PaperCraft verification",
         options,
         Box::new(move |cc| {
+            #[cfg(target_os = "macos")]
+            craft_quit::install_app_menu(&cc.egui_ctx, "PaperCraft verification")?;
             PaperCraftApp::configure(&cc.egui_ctx);
+            // Capture stable menu/modal states rather than a partially faded frame.
+            cc.egui_ctx
+                .global_style_mut(|style| style.animation_time = 0.0);
             Ok(Box::new(NativeCheck {
                 app,
                 output,
                 frames: 0,
                 hover,
+                quit_check: scenario == "quit",
+                export_menu: scenario == "export",
             }))
         }),
     )

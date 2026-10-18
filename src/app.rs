@@ -25,6 +25,12 @@ enum Intent {
     Close,
 }
 
+#[derive(Clone, Copy)]
+enum ExportFormat {
+    Html,
+    Svg,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
     Dashboard,
@@ -342,24 +348,44 @@ impl PaperCraftApp {
         }
     }
 
-    fn export(&mut self) {
+    fn export(&mut self, format: ExportFormat) {
         self.flush_properties();
+        let (label, extension) = match format {
+            ExportFormat::Html => ("HTML", "html"),
+            ExportFormat::Svg => ("SVG", "svg"),
+        };
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("HTML", &["html"])
-            .set_file_name(format!("{}.html", self.editor.document.name))
+            .add_filter(label, &[extension])
+            .set_file_name(format!("{}.{extension}", self.editor.document.name))
             .save_file()
         else {
             return;
         };
-        match self
-            .editor
-            .document
-            .export_html()
-            .and_then(|html| atomic_write(&path, html.as_bytes()))
-        {
+        let data = match format {
+            ExportFormat::Html => self.editor.document.export_html(),
+            ExportFormat::Svg => self.editor.document.export_svg(),
+        };
+        match data.and_then(|data| atomic_write(&path, data.as_bytes())) {
             Ok(()) => self.status = format!("Exported {}", path.display()),
             Err(error) => self.status = error,
         }
+    }
+
+    fn export_menu(&mut self, ui: &mut egui::Ui) {
+        for (label, format) in [
+            ("Export HTML…", ExportFormat::Html),
+            ("Export SVG…", ExportFormat::Svg),
+        ] {
+            if ui.button(label).clicked() {
+                ui.close();
+                self.export(format);
+            }
+        }
+        ui.label(
+            RichText::new("SVG keeps explicit text lines; fonts may differ.")
+                .small()
+                .color(TEXT_DIM),
+        );
     }
 
     fn undo(&mut self) {
@@ -483,11 +509,8 @@ impl PaperCraftApp {
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.dirty() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.request(Intent::Close, &ctx);
-        }
-        if self.pending.is_none() && !ctx.input(|i| i.pointer.any_down()) {
+        let finish_gesture_first = self.drag.is_some() || self.creation.is_some();
+        if !finish_gesture_first && self.pending.is_none() && !ctx.input(|i| i.pointer.any_down()) {
             self.shortcuts(&ctx);
         }
         let title = if self.document_open {
@@ -510,6 +533,10 @@ impl PaperCraftApp {
             self.dashboard(ui, &ctx);
         } else {
             self.editor_view(ui, &ctx);
+        }
+
+        if finish_gesture_first && self.pending.is_none() && !ctx.input(|i| i.pointer.any_down()) {
+            self.shortcuts(&ctx);
         }
 
         if let Some(intent) = self.pending.clone() {
@@ -711,10 +738,7 @@ impl PaperCraftApp {
             ui.close();
             self.save_document(true);
         }
-        if item(ui, true, "Export HTML…", "") {
-            ui.close();
-            self.export();
-        }
+        self.export_menu(ui);
         ui.separator();
         let can_undo = self.editor.can_undo() || self.property_before.is_some();
         if item(ui, can_undo, "Undo", &format!("{command}Z")) {
@@ -1030,17 +1054,14 @@ impl PaperCraftApp {
             |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.add_space(12.0);
-                if ui
+                let export = ui
                     .add(
                         egui::Button::new(RichText::new("Export").size(BODY).color(TEXT))
                             .fill(CONTROL)
                             .min_size(vec2(52.0, ROW)),
                     )
-                    .on_hover_text("Export HTML")
-                    .clicked()
-                {
-                    self.export();
-                }
+                    .on_hover_text("Export artboard as HTML or SVG");
+                egui::Popup::menu(&export).show(|ui| self.export_menu(ui));
                 let zoom = ui
                     .add(
                         egui::Button::new(
@@ -1527,7 +1548,7 @@ impl PaperCraftApp {
                     });
                 }
             }
-            if response.dragged()
+            if (response.dragged() || response.drag_stopped())
                 && let (Some(drag), Some(pointer)) = (&self.drag, pointer)
             {
                 let delta = (pointer - drag.start) / self.zoom;
@@ -1767,6 +1788,18 @@ fn section_toggle(
 }
 
 impl eframe::App for PaperCraftApp {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.dirty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.request(Intent::Close, ctx);
+        }
+        #[cfg(target_os = "macos")]
+        craft_quit::on_close_request(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
     }

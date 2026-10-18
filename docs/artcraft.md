@@ -1,8 +1,22 @@
 # ArtCraft interoperability
 
-18 October 2026. Status: proposed implementation plan; repository licensing and links are established. PaperCraft is independently maintained, with no official ArtCraft affiliation or launcher enrollment.
+18 October 2026. Status: the first bounded SVG export slice is implemented and checked in installed VectorCraft/FigCraft; later slices remain proposals. PaperCraft is independently maintained, with no official ArtCraft affiliation or launcher enrollment.
 
-PaperCraft provides the local interface-design canvas and HTML handoff. Other applications can provide image editing, vector illustration, publishing and motion workflows. The current PaperCraft release has rectangle/text layers and HTML export; SVG, PNG export, image layers, CLI automation and MCP remain unimplemented.
+PaperCraft provides the local interface-design canvas, HTML handoff and SVG export of its current rectangle/text artboard. Other applications can provide image editing, vector illustration, publishing and motion workflows. PNG export, image layers, CLI automation and MCP remain unimplemented.
+
+## Current source review
+
+The [18 October source review](craft-source-review.md) inspects current PhotoCraft, VectorCraft, FigCraft, DesignCraft, Craft Launcher and craft-libs source, with exact revisions, model/command/history/rendering/persistence/accessibility boundaries and license checks. The reviewed heads match the earlier references below except VectorCraft, now [`cdba0aac03f83bbc633f5e2aa9500354648938d3`](https://github.com/storytold/vectorcraft/tree/cdba0aac03f83bbc633f5e2aa9500354648938d3). These are source observations; installed releases need separate runtime checks.
+
+- SVG is a concrete exchange surface: VectorCraft and FigCraft import editable primitives and text; FigCraft represents clipping with masks. Explicit text baselines, XML escaping, alpha and paint order need a fixture. Fonts and wrapping differ between renderers. Their native document formats are not interchangeable with `.papercraft`.
+- PhotoCraft's SVG open path outlines text and rasterizes clipped/effected content; it does not export SVG. DesignCraft places SVG as a graphic, rasterizes its screen preview and uses vectors for PDF. These can support later raster/publishing workflows without claiming editable document round trips.
+- Shared crates use `MIT OR Apache-2.0`; egui controls target 0.36 and Rust 1.95. PaperCraft's existing model, atomic writer and Phosphor controls cover the first exchange slice. The current reliability work adopts only macOS `craft-quit` at reviewed revision `82a24b006eefa036b43c09a67fb9a3fbd17ffe63`, with its MIT notice; no SVG dependency is added. Craft branding has separate restrictions and is not adopted.
+- Native source conventions worth retaining are one command path, explicit interaction transactions, selection restored with history, view transforms separate from document geometry, bounded parsers and render caches. They do not require a new multi-crate architecture for the current editor.
+- The macOS `craft-quit` integration intercepts Quit through PaperCraft's close/unsaved-work handling. The verification record distinguishes demonstrated PaperCraft behavior from the upstream Touch Bar teardown report, which was not reproduced on this hardware.
+
+The [verification record](verification.md) distinguishes actual imports/renders from source inspection and records the implementation status of the selected slice.
+
+**Bounded SVG exchange verified:** PaperCraft's rectangle/text fixture was opened in installed VectorCraft 0.13.1 and FigCraft 0.7.0. Their actual document models retain the 640×400 drawing, paint order, rounded geometry, transparency, clipping and editable multiline Unicode text. Offscreen renders and native-window screenshots were inspected; font metrics differ. FigCraft names imported layers from SVG IDs. The [source review's runtime record](craft-source-review.md#runtime-boundary) records executable/fixture hashes, assertions, evidence paths and limits. Target editing/resave, PhotoCraft/DesignCraft import and native-format round trips remain unverified.
 
 ## Verified upstream interfaces
 
@@ -17,12 +31,12 @@ These are observations from public repository documentation and source, not runt
 
 | Slice | Intended workflow | Acceptance check |
 |---|---|---|
-| 1. SVG export | Export the existing artboard's rectangles and text for VectorCraft/FigCraft; keep `.papercraft` as the editing source. Add one export path beside HTML, reusing document validation and atomic writes. | A fixture with overlapping rectangles, corner radii, transparency, hidden layers and Unicode text opens in the target apps with the expected size and order. Escape XML correctly. Document font substitution, wrapping and clipping differences; do not promise identical typography. |
+| 1. SVG export — implemented | Export the existing artboard's visible rectangles and explicit text lines beside HTML, using the authoritative document, validation and atomic writes. Keep `.papercraft` as the editing source. | `tests/fixtures/svg-exchange.papercraft` was exported by PaperCraft and opened in installed VectorCraft 0.13.1/FigCraft 0.7.0. Imported model assertions and inspected native/offscreen images establish the fixture's 640×400 size, paint order, radii, alpha, hidden-layer omission, multiline Unicode text and text clipping. Exact typography, automatic wrapping, art outside the root viewport, target editing/resave and round trips remain unverified or unsupported. |
 | 2. Raster exchange | Add artboard-only PNG export, then PNG/JPEG image placement. PhotoCraft can refine images and return a flattened asset; LightCraft can supply developed images. FilmCraft/EffectCraft can use exported title cards and overlays. | Check pixel dimensions, alpha and colour interpretation independently of viewport zoom. Choose image storage and size limits before changing the document format. Save/reopen preserves image placement; rejected imports leave the open document unchanged. Replacing an image is one undo step. |
 | 3. Layout and PDF handoff | Use SVG/PNG placement for publishing. Evaluate an explicit VectorCraft conversion step for PDF before implementing another PDF writer. | Open a test export in DesignCraft and PdfCraft, verify page dimensions and visible content, and state whether text and layers remain editable. Never label a flattened export as a document round trip. |
 | 4. CLI and MCP | Route a small Rust command surface through the existing `Editor`, then expose inspect/export and bounded edits over stdio. Agents can coordinate PaperCraft with each Craft app's CLI/MCP server. | The UI and commands produce the same document and history. Invalid commands leave state unchanged; one edit batch has one undo step. Verify discovery, errors and file access boundaries before adding external-app adapters. |
 
-Complete and verify each slice before expanding it. The first proposed implementation is SVG export, not native-format conversion or a suite-wide plugin framework. PaperCraft reads both `.papercraft` and legacy `.crumbs` documents. `.figcraft`, `.vectorcraft` and `.pcraft` files are not currently PaperCraft inputs.
+Complete and verify each slice before expanding it. SVG export is the first implemented exchange; native-format conversion and a suite-wide plugin framework remain proposals. PaperCraft reads both `.papercraft` and legacy `.crumbs` documents. `.figcraft`, `.vectorcraft` and `.pcraft` files are not currently PaperCraft inputs.
 
 ## Shared Rust components
 
@@ -34,7 +48,7 @@ Complete and verify each slice before expanding it. The first proposed implement
 - Consider `craft-ui`, `craft-cms`, `craft-pdf` and `craft-print` only as the corresponding UI, colour, PDF or print requirement arrives. Keep PaperCraft' Phosphor icon choice and application identity.
 - [craft-fonts](https://github.com/storytold/craft-fonts/blob/a71c20e30af613287c504f7e685ca8fad77752bc/README.md) is an optional font source; font licenses remain separate from application licenses. Do not add the collection merely to match branding.
 
-No Craft crate is added by this repository-alignment change. Rust/egui remain the application stack; research JavaScript stays separate.
+The earlier repository-alignment change added no Craft crate. Current reliability work adopts only macOS `craft-quit` at the reviewed immutable revision above. Rust/egui remain the application stack; research tooling stays separate.
 
 ## Distribution and official inclusion
 
@@ -46,6 +60,8 @@ The [launcher release parser](https://github.com/storytold/craft-launcher/blob/9
 
 Shared [Craft release actions](https://github.com/storytold/craft-common-actions/blob/58076cf0ffb9cee7973d4bc6b523c8922b4471d2/README.md) can be evaluated once PaperCraft has the packaging inputs they require. License alignment alone does not establish a compatible build pipeline.
 
-## Unknowns and completion boundary
+## Earlier review boundary
 
 No Craft application was launched for this investigation. Cross-app rendering, text fidelity, native-format conversion, CLI/MCP interoperability and launcher installation are unverified. This change establishes licensing, repository references and an evidence-based roadmap; it does not implement those adapters or establish official membership.
+
+That paragraph records the earlier licensing/roadmap pass. The current [source review](craft-source-review.md) and [verification record](verification.md) supersede its coverage only where they explicitly record a completed check. Official affiliation, repository transfer and release publication remain outside scope.
