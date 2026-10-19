@@ -538,13 +538,19 @@ fn long_clicked_text_wraps_at_the_largest_width_instead_of_being_lost() {
     let node = app.editor.selected_node().unwrap().clone();
     assert_eq!(node.text, long, "Escape keeps the typed text");
     assert_eq!(node.width, MAX_COORDINATE);
-    assert!(node.height > placed.nodes[0].height, "Wrapped text grows taller");
+    assert!(
+        node.height > placed.nodes[0].height,
+        "Wrapped text grows taller"
+    );
     app.editor.document.validate().unwrap();
     assert_eq!(save_and_reopen(&app.editor.document).nodes[0], node);
 
     let edited = app.editor.document.clone();
     app.editor.undo();
-    assert_eq!(app.editor.document, placed, "One undo restores the placed text");
+    assert_eq!(
+        app.editor.document, placed,
+        "One undo restores the placed text"
+    );
     app.editor.redo();
     assert_eq!(app.editor.document, edited);
 }
@@ -559,7 +565,10 @@ fn tall_text_keeps_its_content_at_the_largest_height() {
     let tall = "line\n".repeat(400);
     edit_inline(&ctx, &mut app, &tall);
     let node = app.editor.selected_node().unwrap();
-    assert_eq!((node.text.as_str(), node.height), (tall.as_str(), MAX_COORDINATE));
+    assert_eq!(
+        (node.text.as_str(), node.height),
+        (tall.as_str(), MAX_COORDINATE)
+    );
     app.editor.document.validate().unwrap();
 }
 
