@@ -2,7 +2,7 @@
 
 ## Current parity — 19 October 2026
 
-Reviewed source: `6065d02` on `main`. Published v0.1.2: `40765dfc92fb85e721dda0c4ecbc2e4875bb2cd7`, 12 commits behind that source. The downloads do **not** include the later tool/tab, canvas/snapping and combined-integration work. This review changes documentation and removes an implementation-only test gate; it does not add editor features.
+Published [v0.1.3](https://github.com/slyim/papercraft/releases/tag/v0.1.3) is built from `6dd5adc3cc0114debb8a958deb712b003fe8707b`. Downloads now include the integrated tab/tool/canvas features and the three editing fixes, with DMG, Windows setup and Debian installers beside portable archives. The original review used `6065d02` and compared it with the older v0.1.2 download; those release-gap findings are superseded by this publication.
 
 Paper comparison uses the retained [workflow evidence](../research/paper/workflow-evidence.md): E1 describes the packaged shell, D1–D3 are vendor documentation, and R1 is read-only connector observation. No authenticated Paper edit/undo/export comparison was performed. A full-parity percentage would not be supportable.
 
@@ -19,22 +19,16 @@ Paper comparison uses the retained [workflow evidence](../research/paper/workflo
 
 Source anchors: [`Document`/`Node` and exporters](../src/document.rs), [tabs, tools, canvas and inline editing](../src/app.rs), [resize/snapping geometry](../src/snap.rs). Behavioral coverage is in [`tests/tools.rs`](../tests/tools.rs), [`tests/canvas.rs`](../tests/canvas.rs), [`tests/arrangement.rs`](../tests/arrangement.rs) and the tab checks in `src/app.rs`.
 
-Current macOS checks and limits are in [the review verification record](verification.md#parity-and-branch-review-19-october-2026). A successful native `text` invocation did not visibly exercise text placement, so it is not counted as new proof of native text editing.
+Current local/native and cross-platform release checks are in [the v0.1.3 publication record](verification.md#v013-release-publication-19-october-2026). Native text/marquee checks now assert actual state and reject unsupported scenario names; scripted native input still does not establish physical-input, IME or Paper runtime parity.
 
-Confirmed reliability defects are filed, **not fixed by this review**: cross-tab inline undo imports another document's text ([#12](https://github.com/slyim/papercraft/issues/12)); valid-length text is discarded when automatic geometry exceeds the limit ([#10](https://github.com/slyim/papercraft/issues/10)); deleted inherited token IDs can bind new text to an unrelated replacement ([#11](https://github.com/slyim/papercraft/issues/11)). All three were reproduced through real app/model paths with simulated egui input. Prioritize these before new feature work and the next preview.
+Resolved in v0.1.3 through PRs [#13](https://github.com/slyim/papercraft/pull/13) and [#14](https://github.com/slyim/papercraft/pull/14): cross-tab inline undo contamination ([#12](https://github.com/slyim/papercraft/issues/12)), valid text lost at automatic geometry limits ([#10](https://github.com/slyim/papercraft/issues/10)), and deleted inherited token-ID reuse ([#11](https://github.com/slyim/papercraft/issues/11)). Their original reproductions remain in the dated verification record, followed by the fixing regressions and native proof.
 
 ### Agent-ready backlog
 
-Each issue records evidence, entry points, scope/non-goals, dependencies and observable acceptance criteria. These are proposed improvements, **not implemented features**.
+Each remaining issue records evidence, entry points, scope/non-goals, dependencies and observable acceptance criteria. Completed release/infrastructure work: [#1 native interaction proof](https://github.com/slyim/papercraft/issues/1), [#2 automatic PR/main checks](https://github.com/slyim/papercraft/issues/2), and [#3 the verified preview](https://github.com/slyim/papercraft/issues/3). The feature queue below remains proposed, not implemented.
 
 | Priority | Issue | Ownership / dependency |
 |---|---|---|
-| P1 | [#12 Isolate document-local inline undo state](https://github.com/slyim/papercraft/issues/12) | Stable per-document widget identity; no schema change |
-| P1 | [#10 Preserve text at automatic geometry limits](https://github.com/slyim/papercraft/issues/10) | Bounded layout and one-step history; no validation suppression |
-| P2 | [#11 Detach deleted inherited token bindings](https://github.com/slyim/papercraft/issues/11) | Preserve literal color through token deletion/history/ID reuse |
-| P1 | [#1 Native scenarios must prove their interaction](https://github.com/slyim/papercraft/issues/1) | Verification example; reject unknown names, establish text/marquee state |
-| P1 | [#2 Automatic PR/main Rust gates](https://github.com/slyim/papercraft/issues/2) | CI; current workflow is manual release-only |
-| P1 | [#3 Publish the integrated editor preview](https://github.com/slyim/papercraft/issues/3) | After #1/#2 and #10/#11/#12; existing five-platform packaging, no updater |
 | P1 | [#5 Artboard PNG export](https://github.com/slyim/papercraft/issues/5) | Existing primitives only; no schema or image-node dependency |
 | P1 | [#7 Nested frames and persistent grouping](https://github.com/slyim/papercraft/issues/7) | Own next schema/transform/upgrade contract; no flex or scene-engine rewrite |
 | P1 | [#9 Plain-text line-height and alignment](https://github.com/slyim/papercraft/issues/9) | Coordinate strict-schema changes with #7; no rich text/font-picker expansion |
@@ -42,7 +36,7 @@ Each issue records evidence, entry points, scope/non-goals, dependencies and obs
 | P2 | [#6 Creation snapping](https://github.com/slyim/papercraft/issues/6) | Reuse `Snapper`; no equal-gap or pixel-grid expansion |
 | P2 | [#8 Portable local image placement](https://github.com/slyim/papercraft/issues/8) | After #7 and #5 storage/raster contracts; no network/AI |
 
-PNG, CLI, creation snapping and CI can be developed independently, with one integration owner for shared export/UI files. Frame, typography and image work must not independently choose conflicting format versions. Preserve one authoritative `Document`/`Editor`, strict validation, transactional history and atomic output.
+PNG, CLI and creation snapping can be developed independently, with one integration owner for shared export/UI files. Frame, typography and image work must not independently choose conflicting format versions. Preserve one authoritative `Document`/`Editor`, strict validation, transactional history and atomic output.
 
 Deferred beyond this queue: licensed-font/fallback work, non-color tokens, flex, editable vectors/import, multiple artboards, PDF and live MCP. Comments, shaders and generation retain the evidence/scope prerequisites in the [tool rail plan](toolbar-plan.md). No cloud or collaboration expansion is authorized by this assessment.
 

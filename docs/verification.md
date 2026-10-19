@@ -406,3 +406,33 @@ Merged PR [#13](https://github.com/slyim/papercraft/pull/13), then retargeted/me
 - Automatic PR/main Rust checks use Linux, macOS and Windows. Manual release jobs build all five supported targets and exercise native text/selection/geometry/state cases on Linux/macOS before packaging.
 
 Physical input, native file-dialog choices, IME, screen readers and Windows editor interaction remain unverified. Installers are not notarization or signing services: macOS remains ad-hoc signed, Windows unsigned. Final CI/artifact/publication evidence is recorded separately below after the native jobs complete.
+
+## v0.1.3 release publication (19 October 2026)
+
+Published [PaperCraft v0.1.3](https://github.com/slyim/papercraft/releases/tag/v0.1.3), tagged at `6dd5adc3cc0114debb8a958deb712b003fe8707b`. The [five-platform release run](https://github.com/slyim/papercraft/actions/runs/39225731885) and [automatic three-platform checks](https://github.com/slyim/papercraft/actions/runs/39225729103) both completed successfully on that exact source.
+
+| Native target | Rust gates and optimized build | Native interaction checks | Installer checks |
+|---|---|---|---|
+| Linux x86_64 | Pass | Openbox/Xvfb/Mesa: text, marquee, resize, snapping, long-text, token inheritance, two-tab undo | Debian metadata/dependencies/ownership, extracted executable and complete notices |
+| Linux ARM64 | Pass | Same asserted native scenarios | Same Debian checks, native arm64 metadata |
+| macOS Apple Silicon | Pass | Same scenarios plus dirty Quit | DMG read-only mount, Applications link, signature and complete payload; ZIP/tar.gz checks |
+| macOS Intel | Pass | Same scenarios plus dirty Quit | Same DMG, signature and archive checks |
+| Windows x86_64 | Pass | Editor window not exercised | Actual per-user silent setup, executable/notices, HKCU registration, Start-menu target identity, uninstall and cleanup; portable ZIP |
+
+Rust gates are formatting, locked tests and warnings-denied Clippy. The local combined suite has 76 passing tests; each native job runs its complete supported suite. Application code and v1/v2 document compatibility are unchanged by the installer/bootstrap corrections.
+
+### Publication integrity
+
+- Downloaded all five successful CI artifacts. Their 12 installer/archive payloads match the emitted SHA-256 digests. The Windows manifest uses CRLF; the combined public `SHA256SUMS.txt` is normalized to LF for portable checksum tools.
+- Published **14 assets**: five installers, seven portable archives, `SHA256SUMS.txt`, and `LICENSE-MIT`. Previous releases/tags/assets were not replaced.
+- Downloaded the published release again into ignored `target/published-v0.1.3/`. `shasum -a 256 -c SHA256SUMS.txt` reports **OK for all 12 payloads**; the published MIT license is byte-identical to the repository license.
+
+### Build failures resolved before publication
+
+- The initial workflow exposed formatter output from the merged limit regressions that had not been staged. The already-formatted test changes were committed; no assertion or product behavior was removed.
+- Bare Xvfb could not honor the harness's native focus requests. Linux jobs now use a real Openbox window manager and a 1600×1000 display; the same strict native assertions pass.
+- A Chocolatey feed returned HTTP 504. Windows now fetches the official NSIS 3.11 binary endpoint, checks SHA-256 `38d49f8fe09b1c332b01d0940e57b7258f4447733643273a01c59959ad9d3b0a` before execution, and checks compiler version. The SourceForge landing page was rejected by that checksum guard; no mismatched bytes were executed.
+- Windows shortcut verification initially compared path spelling even though shell shortcuts normalize short/long Windows names. It now checks actual installed-file identity; the complete install/uninstall smoke passes.
+- One local release watcher lost its API connection; resuming the watcher observed the same successful run without restarting its jobs. Superseded incomplete builds were cancelled, not published.
+
+The upload action reports a non-blocking Node 20→24 runtime warning and succeeds. macOS remains ad-hoc signed/not notarized; Windows remains unsigned. Physical keyboard/trackpad, native file-dialog choices, IME, screen readers, Windows editor-window interaction and authenticated Paper equivalence remain unverified. No new Paper/Craft runtime research or npm/REA suite was run for this Rust/packaging release.
