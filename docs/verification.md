@@ -369,3 +369,18 @@ Branch `claude/fix-tab-text-isolation`, based on `1a5ba62`. Fixes [#12](https://
 | `cargo fmt`, `cargo clippy --all-targets`, `cargo test` | — | Clean; all suites pass |
 
 Not performed: native two-tab editing with physical input, IME, or the native Theme workflow; these remain open under [#1](https://github.com/slyim/papercraft/issues/1).
+
+## Automatic text geometry limits (19 October 2026)
+
+Branch `claude/text-geometry-limits`, stacked on `claude/fix-tab-text-isolation`. Fixes [#10](https://github.com/slyim/papercraft/issues/10).
+
+PaperCraft decision: automatically sized text never exceeds the document's 100,000-unit layer limit. Click-placed text wider than the limit takes the largest width and wraps there; content taller than the limit keeps the largest height and overflows the layer box. Inline input beyond the 100,000-byte text limit is shortened at a character boundary with a status message, so the commit cannot fail and discard the draft. Validation is unchanged.
+
+| Check | Before fix | After fix |
+|---|---|---|
+| `long_clicked_text_wraps_at_the_largest_width_instead_of_being_lost` (10,000 `W`, Escape, save/reopen, undo/redo) | Failed: text reverted | Passed |
+| `tall_text_keeps_its_content_at_the_largest_height` (400 lines at 512 pt) | Failed | Passed |
+| `text_beyond_the_byte_limit_is_shortened_not_discarded` | Failed | Passed |
+| `cargo clippy --all-targets`, `cargo test` | — | Clean; all suites pass |
+
+Not performed: native overflow rendering inspection; layout cost of 100,000-byte text per keystroke was not measured.

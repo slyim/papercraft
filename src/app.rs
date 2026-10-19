@@ -1,6 +1,6 @@
 use crate::document::{
-    Align, Axis, ColorTarget, ColorToken, Document, Editor, IdSet, NEW_TEXT, Node, NodeKind,
-    TextStyle, atomic_write,
+    Align, Axis, ColorTarget, ColorToken, Document, Editor, IdSet, MAX_COORDINATE, MAX_TEXT_BYTES,
+    NEW_TEXT, Node, NodeKind, TextStyle, atomic_write,
 };
 use crate::recents::Recents;
 use crate::snap::{self, Frame, Guide, Handle, SNAP_DISTANCE, Side, Snapper};
@@ -3052,15 +3052,30 @@ impl PaperCraftApp {
                 .desired_rows(1),
         );
         if response.changed() {
+            if node.text.len() > MAX_TEXT_BYTES {
+                let mut end = MAX_TEXT_BYTES;
+                while !node.text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                node.text.truncate(end);
+                self.status = "Text is limited to 100,000 bytes".into();
+            }
             let painter = ui.painter();
             if edit.auto_width {
+                // Content wider than the largest layer wraps at that width instead.
                 let size = text_size(painter, &node.text, node.font_size, None);
-                node.width = size.x.max(1.0);
-                node.height = size.y.max(1.0);
+                node.width = size.x.clamp(1.0, MAX_COORDINATE);
+                node.height = if size.x > MAX_COORDINATE {
+                    text_size(painter, &node.text, node.font_size, Some(MAX_COORDINATE)).y
+                } else {
+                    size.y
+                };
             } else {
                 let size = text_size(painter, &node.text, node.font_size, Some(node.width));
                 node.height = node.height.max(size.y);
             }
+            // Taller content overflows the layer at the largest height.
+            node.height = node.height.clamp(1.0, MAX_COORDINATE);
         }
         if !edit.start && !response.has_focus() {
             self.flush_properties();
