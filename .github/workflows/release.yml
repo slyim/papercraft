@@ -48,8 +48,17 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install nsis --version 3.11 --yes --no-progress
-          "${env:ProgramFiles(x86)}\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $installer = Join-Path $env:RUNNER_TEMP 'nsis-3.11-setup.exe'
+          $directory = Join-Path $env:RUNNER_TEMP 'nsis-3.11'
+          Invoke-WebRequest -Uri 'https://sourceforge.net/projects/nsis/files/NSIS%203/3.11/nsis-3.11-setup.exe/download' -OutFile $installer
+          # Digest from microsoft/winget-pkgs: manifests/n/NSIS/NSIS/3.11/NSIS.NSIS.installer.yaml.
+          $expected = '38D49F8FE09B1C332B01D0940E57B7258F4447733643273A01C59959AD9D3B0A'
+          if ((Get-FileHash -Algorithm SHA256 $installer).Hash -ne $expected) { throw 'NSIS installer checksum mismatch' }
+          $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$directory" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "NSIS installation failed: $($process.ExitCode)" }
+          $compiler = Join-Path $directory 'makensis.exe'
+          if ((& $compiler /VERSION) -ne 'v3.11') { throw 'Unexpected NSIS compiler version' }
+          $directory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install Linux build and rendering libraries
         if: runner.os == 'Linux'
         run: |
