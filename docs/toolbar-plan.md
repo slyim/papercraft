@@ -41,7 +41,7 @@ D3 is a refetch of the [support](https://paper.design/docs/support), [SVG](https
 
 These are model changes several tools need. They come before the tools that depend on them.
 
-- **P1 Tool registry.** Replace the hard-coded rail groups in `src/app.rs` (`tool_rail`) with one table: tool, glyph, label, shortcut, enabled state, creation kind. Shortcut handling and the rail read the same table. Unimplemented tools are absent, not shown disabled, so the rail never advertises a missing feature.
+- **P1 Tool registry (implemented in T1).** `TOOLS` in `src/app.rs` supplies the implemented tool, glyph, label, shortcut and rail group to both the rail and shortcut handling. Unimplemented tools are absent, so the rail never advertises a missing feature.
 - **P2 Hierarchy (format version 3).** Nodes gain an optional parent. Frames own ordered children; child geometry is relative to the parent. Needs upgrade from v1/v2 (flat list becomes children of the artboard), refusal by older readers, hit testing and paint order through the tree, and one-step undo for reparenting. Already ranked first in the [gap assessment](gap-assessment.md).
 - **P3 Strokes.** Pen paths need stroke color/width; add it to rectangles and frames at the same time so the inspector stays uniform. Color tokens bind strokes like fills.
 - **P4 Image nodes and PNG export.** Decoded size limits, embedded or sidecar storage, missing-file behavior. Needed by Create image and by shader export to HTML/SVG.

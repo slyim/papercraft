@@ -15,7 +15,7 @@ Mode: Operate. The user's explicit Paper reference fixes the surface structure: 
 
 ## Layout scale
 
-All shell geometry sits on a 4-point grid, defined once in `src/ui.rs`; `tests/design_grid.rs` rejects off-grid layout literals.
+All shell geometry uses the 4-point scale defined in `src/ui.rs`. Verify rendered control bounds and native screenshots; source-literal scans cannot establish layout correctness.
 
 - Spacing steps: 4, 8, 12, 16, 24, 32, 64. Hairlines are 1 pt.
 - Type: 11 pt captions and metadata, 12 pt body, 20 pt page headings. Icons: 12 pt in rows, tabs and fields; 16 pt on standalone buttons and the tool rail.

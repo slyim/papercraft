@@ -305,3 +305,51 @@ Source: merge `1399d45` combines local toolbar/tab/inspector commits `4435f9a` a
 ### Remaining verification limits
 
 Physical keyboard/mouse/trackpad input, IME composition, screen readers, native file-dialog choices, other operating systems and large documents with long text remain unverified for this combined build. Native screenshots and scripted input establish macOS rendering and gesture behavior, not Paper parity. Disabled inspector properties remain unavailable as described in the contract. Research tooling and release packaging were unchanged; their suites and cross-platform CI were not rerun.
+
+## Parity and branch review (19 October 2026)
+
+Reviewed application source: `6065d02`. The review updates current capability/agent-handoff documentation and deletes the 105-line implementation-only `tests/design_grid.rs` scanner and its two tests. Native layout/control-bound regressions remain; production application code, dependencies and formats are unchanged. Historical counts and claims above describe their original revisions.
+
+### Branch disposition
+
+After `git fetch --prune origin`, every non-main branch tip was an ancestor of `main`; no commit was unique to those refs. `git log --all --not main --oneline --decorate=full` returned no commits. The following deletions completed successfully; their original commits remain reachable from main and no release tag was deleted.
+
+| Deleted ref | Tip | Preserved integration |
+|---|---|---|
+| Local `backup/main-pre-merge` | `40f825d` | First-parent history of merge `1399d45` |
+| Local `backup/origin-main-pre-merge` | `34646a0` | Second parent of `1399d45` |
+| Local `codex/release-downloads` | `7908eee` | Release history through `40765df` / `7220e9d` |
+| Local `codex/reliability-svg-exchange` | `bc3c52b` | Main ancestry; substantive reliability/SVG commit `5f004a9` is also retained |
+| Local `codex/theme-tokens-arrangement` | `1ecd3b8` | Common ancestry of release and canvas work |
+| Remote `claude/fervent-feynman-vchls5` | `34646a0` | Exact merge input; remote deletion used a force-with-lease guard |
+
+No application function was proven obsolete. Legacy `.crumbs`, v1/v2 readers and the Crumbs recents location remain supported and actively used, not deleted based on age.
+
+### Checks exercised
+
+- `cargo fmt --check`: pass.
+- `cargo test --locked`: **70 pass** (9 unit + 61 integration), zero failures. The prior combined-build total of 72 included the two removed source-scanner tests. Retained cases cover tabs/file preservation, text tools, gestures, geometry, tokens, history, save compatibility and exports.
+- `cargo clippy --locked --all-targets -- -D warnings`: pass.
+- Actual macOS native windows: `cargo run --locked --example verify_native -- target/verification/parity-review <scenario> <size>` passed for `resize`, `snapping` and `quit` at 960×640. Screenshots were opened: resized geometry/inspector, snapped edges/guides and the dirty-Quit preservation prompt were visible. Resize asserted `[100, 100, 160, 140]`; snapping asserted `[200, 100, 100, 100]`; simulated native Quit/minimize preserved the unsaved document.
+- After removing the scanner, native `resize` at 960×640 and `theme` at 1380×860 also passed under `target/verification/parity-review-final/`; both screenshots were opened. Theme controls, resolved bound colors and inspector layout rendered.
+- Every native invocation completed the example's model create/edit/undo/redo/save/reopen/HTML+SVG lifecycle and token/arrangement/export assertions. This is model-workflow proof, not physical input.
+
+### Confirmed defects, not fixes
+
+A throwaway Rust example, `cargo run --locked --example review_repro`, drove `PaperCraftApp::show` using simulated egui events plus the real Editor setup/token APIs. Its final run reproduced all three defects below. The example was removed after investigation; issue bodies retain the triggers and acceptance requirements.
+
+| Issue | Observed result |
+|---|---|
+| [#12 Cross-tab inline undo](https://github.com/slyim/papercraft/issues/12) | Equal-ID text layers in separate tabs: undo in B changed `B-original` to `A-original` from A's widget history |
+| [#10 Automatic-size text loss](https://github.com/slyim/papercraft/issues/10) | 10,000 `W` characters produced width `261250`; Escape restored `New text`, width `117`, discarding the typed session |
+| [#11 Cached token-ID reuse](https://github.com/slyim/papercraft/issues/11) | After red-token deletion and blue-token creation, new text inherited `[10, 20, 200, 255]`, `Some(1)`, instead of the prior red literal |
+
+The first throwaway-harness attempt stopped because unconsumed egui texture deltas were not cleared; correcting the harness, following the existing headless-test convention, produced the observations above. This was not an application failure. Existing passing tests do not establish correctness for these newly demonstrated sequences.
+
+### Verification and release limits
+
+Native `text` at 1380×860 exited successfully, but its inspected screenshot showed only the starter layers and no newly placed text. This run is **not** counted as text-interaction proof; startup/focus cause remains unconfirmed. An unsupported scenario name also silently rendered the ordinary editor. [#1](https://github.com/slyim/papercraft/issues/1) requires unknown-name rejection and meaningful text/marquee postconditions.
+
+The only workflow is manually dispatched release packaging. Its latest successful [five-platform run](https://github.com/slyim/papercraft/actions/runs/39155293943) covers published v0.1.2 source `40765df`, not this integrated main. [#2](https://github.com/slyim/papercraft/issues/2) adds automatic gates; [#3](https://github.com/slyim/papercraft/issues/3) tracks a new verified preview after the defects and verification gaps are resolved.
+
+No new release, cross-platform build, physical-input/file-dialog/IME/screen-reader check, Paper runtime comparison, Craft import rerun or REA/npm tooling test was performed. Current parity and the prioritized issue/dependency queue are in the [gap assessment](gap-assessment.md#current-parity--19-october-2026).

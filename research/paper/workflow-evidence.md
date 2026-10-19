@@ -1,6 +1,8 @@
 # Paper workflow evidence
 
 18 October 2026, Europe/Istanbul. This supplements [the initial analysis](analysis.md); it does not replace its limitations. Proprietary material and raw connector responses remain in ignored `research/private/`. No Paper code, fonts, branding or assets were incorporated into PaperCraft.
+**Historical implementation boundary:** the implications and selected slice below describe the 18 October baseline, not current PaperCraft parity. Color-token binding, multi-selection, document tabs, inline text, marquee/group resize and edge/center snapping have since landed. Current conditional v1/v2 persistence and remaining gaps are recorded in the [current assessment](../../docs/gap-assessment.md). The Paper observations, source claims, hashes and unknowns below are unchanged.
+
 
 ## Identity and retained evidence
 

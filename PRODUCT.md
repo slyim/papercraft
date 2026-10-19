@@ -18,9 +18,9 @@ Create a free alternative to Paper for visual interface design. Use observed beh
 
 - Rust and egui own the application, including its document model and editor.
 - Use Phosphor Icons. The native integration is `egui-phosphor`; no React runtime is required.
-- Implemented behavior covers one artboard, text and rectangle nodes, layer controls, multi-selection with shared moves and align/distribute, named color tokens bound to layer, artboard and page colors, drag/resize, a property inspector, undo/redo, local documents and HTML/SVG export. SVG retains explicit text lines; fonts and automatic wrapping differ between renderers.
-- Documents with color tokens use format version 2; documents without them remain version 1. See `docs/document-format.md`. Spacing, radius and typography tokens, theme modes, marquee selection, group resize and snapping are not implemented.
-- Native egui painting is not a browser CSS engine. Layout fidelity, editable HTML/SVG import, vector/image layers, rich text, multiple artboards and MCP editing require later milestones.
+- Implemented behavior covers one artboard, text and rectangle nodes, independent document tabs, inline text and layer-name editing, layer controls, marquee/multi-selection, shared moves and align/distribute, named color tokens bound to layer, artboard and page colors, eight-way and group resize, edge/center snapping with guides, a property inspector, undo/redo, local documents and HTML/SVG export. SVG retains explicit text lines; fonts and automatic wrapping differ between renderers.
+- Documents with color tokens use format version 2; documents without them remain version 1. See `docs/document-format.md`. Spacing, radius and typography tokens, theme modes, nested frames and equal-gap/pixel snapping remain unimplemented.
+- Native egui painting is not a browser CSS engine. Layout fidelity, editable HTML/SVG import, vector/image layers, richer typography, multiple artboards and CLI/MCP editing require later milestones. Current source parity and agent-ready issues are tracked in `docs/gap-assessment.md`; download capabilities are bounded by their release revision.
 - No backend service or account is required for the first local editing workflow.
 
 ## Brand Commitments
@@ -33,7 +33,7 @@ The initial investigation is in `research/paper/analysis.md`. Its compact eviden
 
 ## Open Decisions
 
-Audience beyond the requesting user, platform release targets, collaboration and detailed agent workflows remain undecided.
+Audience beyond the requesting user, collaboration and detailed agent workflows remain undecided. The release targets are Linux x86_64/ARM64, macOS Apple Silicon/Intel and Windows x86_64.
 
 ## Ecosystem and License
 
