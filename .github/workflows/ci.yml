@@ -35,7 +35,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev xvfb xauth
+          sudo apt-get install -y pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev xvfb xauth openbox
       - name: Install the verified Rust toolchain
         run: |
           rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
@@ -54,9 +54,12 @@ jobs:
       - name: Verify Linux text and selection
         if: runner.os == 'Linux'
         run: |
-          for scenario in text marquee; do
-            xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 cargo run --locked --example verify_native -- target/verification/ci "$scenario" 960x640
-          done
+          xvfb-run -a -s "-screen 0 1600x1000x24" bash -e -c '
+            openbox &
+            for scenario in text marquee; do
+              LIBGL_ALWAYS_SOFTWARE=1 cargo run --locked --example verify_native -- target/verification/ci "$scenario" 960x640
+            done
+          '
       - name: Verify macOS text and selection
         if: runner.os == 'macOS'
         run: |
