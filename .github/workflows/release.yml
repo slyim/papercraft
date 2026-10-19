@@ -50,10 +50,12 @@ jobs:
         run: |
           $installer = Join-Path $env:RUNNER_TEMP 'nsis-3.11-setup.exe'
           $directory = Join-Path $env:RUNNER_TEMP 'nsis-3.11'
-          Invoke-WebRequest -Uri 'https://sourceforge.net/projects/nsis/files/NSIS%203/3.11/nsis-3.11-setup.exe/download' -OutFile $installer
+          curl.exe --fail --location --output $installer 'https://downloads.sourceforge.net/project/nsis/NSIS%203/3.11/nsis-3.11-setup.exe'
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS download failed' }
           # Digest from microsoft/winget-pkgs: manifests/n/NSIS/NSIS/3.11/NSIS.NSIS.installer.yaml.
           $expected = '38D49F8FE09B1C332B01D0940E57B7258F4447733643273A01C59959AD9D3B0A'
-          if ((Get-FileHash -Algorithm SHA256 $installer).Hash -ne $expected) { throw 'NSIS installer checksum mismatch' }
+          $actual = (Get-FileHash -Algorithm SHA256 $installer).Hash
+          if ($actual -ne $expected) { throw "NSIS installer checksum mismatch: $actual" }
           $process = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$directory" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "NSIS installation failed: $($process.ExitCode)" }
           $compiler = Join-Path $directory 'makensis.exe'
