@@ -318,7 +318,7 @@ def verify_windows_installer(installer, stage, version, work):
         script = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{escaped_link}'); $s.TargetPath"
         target = run_native(["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
                              "-Command", script], timeout=30, stdout=subprocess.PIPE, text=True).stdout.strip()
-        assert Path(target) == install / "papercraft.exe", "Shortcut target differs"
+        assert Path(target).samefile(install / "papercraft.exe"), f"Shortcut target differs: {target}"
     finally:
         try:
             uninstall()
