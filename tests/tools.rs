@@ -1,7 +1,7 @@
 use eframe::egui::{self, Event, Key, Modifiers, PointerButton, Pos2, Rect, pos2, vec2};
 use papercraft::{
     app::{PaperCraftApp, TOOLS, Tool, creation_rect},
-    document::{ColorTarget, Document, NEW_TEXT, NodeKind},
+    document::{ColorTarget, Document, MAX_COORDINATE, MAX_TEXT_BYTES, NEW_TEXT, NodeKind},
 };
 
 const SIZE: [f32; 2] = [1380.0, 860.0];
@@ -511,4 +511,66 @@ fn inherited_text_style_follows_a_token_that_still_exists() {
         .find(|n| n.id == placed)
         .unwrap();
     assert_eq!(node.fill, [0, 0, 0, 255], "New text stays bound");
+}
+
+fn save_and_reopen(document: &Document) -> Document {
+    let directory = std::env::temp_dir().join(format!("papercraft-limits-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("limits.papercraft");
+    document.save(&path).unwrap();
+    let reopened = Document::load(&path).unwrap();
+    std::fs::remove_dir_all(&directory).unwrap();
+    reopened
+}
+
+#[test]
+fn long_clicked_text_wraps_at_the_largest_width_instead_of_being_lost() {
+    let (ctx, mut app, board, scale) = setup(Document::default());
+    run(&ctx, &mut app, SIZE, key(Key::T));
+    let at = board.min + vec2(100.0, 100.0) * scale;
+    drag(&ctx, &mut app, Modifiers::NONE, at, at);
+    let placed = app.editor.document.clone();
+    let long = "W".repeat(10_000);
+    run(&ctx, &mut app, SIZE, vec![Event::Text(long.clone())]);
+    run(&ctx, &mut app, SIZE, key(Key::Escape));
+    run(&ctx, &mut app, SIZE, vec![]);
+    assert!(!ctx.egui_wants_keyboard_input());
+    let node = app.editor.selected_node().unwrap().clone();
+    assert_eq!(node.text, long, "Escape keeps the typed text");
+    assert_eq!(node.width, MAX_COORDINATE);
+    assert!(node.height > placed.nodes[0].height, "Wrapped text grows taller");
+    app.editor.document.validate().unwrap();
+    assert_eq!(save_and_reopen(&app.editor.document).nodes[0], node);
+
+    let edited = app.editor.document.clone();
+    app.editor.undo();
+    assert_eq!(app.editor.document, placed, "One undo restores the placed text");
+    app.editor.redo();
+    assert_eq!(app.editor.document, edited);
+}
+
+#[test]
+fn tall_text_keeps_its_content_at_the_largest_height() {
+    let (ctx, mut app, _, _) = setup(Document::default());
+    add_text(&mut app, "Tall");
+    let before = app.editor.document.clone();
+    app.editor.document.nodes[0].font_size = 512.0;
+    app.editor.commit(before).unwrap();
+    let tall = "line\n".repeat(400);
+    edit_inline(&ctx, &mut app, &tall);
+    let node = app.editor.selected_node().unwrap();
+    assert_eq!((node.text.as_str(), node.height), (tall.as_str(), MAX_COORDINATE));
+    app.editor.document.validate().unwrap();
+}
+
+#[test]
+fn text_beyond_the_byte_limit_is_shortened_not_discarded() {
+    let (ctx, mut app, _, _) = setup(Document::default());
+    add_text(&mut app, "Short");
+    // A three-byte character straddles the limit and is dropped whole.
+    let text = format!("{}界", "a".repeat(MAX_TEXT_BYTES - 1));
+    edit_inline(&ctx, &mut app, &text);
+    let node = app.editor.selected_node().unwrap();
+    assert_eq!(node.text, "a".repeat(MAX_TEXT_BYTES - 1));
+    app.editor.document.validate().unwrap();
 }

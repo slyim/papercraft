@@ -32,7 +32,10 @@ pub type IdSet = StdHashSet<u64, BuildHasherDefault<IdHasher>>;
 
 pub const MAX_DOCUMENT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_NODES: usize = 10_000;
-const MAX_COORDINATE: f32 = 100_000.0;
+/// Largest coordinate and layer size a document accepts.
+pub const MAX_COORDINATE: f32 = 100_000.0;
+/// Largest text layer content, in UTF-8 bytes.
+pub const MAX_TEXT_BYTES: usize = 100_000;
 /// Page color shown around the artboard when a document does not specify one.
 pub const DEFAULT_CANVAS: [u8; 4] = [40, 40, 40, 255];
 
@@ -483,7 +486,7 @@ impl Document {
                     "Layer identifiers must be unique and below the next identifier.".into(),
                 );
             }
-            if node.name.len() > 256 || node.text.len() > 100_000 {
+            if node.name.len() > 256 || node.text.len() > MAX_TEXT_BYTES {
                 return Err("Layer name or text is too long.".into());
             }
             if ![node.x, node.y]
