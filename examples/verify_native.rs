@@ -1,19 +1,53 @@
 use eframe::egui;
 use papercraft::{
     app::{PaperCraftApp, Tool, View},
-    document::{Align, Axis, ColorTarget, Document, Editor, NodeKind, atomic_write},
+    document::{
+        Align, Axis, ColorTarget, Document, Editor, MAX_COORDINATE, NEW_TEXT, Node, NodeKind,
+        atomic_write,
+    },
     recents::Recents,
 };
 use std::path::PathBuf;
+
+const STARTUP_FRAMES: usize = 8;
+const TEXT: &str = "Launch notes, draft two";
+const TOKEN_COLOR: [u8; 4] = [176, 72, 44, 255];
+const SCENARIOS: &[&str] = &[
+    "editor",
+    "selected",
+    "tool",
+    "exchange",
+    "export",
+    "quit",
+    "dashboard",
+    "list",
+    "empty",
+    "theme",
+    "bound",
+    "arranged",
+    "resize",
+    "snapping",
+    "text",
+    "marquee",
+    "long-text",
+    "text-token",
+    "text-tabs",
+];
 
 struct NativeCheck {
     app: PaperCraftApp,
     output: PathBuf,
     frames: usize,
     hover: Option<egui::Pos2>,
-    quit_check: bool,
-    export_menu: bool,
-    expected_geometry: Option<(usize, [f32; 4])>,
+    scenario: String,
+    initial_document: Document,
+    initial_revision: u64,
+    placed_text: Option<Node>,
+    placed_revision: u64,
+    script_frame: usize,
+    script_started: bool,
+    screenshot_requested: bool,
+    finished: bool,
     /// Input events sent on each frame, by frame index.
     script: Vec<Vec<egui::Event>>,
 }
@@ -24,28 +58,93 @@ impl eframe::App for NativeCheck {
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        if let Some(pos) = self.hover {
+        // Ask the native window system for focus; never fabricate a focused input
+        // flag or focus the app's private text widget from the harness.
+        if self.frames == 0 || (self.frames == 4 && !raw_input.focused) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        if self.frames < STARTUP_FRAMES {
+            return;
+        }
+        if !self.script_started {
+            if !raw_input.focused {
+                return;
+            }
+            self.script_started = true;
+        }
+        if self.scenario != "quit" && self.script_frame < self.script.len() {
+            assert!(
+                raw_input.focused,
+                "Native window lost focus during scripted input"
+            );
+        }
+        raw_input
+            .events
+            .push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        if let Some(events) = self.script.get(self.script_frame) {
+            raw_input.events.extend(events.iter().cloned());
+        } else if let Some(pos) = self.hover {
             raw_input.events.push(egui::Event::PointerMoved(pos));
         }
-        if let Some(events) = self.script.get(self.frames) {
-            raw_input.events.extend(events.iter().cloned());
+        // Model token edits are setup stimuli, not substitutes for placing or
+        // typing text. Give the real canvas a frame to reconcile each change.
+        if self.scenario == "text-token" {
+            let token = self.initial_document.tokens[0].id;
+            match self.script_frame {
+                2 => self.app.editor.set_token_value(token, TOKEN_COLOR).unwrap(),
+                3 => self.app.editor.delete_token(token).unwrap(),
+                4 => {
+                    let replacement = self.app.editor.create_token([10, 20, 200, 255]).unwrap();
+                    assert_eq!(replacement, token, "Fixture must exercise token ID reuse");
+                }
+                _ => {}
+            }
         }
-        if self.export_menu && (self.frames == 2 || self.frames == 3) {
+        if self.scenario == "export" && (self.script_frame == 2 || self.script_frame == 3) {
             let pos = egui::pos2(ctx.content_rect().right() - 42.0, 65.0);
             raw_input.events.push(egui::Event::PointerMoved(pos));
             raw_input.events.push(egui::Event::PointerButton {
                 pos,
                 button: egui::PointerButton::Primary,
-                pressed: self.frames == 2,
+                pressed: self.script_frame == 2,
                 modifiers: egui::Modifiers::NONE,
             });
         }
+        self.script_frame += 1;
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.finished {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         self.app.show(ui);
         self.frames += 1;
-        if self.quit_check && self.frames == 2 {
+        // The click's release frame cannot focus a newly created TextEdit.
+        // Inspect the placeholder only after two subsequent idle input frames.
+        if self.script_frame == 10 && is_text_scenario(&self.scenario) {
+            let node = self
+                .app
+                .editor
+                .selected_node()
+                .expect("Text tool did not place a layer");
+            assert_eq!(node.kind, NodeKind::Text);
+            assert_eq!(
+                node.text, NEW_TEXT,
+                "Text placement must select the placeholder"
+            );
+            assert_eq!(
+                self.app.editor.document.nodes.len(),
+                self.initial_document.nodes.len() + 1
+            );
+            assert!(
+                ui.ctx().egui_wants_keyboard_input(),
+                "Placed text did not gain focus"
+            );
+            self.placed_text = Some(node.clone());
+            self.placed_revision = self.app.editor.revision();
+        }
+        if self.scenario == "quit" && self.script_frame == 2 {
             let before = self.app.editor.document.clone();
             self.app.editor.document.name = "Unsaved native quit check".into();
             self.app.editor.commit(before).unwrap();
@@ -59,7 +158,11 @@ impl eframe::App for NativeCheck {
             #[cfg(not(target_os = "macos"))]
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        if self.frames == 6 {
+        // Leave several complete paints after the last release/typing event.
+        // In particular, resize/marquee releases must precede screenshot capture.
+        if !self.screenshot_requested && self.script_frame == self.script.len() + 4 {
+            self.verify_scenario(ui.ctx());
+            self.screenshot_requested = true;
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }
@@ -73,10 +176,7 @@ impl eframe::App for NativeCheck {
             })
         });
         if let Some(screenshot) = screenshot {
-            if let Some((index, expected)) = self.expected_geometry {
-                let node = &self.app.editor.document.nodes[index];
-                assert_eq!([node.x, node.y, node.width, node.height], expected);
-            }
+            assert!(self.screenshot_requested, "Unrequested screenshot");
             let rgba: Vec<_> = screenshot
                 .pixels
                 .iter()
@@ -95,23 +195,182 @@ impl eframe::App for NativeCheck {
                 "Screenshot contains no visible light content"
             );
             println!("Native rendering verified: {}", self.output.display());
-            if self.quit_check {
+            if self.scenario == "quit" {
                 assert_eq!(self.app.editor.document.name, "Unsaved native quit check");
                 self.app.editor.undo(); // Restore the saved state before ending this check.
                 println!("Unsaved document survived simulated native Quit/minimize dispatch.");
             }
             // Scripted edits are discarded so that closing does not prompt.
-            while self.app.editor.can_undo() {
-                self.app.editor.undo();
+            for index in 0..self.app.tab_count() {
+                self.app.activate_tab(index);
+                while self.app.editor.can_undo() {
+                    self.app.editor.undo();
+                }
             }
+            self.finished = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         assert!(
-            self.frames < 120,
-            "Screenshot was not returned by the renderer"
+            self.frames < 240,
+            "Native scenario timed out waiting for window focus, input, or screenshot"
         );
         ui.ctx().request_repaint();
     }
+}
+
+impl NativeCheck {
+    fn verify_scenario(&mut self, ctx: &egui::Context) {
+        match self.scenario.as_str() {
+            "resize" | "snapping" => {
+                let (index, expected) = if self.scenario == "resize" {
+                    (0, [100.0, 100.0, 160.0, 140.0])
+                } else {
+                    (1, [200.0, 100.0, 100.0, 100.0])
+                };
+                let node = &self.app.editor.document.nodes[index];
+                assert_eq!([node.x, node.y, node.width, node.height], expected);
+                assert_eq!(self.app.editor.selection(), &[node.id]);
+                assert!(
+                    self.app.editor.can_undo(),
+                    "Drag must commit history on release"
+                );
+            }
+            "marquee" => {
+                let expected: Vec<_> = self.initial_document.nodes[..2]
+                    .iter()
+                    .map(|n| n.id)
+                    .collect();
+                assert_eq!(self.app.editor.selection(), expected);
+                assert_eq!(self.app.editor.document, self.initial_document);
+                assert_eq!(self.app.editor.revision(), self.initial_revision);
+                assert!(
+                    !self.app.editor.can_undo(),
+                    "Marquee must not create undo history"
+                );
+                assert!(
+                    !self.app.editor.can_redo(),
+                    "Marquee must not create redo history"
+                );
+            }
+            scenario if is_text_scenario(scenario) => {
+                let placed = self
+                    .placed_text
+                    .as_ref()
+                    .expect("Text placement checkpoint was not reached");
+                let node = self
+                    .app
+                    .editor
+                    .selected_node()
+                    .expect("Text selection was lost");
+                let expected = scenario_text(scenario);
+                assert_eq!(
+                    node.text, expected,
+                    "Native typing/undo did not produce expected text"
+                );
+                assert_eq!(self.app.editor.selection(), &[placed.id]);
+                assert_eq!(node.kind, NodeKind::Text);
+                assert_eq!((node.x, node.y), (100.0, 300.0));
+                assert_eq!(
+                    self.app.editor.document.nodes.len(),
+                    self.initial_document.nodes.len() + 1
+                );
+                let measured = ctx.fonts_mut(|fonts| {
+                    fonts
+                        .layout_no_wrap(
+                            expected,
+                            egui::FontId::proportional(node.font_size),
+                            egui::Color32::WHITE,
+                        )
+                        .size()
+                        .ceil()
+                });
+                let height = if measured.x + 2.0 > MAX_COORDINATE {
+                    ctx.fonts_mut(|fonts| {
+                        fonts
+                            .layout(
+                                node.text.clone(),
+                                egui::FontId::proportional(node.font_size),
+                                egui::Color32::WHITE,
+                                MAX_COORDINATE,
+                            )
+                            .size()
+                            .ceil()
+                            .y
+                    })
+                } else {
+                    measured.y
+                };
+                assert_eq!(node.width, (measured.x + 2.0).clamp(1.0, MAX_COORDINATE));
+                assert_eq!(node.height, height.clamp(1.0, MAX_COORDINATE));
+                assert!(
+                    node.width > placed.width,
+                    "Text must grow from its placeholder width"
+                );
+                self.app
+                    .editor
+                    .document
+                    .validate()
+                    .expect("Native text geometry is invalid");
+                assert!(
+                    !ctx.egui_wants_keyboard_input(),
+                    "Escape must finish inline editing"
+                );
+                assert!(
+                    self.app.editor.can_undo(),
+                    "Native text must enter document history"
+                );
+                assert!(
+                    self.app.editor.revision() > self.placed_revision,
+                    "Escape must commit the typed text, not just the layer creation"
+                );
+                if scenario == "long-text" {
+                    assert!(
+                        measured.x > MAX_COORDINATE,
+                        "Fixture must exceed the text geometry limit"
+                    );
+                    assert_eq!(node.width, MAX_COORDINATE);
+                }
+                if scenario == "text-token" {
+                    assert_eq!((node.fill, node.fill_token), (TOKEN_COLOR, None));
+                    assert_eq!(node.font_size, self.initial_document.nodes[0].font_size);
+                }
+                if scenario == "text-tabs" {
+                    assert_eq!((self.app.tab_count(), self.app.active_tab()), (2, 1));
+                    let second = self.app.editor.document.clone();
+                    let second_id = node.id;
+                    self.app.activate_tab(0);
+                    assert_eq!(self.app.editor.document.nodes[0].id, second_id);
+                    assert_eq!(self.app.editor.document.nodes[0].text, TEXT);
+                    self.app.activate_tab(1);
+                    assert_eq!(
+                        self.app.editor.document, second,
+                        "Tab activation changed text state"
+                    );
+                }
+            }
+            "quit" => {
+                assert!(
+                    self.app.document_open(),
+                    "Native Quit discarded the document"
+                );
+                assert_eq!(self.app.editor.document.name, "Unsaved native quit check");
+            }
+            _ => {}
+        }
+        println!("Native scenario postconditions verified: {}", self.scenario);
+    }
+}
+
+fn scenario_text(scenario: &str) -> String {
+    match scenario {
+        "long-text" => "W".repeat(10_000),
+        "text-tabs" => "Second tab launch notes".into(),
+        _ => TEXT.into(),
+    }
+}
+
+fn is_text_scenario(scenario: &str) -> bool {
+    scenario.starts_with("text") || scenario == "long-text"
 }
 
 /// Model workflow: create → bind/edit tokens → arrange → undo/redo → save → reopen →
@@ -181,14 +440,26 @@ fn token_workflow(directory: &std::path::Path) -> Editor {
 }
 
 /// Usage: `verify_native [directory] [scenario] [WIDTHxHEIGHT] [hover=X,Y]`.
-/// Scenarios: `editor` (default), `selected`, `tool`, `exchange`, `export`, `quit`, `dashboard`, `list`, `empty`, `theme`, `bound`, `arranged`.
+/// Supported scenarios are listed by `verify_native --help`.
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args
+        .first()
+        .is_some_and(|arg| matches!(arg.as_str(), "--help" | "-h"))
+    {
+        print_usage();
+        return Ok(());
+    }
     let directory = args
         .first()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("target/verification"));
     let scenario = args.get(1).cloned().unwrap_or_else(|| "editor".into());
+    if !SCENARIOS.contains(&scenario.as_str()) {
+        eprintln!("Unknown native verification scenario: {scenario}");
+        print_usage();
+        std::process::exit(2);
+    }
     let size = args
         .get(2)
         .and_then(|s| s.split_once('x'))
@@ -227,14 +498,33 @@ fn main() -> eframe::Result {
     .unwrap();
     println!("Model create/edit/undo/redo/save/reopen/HTML+SVG export verified.");
     let themed = token_workflow(&directory);
-    let document = if matches!(scenario.as_str(), "resize" | "snapping") {
+    let document = if matches!(scenario.as_str(), "resize" | "snapping" | "marquee") {
         let mut editor = Editor::new(Document::default());
-        for x in [100.0, 300.0] {
+        let positions: &[f32] = if scenario == "marquee" {
+            &[100.0, 300.0, 600.0]
+        } else {
+            &[100.0, 300.0]
+        };
+        for &x in positions {
             editor
                 .add_at(NodeKind::Rectangle, x, 100.0, 100.0, 100.0)
                 .unwrap();
         }
         editor.document
+    } else if scenario == "text-token" {
+        let mut editor = Editor::new(Document::default());
+        editor
+            .add_at(NodeKind::Text, 100.0, 100.0, 220.0, 60.0)
+            .unwrap();
+        editor.document.nodes[0].font_size = 44.0;
+        let id = editor.document.nodes[0].id;
+        editor
+            .create_token_from(ColorTarget::Node(id))
+            .unwrap()
+            .unwrap();
+        editor.document
+    } else if is_text_scenario(&scenario) {
+        Document::default()
     } else if scenario == "exchange" {
         serde_json::from_str(include_str!("../tests/fixtures/svg-exchange.papercraft")).unwrap()
     } else if matches!(scenario.as_str(), "theme" | "bound" | "arranged") {
@@ -274,6 +564,7 @@ fn main() -> eframe::Result {
         "resize" => app.editor.select(Some(document.nodes[0].id)),
         "selected" => app.editor.select(document.nodes.get(3).map(|n| n.id)),
         "tool" => app.tool = Tool::Rectangle,
+        "text-token" => app.editor.select(Some(document.nodes[0].id)),
         "theme" => {
             app.theme = true;
             app.selected_token = document
@@ -355,22 +646,34 @@ fn main() -> eframe::Result {
             // Capture stable menu/modal states rather than a partially faded frame.
             cc.egui_ctx
                 .global_style_mut(|style| style.animation_time = 0.0);
+            let initial_revision = app.editor.revision();
+            let script = script(&scenario, size, &document);
             Ok(Box::new(NativeCheck {
                 app,
                 output,
                 frames: 0,
                 hover,
-                quit_check: scenario == "quit",
-                export_menu: scenario == "export",
-                expected_geometry: match scenario.as_str() {
-                    "resize" => Some((0, [100.0, 100.0, 160.0, 140.0])),
-                    "snapping" => Some((1, [200.0, 100.0, 100.0, 100.0])),
-                    _ => None,
-                },
-                script: script(&scenario, size, &document),
+                scenario,
+                initial_document: document,
+                initial_revision,
+                placed_text: None,
+                placed_revision: 0,
+                script_frame: 0,
+                script_started: false,
+                screenshot_requested: false,
+                finished: false,
+                script,
             }))
         }),
     )
+}
+
+fn print_usage() {
+    eprintln!("Usage: verify_native [directory] [scenario] [WIDTHxHEIGHT] [hover=X,Y]");
+    eprintln!(
+        "Scenarios (editor is the default): {}",
+        SCENARIOS.join(", ")
+    );
 }
 
 /// Screen position of artboard point `(x, y)` for the fitted starter view, from the
@@ -423,15 +726,66 @@ fn script(scenario: &str, size: [f32; 2], document: &Document) -> Vec<Vec<egui::
                 vec![button(end, false)],
             ]
         }
-        "text" => {
-            let p = at(560.0, 440.0);
-            vec![
-                vec![key(egui::Key::T, true), key(egui::Key::T, false)],
-                vec![egui::Event::PointerMoved(p), button(p, true)],
-                vec![button(p, false)],
+        scenario if is_text_scenario(scenario) => {
+            // Canvas click establishes ordinary application focus, then the T
+            // shortcut selects the real text tool. Press/release occupy separate
+            // native frames; two idle frames let the new text editor take focus.
+            let focus = at(20.0, 20.0);
+            let p = at(100.0, 300.0);
+            let create = |text| {
+                vec![
+                    vec![egui::Event::PointerMoved(focus), button(focus, true)],
+                    vec![button(focus, false)],
+                    vec![],
+                    vec![key(egui::Key::T, true)],
+                    vec![key(egui::Key::T, false)],
+                    vec![],
+                    vec![egui::Event::PointerMoved(p), button(p, true)],
+                    vec![button(p, false)],
+                    vec![],
+                    vec![],
+                    vec![egui::Event::Text(text)],
+                    vec![],
+                    vec![key(egui::Key::Escape, true)],
+                    vec![key(egui::Key::Escape, false)],
+                    vec![],
+                ]
+            };
+            if scenario != "text-tabs" {
+                return create(scenario_text(scenario));
+            }
+            let command = |key, pressed| {
+                vec![
+                    egui::Event::ModifiersChanged(egui::Modifiers::COMMAND),
+                    egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed,
+                        repeat: false,
+                        modifiers: egui::Modifiers::COMMAND,
+                    },
+                ]
+            };
+            let mut frames = create(TEXT.into());
+            frames.extend([
+                command(egui::Key::N, true),
+                command(egui::Key::N, false),
                 vec![],
-                vec![egui::Event::Text("Launch notes, draft two".into())],
-            ]
+            ]);
+            frames.extend(create(scenario_text(scenario)));
+            // Both text layers now have ID 1. Undo in a fresh inline editor in
+            // tab B must not revive any text from the previous tab/editor.
+            frames.extend([
+                vec![key(egui::Key::Enter, true)],
+                vec![key(egui::Key::Enter, false)],
+                vec![],
+                command(egui::Key::Z, true),
+                command(egui::Key::Z, false),
+                vec![key(egui::Key::Escape, true)],
+                vec![key(egui::Key::Escape, false)],
+                vec![],
+            ]);
+            frames
         }
         "marquee" => vec![
             vec![],
@@ -441,7 +795,9 @@ fn script(scenario: &str, size: [f32; 2], document: &Document) -> Vec<Vec<egui::
             ],
             vec![egui::Event::PointerMoved(at(200.0, 200.0))],
             vec![egui::Event::PointerMoved(at(450.0, 380.0))],
+            vec![button(at(450.0, 380.0), false)],
+            vec![],
         ],
-        _ => Vec::new(),
+        _ => vec![vec![]; 4],
     }
 }

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=PaperCraft
+Comment=A local design canvas
+Exec=papercraft
+Icon=papercraft
+Terminal=false
+Categories=Graphics;VectorGraphics;
+StartupNotify=true

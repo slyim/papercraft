@@ -1,6 +1,7 @@
-"""Package an already-built native binary; verify every generated archive."""
+"""Package a native binary; verify archives and real platform installers."""
 
 import argparse
+import ctypes
 import functools
 import hashlib
 import json
@@ -11,9 +12,11 @@ import shutil
 import struct
 import subprocess
 import tarfile
+import tempfile
 import urllib.error
 import urllib.request
 import zipfile
+import uuid
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -140,6 +143,235 @@ def verify_executable(binary, platform):
         assert struct.unpack_from("<H", data, pe + 24 + 68)[0] == 2, "Expected the Windows GUI subsystem"
 
 
+def run_native(command, timeout=120, **kwargs):
+    """Keep installer tooling and smoke processes bounded; never ignore failure."""
+    return subprocess.run(command, check=True, timeout=timeout, cwd=ROOT, **kwargs)
+
+
+def digest(path):
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def verify_tree(expected, actual, extra_files=()):
+    """Compare all shipped files, not just the executable or notice markers."""
+    expected_files = {p.relative_to(expected) for p in expected.rglob("*") if p.is_file()}
+    actual_files = {p.relative_to(actual) for p in actual.rglob("*") if p.is_file()}
+    assert actual_files == expected_files | {Path(p) for p in extra_files}, "Installed file inventory differs"
+    for relative in expected_files:
+        installed = actual / relative
+        assert not installed.is_symlink(), f"Unexpected installed symlink: {relative}"
+        assert digest(expected / relative) == digest(installed), f"Installed bytes differ: {relative}"
+
+
+def package_dmg(stage, destination, stem, version, work):
+    image = destination / f"{stem}.dmg"
+    source = work / "dmg-source"
+    shutil.copytree(stage, source)
+    (source / "Applications").symlink_to("/Applications", target_is_directory=True)
+    run_native(["hdiutil", "create", "-ov", "-format", "UDZO", "-fs", "HFS+",
+                "-volname", f"PaperCraft {version}", "-srcfolder", str(source), str(image)])
+    run_native(["hdiutil", "verify", str(image)])
+    mount = work / "mounted"
+    mount.mkdir()
+    try:
+        result = run_native(["hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen",
+                             "-mountpoint", str(mount), "-plist", str(image)], stdout=subprocess.PIPE)
+        entities = plistlib.loads(result.stdout)["system-entities"]
+        assert any(Path(e["mount-point"]).resolve() == mount.resolve()
+                   for e in entities if "mount-point" in e), "DMG was not mounted"
+        assert (mount / "Applications").is_symlink()
+        assert (mount / "Applications").readlink() == Path("/Applications")
+        verify_tree(stage / "PaperCraft.app", mount / "PaperCraft.app")
+        assert digest(stage / "README.txt") == digest(mount / "README.txt")
+        binary = mount / "PaperCraft.app/Contents/MacOS/papercraft"
+        assert binary.stat().st_mode & 0o111, "DMG executable lost execute permission"
+        run_native(["codesign", "--verify", "--deep", "--strict", str(mount / "PaperCraft.app")])
+    finally:
+        if mount.is_mount():
+            run_native(["hdiutil", "detach", str(mount)])
+    print(f"Verified {image.name}: read-only mount, signature, executable, notices; detached.")
+    return image
+
+
+LINUX_DEPENDS = (
+    "libc6 (>= 2.35), libgcc-s1, libdbus-1-3, libx11-6, libx11-xcb1, libxcb1, "
+    "libxcursor1, libxi6, libxrandr2, libxkbcommon0, libxkbcommon-x11-0, "
+    "libwayland-client0, libwayland-cursor0, libwayland-egl1, libegl1, libgl1"
+)
+
+
+def package_deb(stage, destination, stem, version, platform, work):
+    architecture = "arm64" if platform.endswith("arm64") else "amd64"
+    root = work / "deb-root"
+    executable = root / "usr/bin/papercraft"
+    executable.parent.mkdir(parents=True)
+    shutil.copy2(stage / "papercraft", executable)
+    executable.chmod(0o755)
+    resources = root / "usr/share/papercraft"
+    resources.mkdir(parents=True)
+    for source in stage.iterdir():
+        if source.name == "papercraft":
+            continue
+        if source.is_dir():
+            shutil.copytree(source, resources / source.name)
+        else:
+            shutil.copy2(source, resources / source.name)
+    desktop = root / "usr/share/applications/papercraft.desktop"
+    desktop.parent.mkdir(parents=True)
+    shutil.copy2(ROOT / "packaging/linux/papercraft.desktop", desktop)
+    icon = root / "usr/share/icons/hicolor/256x256/apps/papercraft.png"
+    icon.parent.mkdir(parents=True)
+    shutil.copy2(ROOT / "assets/papercraft-icon.png", icon)
+    copyright_file = root / "usr/share/doc/papercraft/copyright"
+    copyright_file.parent.mkdir(parents=True)
+    shutil.copy2(stage / "LICENSE-MIT", copyright_file)
+    control = root / "DEBIAN/control"
+    control.parent.mkdir()
+    installed_size = (sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) + 1023) // 1024
+    fields = {
+        "Package": "papercraft", "Version": version, "Section": "graphics",
+        "Priority": "optional", "Architecture": architecture,
+        "Maintainer": "PaperCraft contributors <noreply@github.com>",
+        "Installed-Size": str(installed_size), "Depends": LINUX_DEPENDS,
+        "Recommends": "xdg-desktop-portal",
+        "Homepage": "https://github.com/slyim/papercraft",
+        "Description": "A local design canvas built in Rust and egui.",
+    }
+    control.write_text("".join(f"{key}: {value}\n" for key, value in fields.items()), encoding="utf-8")
+    for path in root.rglob("*"):
+        path.chmod(0o755 if path.is_dir() or path == executable else 0o644)
+    archive = destination / f"{stem}.deb"
+    run_native(["dpkg-deb", "--root-owner-group", "--build", str(root), str(archive)])
+    for key, value in fields.items():
+        actual = run_native(["dpkg-deb", "--field", str(archive), key],
+                            stdout=subprocess.PIPE, text=True).stdout.strip()
+        assert actual == value, f"Debian metadata differs: {key}"
+    listing = run_native(["dpkg-deb", "--contents", str(archive)],
+                         stdout=subprocess.PIPE, text=True).stdout
+    assert all(line.split()[1] == "root/root" for line in listing.splitlines()), "Debian ownership differs"
+    extracted = work / "deb-extracted"
+    run_native(["dpkg-deb", "--extract", str(archive), str(extracted)])
+    expected_files = {p.relative_to(root) for p in root.rglob("*")
+                      if p.is_file() and "DEBIAN" not in p.relative_to(root).parts}
+    assert {p.relative_to(extracted) for p in extracted.rglob("*") if p.is_file()} == expected_files
+    for relative in expected_files:
+        assert not (extracted / relative).is_symlink()
+        assert digest(root / relative) == digest(extracted / relative), f"Debian bytes differ: {relative}"
+    assert digest(stage / "papercraft") == digest(extracted / "usr/bin/papercraft")
+    assert (extracted / "usr/bin/papercraft").stat().st_mode & 0o111
+    verify_tree(resources, extracted / "usr/share/papercraft")
+    print(f"Verified {archive.name}: architecture, dependencies, ownership, paths, executable and notices.")
+    return archive
+
+
+def nsis_literal(value):
+    return str(value).replace("$", "$$").replace('"', '$\\"')
+
+
+def verify_windows_installer(installer, stage, version, work):
+    import winreg
+
+    token = uuid.uuid4().hex
+    identity = f"PaperCraft-verify-{token}"
+    install = work / identity
+    key = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{identity}"
+    programs = ctypes.create_unicode_buffer(32768)
+    assert ctypes.windll.shell32.SHGetFolderPathW(None, 2, None, 0, programs) == 0
+    shortcut = Path(programs.value) / f"{identity}.lnk"
+    access = winreg.KEY_READ | winreg.KEY_WOW64_64KEY
+
+    def registration_exists():
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, access):
+                return True
+        except FileNotFoundError:
+            return False
+
+    assert not install.exists() and not shortcut.exists() and not registration_exists()
+    uninstaller = install / "Uninstall.exe"
+
+    def uninstall():
+        if uninstaller.exists():
+            # NSIS _?= prevents its usual asynchronous self-copy. Keep this last,
+            # unquoted (also for paths containing spaces) per the NSIS contract.
+            command = subprocess.list2cmdline([str(uninstaller), f"/VERIFY={token}", "/S"])
+            run_native(command + f" _?={install}")
+
+    try:
+        # NSIS /D= likewise must be the last, unquoted command-line parameter.
+        command = subprocess.list2cmdline([str(installer), f"/VERIFY={token}", "/S"])
+        run_native(command + f" /D={install}")
+        verify_tree(stage, install, extra_files=("Uninstall.exe",))
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, access) as registration:
+            values = {name: winreg.QueryValueEx(registration, name)[0] for name in
+                      ("DisplayName", "DisplayVersion", "InstallLocation", "UninstallString",
+                       "QuietUninstallString", "NoModify", "NoRepair")}
+        assert values["DisplayName"] == "PaperCraft" and values["DisplayVersion"] == version
+        assert Path(values["InstallLocation"]) == install
+        expected_command = f'"{uninstaller}" /VERIFY={token}'
+        assert values["UninstallString"] == expected_command
+        assert values["QuietUninstallString"] == expected_command + " /S"
+        assert values["NoModify"] == values["NoRepair"] == 1
+        assert shortcut.is_file(), "Missing per-user Start-menu shortcut"
+        escaped_link = str(shortcut).replace("'", "''")
+        script = f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{escaped_link}'); $s.TargetPath"
+        target = run_native(["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+                             "-Command", script], timeout=30, stdout=subprocess.PIPE, text=True).stdout.strip()
+        assert Path(target) == install / "papercraft.exe", "Shortcut target differs"
+    finally:
+        try:
+            uninstall()
+        finally:
+            # Even on failure, clean only this random smoke identity, and still
+            # fail verification if cleanup had to repair an incomplete uninstall.
+            leftovers = []
+            if registration_exists():
+                winreg.DeleteKeyEx(winreg.HKEY_CURRENT_USER, key, winreg.KEY_WOW64_64KEY)
+                leftovers.append("registration")
+            if shortcut.exists():
+                shortcut.unlink()
+                leftovers.append("shortcut")
+            if leftovers:
+                raise RuntimeError("Windows uninstall left verification " + ", ".join(leftovers))
+    assert not registration_exists() and not shortcut.exists()
+    assert {p.relative_to(install) for p in install.rglob("*")} <= {Path("Uninstall.exe")}, "Uninstall left payload files"
+    uninstaller.unlink(missing_ok=True)
+    if install.exists():
+        install.rmdir()
+    print(f"Verified {installer.name}: silent per-user install, bytes, notices, HKCU registration, shortcut and uninstall.")
+
+
+def package_windows(stage, destination, stem, version, work):
+    installer = destination / f"{stem}-setup.exe"
+    files = sorted((p.relative_to(stage) for p in stage.rglob("*") if p.is_file()), key=str)
+    directories = sorted((p.relative_to(stage) for p in stage.rglob("*") if p.is_dir()),
+                         key=lambda p: (len(p.parts), str(p)), reverse=True)
+    replacements = {
+        "@OUTPUT@": nsis_literal(installer), "@STAGE@": nsis_literal(stage), "@VERSION@": version,
+        "@REMOVE_FILES@": "\n".join(f'  Delete "$INSTDIR\\{nsis_literal(p)}"' for p in files),
+        "@REMOVE_DIRECTORIES@": "\n".join(f'  RMDir "$INSTDIR\\{nsis_literal(p)}"' for p in directories),
+    }
+    script = (ROOT / "packaging/windows/installer.nsi").read_text(encoding="utf-8")
+    for marker, value in replacements.items():
+        script = script.replace(marker, value)
+    source = work / "installer.nsi"
+    source.write_text(script, encoding="utf-8-sig")
+    run_native(["makensis", "/V3", str(source)])
+    verify_windows_installer(installer, stage, version, work)
+    return installer
+
+
+def package_installer(stage, destination, stem, version, platform):
+    with tempfile.TemporaryDirectory(prefix="papercraft-installer-") as temporary:
+        work = Path(temporary)
+        if platform.startswith("macos-"):
+            return package_dmg(stage, destination, stem, version, work)
+        if platform.startswith("linux-"):
+            return package_deb(stage, destination, stem, version, platform, work)
+        return package_windows(stage, destination, stem, version, work)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("platform", choices=("linux-x86_64", "linux-arm64", "macos-arm64", "macos-x86_64", "windows-x86_64"))
@@ -185,8 +417,8 @@ def main():
             plistlib.dump(plist, target)
         shutil.copy2(ROOT / "assets/papercraft.icns", resources)
         app = stage / "PaperCraft.app"
-        subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
-        subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
+        run_native(["codesign", "--force", "--deep", "--sign", "-", str(app)])
+        run_native(["codesign", "--verify", "--deep", "--strict", str(app)])
     destination = ROOT / "target/release-downloads"
     destination.mkdir(exist_ok=True)
     formats = ("zip", "gztar") if mac else ("zip",) if executable.endswith(".exe") else ("gztar",)
@@ -201,6 +433,8 @@ def main():
             archive = Path(shutil.make_archive(str(destination / stem), archive_format, stage.parent, stem))
         verify_archive(archive, f"{stem}/{binary.relative_to(stage).as_posix()}", binary.read_bytes())
         checksums.append(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
+    installer = package_installer(stage, destination, stem, version, args.platform)
+    checksums.append(f"{digest(installer)}  {installer.name}\n")
     (destination / f"SHA256SUMS-{args.platform}.txt").write_text("".join(checksums), encoding="utf-8")
 
 

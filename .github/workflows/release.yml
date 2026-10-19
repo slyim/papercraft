@@ -44,6 +44,12 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
+      - name: Install the Windows installer compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis --version 3.11 --yes --no-progress
+          "${env:ProgramFiles(x86)}\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install Linux build and rendering libraries
         if: runner.os == 'Linux'
         run: |
@@ -62,11 +68,17 @@ jobs:
           cargo build --release --locked
       - name: Verify Linux native rendering
         if: runner.os == 'Linux'
-        run: xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 cargo run --locked --example verify_native -- target/verification/release theme 1380x860
+        run: |
+          for scenario in theme text marquee resize snapping long-text text-token text-tabs; do
+            xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 cargo run --locked --example verify_native -- target/verification/release "$scenario" 960x640
+          done
       - name: Verify macOS native rendering
         if: runner.os == 'macOS'
-        run: cargo run --locked --example verify_native -- target/verification/release theme 1380x860
-      - name: Package and check archives
+        run: |
+          for scenario in theme text marquee resize snapping long-text text-token text-tabs quit; do
+            cargo run --locked --example verify_native -- target/verification/release "$scenario" 960x640
+          done
+      - name: Package and verify installers and archives
         run: python packaging/package.py '${{ matrix.platform }}' '${{ matrix.target }}'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

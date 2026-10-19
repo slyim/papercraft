@@ -384,3 +384,25 @@ PaperCraft decision: automatically sized text never exceeds the document's 100,0
 | `cargo clippy --all-targets`, `cargo test` | — | Clean; all suites pass |
 
 Not performed: native overflow rendering inspection; layout cost of 100,000-byte text per keystroke was not measured.
+
+## v0.1.3 integration and installer preparation (19 October 2026)
+
+Merged PR [#13](https://github.com/slyim/papercraft/pull/13), then retargeted/merged stacked PR [#14](https://github.com/slyim/papercraft/pull/14), preserving commits `529ea0c` and `44d3a1f` in main (`04f28c6`). Both local/remote agent branches were deleted after integration. The clean auxiliary worktree was detached at main rather than deleted. No agent work or legacy document support was discarded.
+
+### Local application proof
+
+- Rust 1.99.1 on macOS Apple Silicon: `cargo fmt --check`, `cargo test --locked` (**76 passed**, 9 unit + 67 integration), `cargo clippy --locked --all-targets -- -D warnings`, the optimized release build and native verification example build pass.
+- Unknown native scenario: exit 2 before creating its output directory. The example now waits for actual native focus, injects separate press/release frames and asserts completed behavior before requesting a screenshot.
+- Native `text`, `marquee`, `resize`, `snapping`, `long-text`, `text-token`, `text-tabs` and `quit` pass at both 960×640 and 1380×860; `theme` also passes at 1380×860. Outputs: ignored `target/verification/v0.1.3/`. Text/marquee/long-text/two-tab screenshots were opened and inspected; geometry/history/content/token assertions pass.
+- `long-text` uses 10,000 `W` characters and confirms retained content, bounded width/wrapped height and a committed edit. `text-token` changes/deletes/reuses a token before real text placement and verifies the preserved unbound color. `text-tabs` performs same-ID inline editing/undo across two tabs and verifies isolation.
+- One batch stopped on lost native window focus; another stopped on an unmoved large-window snapping gesture. Both affected cases subsequently passed in isolated runs. Diagnostic output for snapping showed the requested viewport and pointer coordinates with the expected final `[200, 100, 100, 100]`. No application cause was established; the harness retains strict assertions instead of hiding these interruptions.
+
+### Local installer proof and build contract
+
+- Package version 0.1.3 and macOS bundle build 4. Documents remain conditional version 1/2; no schema migration.
+- `SSL_CERT_FILE=/etc/ssl/cert.pem python3 packaging/package.py macos-arm64 aarch64-apple-darwin` builds and verifies actual ZIP/tar.gz plus DMG. Checks include executable/notices, read-only mounted payload, Applications symlink, code signature and detach; notices cover 170 dependencies plus Rust/fonts/icons.
+- The first DMG check exposed macOS's `/var` versus `/private/var` mount-path alias. A direct mount observation proved both resolve to the same location; verification now compares canonical paths. The corrected full packaging run passes. Current macOS reports `hdiutil` deprecations, but the commands succeed and remain available on the selected macOS 15 runners.
+- Linux packaging adds native amd64/arm64 Debian packages with declared runtime dependencies, desktop launcher/icon, complete notices, ownership/metadata and extracted-byte checks. Windows adds a per-user NSIS installer with shortcut, HKCU uninstall registration and a bounded isolated silent install/uninstall verification. Their native execution is gated by the five-platform workflow, not inferred from this Mac run.
+- Automatic PR/main Rust checks use Linux, macOS and Windows. Manual release jobs build all five supported targets and exercise native text/selection/geometry/state cases on Linux/macOS before packaging.
+
+Physical input, native file-dialog choices, IME, screen readers and Windows editor interaction remain unverified. Installers are not notarization or signing services: macOS remains ad-hoc signed, Windows unsigned. Final CI/artifact/publication evidence is recorded separately below after the native jobs complete.

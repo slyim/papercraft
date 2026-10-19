@@ -6,19 +6,19 @@ An original, local design editor built entirely in Rust with egui/eframe and Pho
 
 ## Download
 
-The [PaperCraft v0.1.2 prerelease](https://github.com/slyim/papercraft/releases/tag/v0.1.2) includes ready-to-run downloads. Rust and Node.js are not required.
+The [PaperCraft v0.1.3 prerelease](https://github.com/slyim/papercraft/releases/tag/v0.1.3) includes platform installers and portable downloads. Rust and Node.js are not required.
 
 | Platform | Downloads |
 |---|---|
-| Linux x86_64 | [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-linux-x86_64.tar.gz) |
-| Linux ARM64 | [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-linux-arm64.tar.gz) |
-| Mac Apple Silicon | [ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-macos-arm64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-macos-arm64.tar.gz) |
-| Mac Intel | [ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-macos-x86_64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-macos-x86_64.tar.gz) |
-| Windows x86_64 | [ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.2/papercraft-0.1.2-windows-x86_64.zip) |
+| Linux x86_64 | [Debian package](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-linux-x86_64.deb) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-linux-x86_64.tar.gz) |
+| Linux ARM64 | [Debian package](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-linux-arm64.deb) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-linux-arm64.tar.gz) |
+| Mac Apple Silicon | [DMG](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-macos-arm64.dmg) · [ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-macos-arm64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-macos-arm64.tar.gz) |
+| Mac Intel | [DMG](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-macos-x86_64.dmg) · [ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-macos-x86_64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-macos-x86_64.tar.gz) |
+| Windows x86_64 | [Setup installer](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-windows-x86_64-setup.exe) · [portable ZIP](https://github.com/slyim/papercraft/releases/download/v0.1.3/papercraft-0.1.3-windows-x86_64.zip) |
 
-Extract the archive. On macOS, move `PaperCraft.app` to Applications; on Windows, run `papercraft.exe`; on Linux, run `./papercraft`. Linux requires glibc 2.35 or later, libxkbcommon-x11, a desktop session and OpenGL/EGL drivers; file dialogs use a desktop portal. On Ubuntu/Debian, missing runtime libraries can be installed with `sudo apt install libxkbcommon-x11-0 libegl1 libgl1`. macOS apps are ad-hoc signed and not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt. Windows builds are unsigned.
+On macOS, open the DMG and drag `PaperCraft.app` to Applications. On Windows, run the per-user setup installer; administrator rights are unnecessary. On Debian/Ubuntu, install the matching package with `sudo apt install ./papercraft-0.1.3-linux-x86_64.deb` (use `arm64` on ARM). Portable archives remain available: extract and run the included app/executable. Linux requires glibc 2.35 or later, libxkbcommon-x11, a desktop session and OpenGL/EGL drivers; file dialogs use a desktop portal. macOS apps are ad-hoc signed and not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt. Windows builds and installers are unsigned.
 
-[SHA-256 checksums](https://github.com/slyim/papercraft/releases/download/v0.1.2/SHA256SUMS.txt) cover every archive. This remains an early preview; native file-dialog and physical-input checks are incomplete. The [release workflow](docs/releasing.md) records build targets and packaging checks.
+[SHA-256 checksums](https://github.com/slyim/papercraft/releases/download/v0.1.3/SHA256SUMS.txt) cover every installer and archive. This remains an early preview; native file-dialog and physical-input checks are incomplete. The [release workflow](docs/releasing.md) records build targets and packaging checks.
 
 ## Run the editor
 
@@ -34,7 +34,7 @@ cargo run --locked -- /path/to/design.papercraft
 
 The release workflow builds and runs Rust tests on Linux x86_64/ARM64, macOS Apple Silicon/Intel and Windows x86_64 with Rust 1.99.1. Native renderer checks run on Linux and macOS; Windows native interaction remains unverified. Local Apple Silicon checks and remaining gaps are recorded in the [verification notes](docs/verification.md). The first source build downloads and compiles the locked dependencies; Node.js is unnecessary for the application.
 
-The source build includes one artboard, rectangle/text layers with inline text editing, independent document tabs and layer renaming, color tokens, multi-selection with align/distribute, a layer list and property inspector, dragging, marquee selection, resizing from any corner or edge (one layer or a group), snapping with guides, pan/zoom, ordering, hide/lock, undo/redo, validated `.papercraft` JSON files, and standalone HTML/SVG export. New/Open preserve existing tabs; closing a dirty tab prompts before discarding it, and Quit checks every dirty tab, including while minimized. Save writes a temporary file before replacing the destination. The published v0.1.2 downloads predate the tab/tool and canvas/snapping increments; these newer capabilities currently require a source build.
+The editor includes one artboard, rectangle/text layers with inline text editing, independent document tabs and layer renaming, color tokens, multi-selection with align/distribute, a layer list and property inspector, dragging, marquee selection, resizing from any corner or edge (one layer or a group), snapping with guides, pan/zoom, ordering, hide/lock, undo/redo, validated `.papercraft` JSON files, and standalone HTML/SVG export. New/Open preserve existing tabs; closing a dirty tab prompts before discarding it, and Quit checks every dirty tab, including while minimized. Save writes a temporary file before replacing the destination. The v0.1.3 preview includes these integrated features; older v0.1.2 downloads predate the tab/tool and canvas/snapping increments.
 
 PaperCraft was previously named Crumbs. Existing `.crumbs` documents still open and save in place; Save As defaults to `.papercraft`. Documents without color tokens are still written as version 1. Documents with tokens use version 2, which older PaperCraft rejects without modifying the file; the first in-place save that would upgrade a version 1 file asks first. See [document format](docs/document-format.md) for downgrade and rollback. Recent-file history continues to use the legacy Crumbs configuration folder so both versions retain access to it. The older v0.1.0 release remains available under its original name.
 
@@ -57,7 +57,7 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 cargo run --locked --example verify_native
-# Other states and sizes (editor, selected, tool, exchange, export, quit, dashboard, list, empty, theme, bound, arranged):
+# Other states: verify_native --help (includes text, marquee, resize, snapping, long-text, text-token and text-tabs).
 cargo run --locked --example verify_native -- target/verification dashboard 960x640
 cargo run --locked --example verify_native -- target/verification selected 1470x922 hover=90,305
 cargo run --locked --example verify_native -- target/verification/exchange exchange

@@ -1,0 +1,65 @@
+name: Check editor
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, macos-15, windows-2022]
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install Linux build and rendering libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev xvfb xauth
+      - name: Install the verified Rust toolchain
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.99.1
+      - name: Check Rust behavior and warnings
+        run: |
+          cargo fmt --check
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Reject unsupported native scenarios
+        run: |
+          if cargo run --locked --example verify_native -- target/verification/ci invalid-scenario; then
+            echo 'Unknown native scenario unexpectedly succeeded'
+            exit 1
+          fi
+      - name: Verify Linux text and selection
+        if: runner.os == 'Linux'
+        run: |
+          for scenario in text marquee; do
+            xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 cargo run --locked --example verify_native -- target/verification/ci "$scenario" 960x640
+          done
+      - name: Verify macOS text and selection
+        if: runner.os == 'macOS'
+        run: |
+          for scenario in text marquee; do
+            cargo run --locked --example verify_native -- target/verification/ci "$scenario" 960x640
+          done
