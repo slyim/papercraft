@@ -214,6 +214,12 @@ pub fn creation_rect(start: Pos2, current: Pos2, square: bool, centered: bool) -
 
 /// An open document that is not the active tab. The active tab's state lives in the
 /// `PaperCraftApp` fields with the same names; its slot in `tabs` holds a placeholder.
+/// Returns a process-unique key for a newly opened document.
+fn document_key() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 struct Tab {
     editor: Editor,
     saved: Document,
@@ -225,6 +231,7 @@ struct Tab {
     selected_token: Option<u64>,
     text_style: TextStyle,
     dirty: bool,
+    key: u64,
 }
 
 impl Tab {
@@ -241,6 +248,7 @@ impl Tab {
             selected_token: None,
             text_style: TextStyle::default(),
             dirty: false,
+            key: document_key(),
         }
     }
 
@@ -297,6 +305,9 @@ pub struct PaperCraftApp {
     renaming: Option<(u64, String)>,
     /// Format version of the file at `path` when it was opened or last saved.
     file_version: u32,
+    /// Identity of the active document, unique for the process. Layer and token IDs
+    /// are document-local, so widget state keyed by them is namespaced with it.
+    document_key: u64,
     /// Save is waiting for confirmation to upgrade a version 1 file.
     upgrade_prompt: bool,
 }
@@ -341,6 +352,7 @@ impl PaperCraftApp {
             selected_token: None,
             renaming: None,
             file_version: 1,
+            document_key: document_key(),
             upgrade_prompt: false,
         }
     }
@@ -493,6 +505,7 @@ impl PaperCraftApp {
         std::mem::swap(&mut self.file_version, &mut tab.file_version);
         std::mem::swap(&mut self.selected_token, &mut tab.selected_token);
         std::mem::swap(&mut self.text_style, &mut tab.text_style);
+        std::mem::swap(&mut self.document_key, &mut tab.key);
         self.dirty_cache
             .set(Some((self.editor.revision(), tab.dirty)));
         tab.dirty = dirty;
@@ -619,6 +632,7 @@ impl PaperCraftApp {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.document_key = document_key();
         self.file_version = document.version;
         self.selected_token = None;
         self.renaming = None;
@@ -843,9 +857,22 @@ impl PaperCraftApp {
         });
     }
 
+    /// Keeps the inherited text style's color equal to its bound token and detaches the
+    /// binding once the token is gone, so a later token reusing the ID is never bound.
+    fn sync_text_style(&mut self) {
+        let Some(id) = self.text_style.fill_token else {
+            return;
+        };
+        match self.editor.document.token(id) {
+            Some(token) => self.text_style.fill = token.value,
+            None => self.text_style.fill_token = None,
+        }
+    }
+
     /// Adds a text layer at `at` and edits it. Without `rect` the layer is sized to its
     /// content and keeps following it while edited.
     fn place_text(&mut self, painter: &Painter, at: Pos2, rect: Option<Rect>) {
+        self.sync_text_style();
         let style = self.text_style;
         let geometry = match rect {
             Some(rect) => [rect.min.x, rect.min.y, rect.width(), rect.height()],
@@ -1539,7 +1566,9 @@ impl PaperCraftApp {
                     } else if response.double_clicked() {
                         self.flush_properties();
                         self.renaming = Some((id, name.clone()));
-                        ui.memory_mut(|m| m.request_focus(egui::Id::new(("rename_layer", id))));
+                        ui.memory_mut(|m| {
+                            m.request_focus(egui::Id::new(("rename_layer", self.document_key, id)))
+                        });
                     } else if response.clicked() {
                         self.flush_properties();
                         // Shift or ⌘/Ctrl adds or removes the row; locked and hidden
@@ -1586,7 +1615,7 @@ impl PaperCraftApp {
             .indent(SPACE_M)
             .selected(selected)
             .paint(ui, rect, response, 8.0);
-        let edit_id = egui::Id::new(("rename_layer", id));
+        let edit_id = egui::Id::new(("rename_layer", self.document_key, id));
         let field = Rect::from_min_max(
             pos2(
                 rect.left() + SPACE_M + ICON_SMALL + SPACE_S,
@@ -1703,7 +1732,8 @@ impl PaperCraftApp {
                             })
                             .show(ui, |ui| {
                                 ui.spacing_mut().item_spacing = vec2(SPACE_S, SPACE_S);
-                                let name_id = egui::Id::new(("token_name", token.id));
+                                let name_id =
+                                    egui::Id::new(("token_name", self.document_key, token.id));
                                 let mut name = ui
                                     .data(|d| d.get_temp::<String>(name_id))
                                     .unwrap_or_else(|| token.name.clone());
@@ -1740,7 +1770,7 @@ impl PaperCraftApp {
                                 {
                                     finish |= ui::color_field(
                                         ui,
-                                        egui::Id::new(("token_value", token.id)),
+                                        egui::Id::new(("token_value", self.document_key, token.id)),
                                         &mut live.value,
                                     );
                                 }
@@ -2662,6 +2692,7 @@ impl PaperCraftApp {
         if let Some(style) = self.editor.selected_node().and_then(TextStyle::of) {
             self.text_style = style;
         }
+        self.sync_text_style();
         paint_document(
             &painter,
             &self.editor.document,
@@ -2987,12 +3018,14 @@ impl PaperCraftApp {
         };
         let fill = color(document.node_fill(&document.nodes[index]));
         let node = &mut document.nodes[index];
-        let id = egui::Id::new("canvas_text").with(node.id);
+        let id = egui::Id::new(("canvas_text", self.document_key, node.id));
         // egui takes focus from a widget that is new on a frame with a click, so focus
         // waits for a frame without one.
         if edit.start && !ui.input(|i| i.pointer.any_click()) {
             edit.start = false;
-            let mut state = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+            // Each inline edit starts with its own widget undo history; earlier edits of
+            // this layer are reached through document undo.
+            let mut state = egui::text_edit::TextEditState::default();
             state
                 .cursor
                 .set_char_range(Some(egui::text::CCursorRange::two(

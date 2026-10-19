@@ -353,3 +353,19 @@ Native `text` at 1380×860 exited successfully, but its inspected screenshot sho
 The only workflow is manually dispatched release packaging. Its latest successful [five-platform run](https://github.com/slyim/papercraft/actions/runs/39155293943) covers published v0.1.2 source `40765df`, not this integrated main. [#2](https://github.com/slyim/papercraft/issues/2) adds automatic gates; [#3](https://github.com/slyim/papercraft/issues/3) tracks a new verified preview after the defects and verification gaps are resolved.
 
 No new release, cross-platform build, physical-input/file-dialog/IME/screen-reader check, Paper runtime comparison, Craft import rerun or REA/npm tooling test was performed. Current parity and the prioritized issue/dependency queue are in the [gap assessment](gap-assessment.md#current-parity--19-october-2026).
+
+## Document-local text state fixes (19 October 2026)
+
+Branch `claude/fix-tab-text-isolation`, based on `1a5ba62`. Fixes [#12](https://github.com/slyim/papercraft/issues/12) and [#11](https://github.com/slyim/papercraft/issues/11); [#10](https://github.com/slyim/papercraft/issues/10) is not addressed.
+
+- **#12:** each open document receives a process-unique key, swapped with its tab state. Inline text, layer-rename and token name/value widget IDs include it. Each inline edit also starts with a fresh widget undo history; earlier edits are reached through document undo.
+- **#11:** the inherited text style is reconciled against the active document every canvas frame and before placement: an existing bound token refreshes the cached literal; a missing token detaches the binding and keeps the last effective color. This covers Theme deletion and history transitions alike.
+
+| Check | Before fix | After fix |
+|---|---|---|
+| `tests/tools.rs` `inline_text_undo_stays_within_its_document_tab` (Enter/Text/Escape, ⌘N, ⌘Z events through `PaperCraftApp::show`) | Failed: `"A-original"` instead of `"B-original"` | Passed |
+| `inherited_text_style_detaches_when_its_token_is_deleted` (red delete, blue create with reused ID 1, click placement; then undo restoring red) | Failed: `([10, 20, 200, 255], Some(1))` | Passed: red, unbound |
+| `inherited_text_style_follows_a_token_that_still_exists` | — | Passed: placed text bound and propagating |
+| `cargo fmt`, `cargo clippy --all-targets`, `cargo test` | — | Clean; all suites pass |
+
+Not performed: native two-tab editing with physical input, IME, or the native Theme workflow; these remain open under [#1](https://github.com/slyim/papercraft/issues/1).
