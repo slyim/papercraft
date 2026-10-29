@@ -15,7 +15,7 @@ Paper comparison uses the retained [workflow evidence](../research/paper/workflo
 | Theme | Named color tokens, bindings, propagation, detach/delete preservation, undo/redo; conditional v1/v2 persistence | No other token types, theme modes or token duplication |
 | Exchange | HTML and SVG export from the authoritative model; bounded SVG fixture exchange previously checked in VectorCraft/FigCraft | No PNG/PDF export or image/path nodes/import; SVG explicit lines do not reproduce automatic wrapping or font metrics |
 | Layout and styling | Absolute geometry, fill, uniform rectangle radius | No frames/flex, rotation/flip, strokes, per-corner radii, blend/effects or reusable components |
-| Agent interface | GUI document-path opening | No headless inspection/export, live edit protocol or local MCP |
+| Agent interface | `inspect`/`export` commands; local stdio MCP with atomic edit batches, revision guard, render-to-PNG, undo/redo and save state ([agent interface](agent-interface.md)) | No live editing of an open editor tab; batch operations cover only the current rectangle/text/token model |
 
 Source anchors: [`Document`/`Node` and exporters](../src/document.rs), [tabs, tools, canvas and inline editing](../src/app.rs), [resize/snapping geometry](../src/snap.rs). Behavioral coverage is in [`tests/tools.rs`](../tests/tools.rs), [`tests/canvas.rs`](../tests/canvas.rs), [`tests/arrangement.rs`](../tests/arrangement.rs) and the tab checks in `src/app.rs`.
 
@@ -29,16 +29,14 @@ Each remaining issue records evidence, entry points, scope/non-goals, dependenci
 
 | Priority | Issue | Ownership / dependency |
 |---|---|---|
-| P1 | [#5 Artboard PNG export](https://github.com/slyim/papercraft/issues/5) | Existing primitives only; no schema or image-node dependency |
 | P1 | [#7 Nested frames and persistent grouping](https://github.com/slyim/papercraft/issues/7) | Own next schema/transform/upgrade contract; no flex or scene-engine rewrite |
 | P1 | [#9 Plain-text line-height and alignment](https://github.com/slyim/papercraft/issues/9) | Coordinate strict-schema changes with #7; no rich text/font-picker expansion |
-| P2 | [#4 Headless inspect and HTML/SVG export](https://github.com/slyim/papercraft/issues/4) | Reuse `Document`; no live mutation, daemon or MCP |
 | P2 | [#6 Creation snapping](https://github.com/slyim/papercraft/issues/6) | Reuse `Snapper`; no equal-gap or pixel-grid expansion |
 | P2 | [#8 Portable local image placement](https://github.com/slyim/papercraft/issues/8) | After #7 and #5 storage/raster contracts; no network/AI |
 
 PNG, CLI and creation snapping can be developed independently, with one integration owner for shared export/UI files. Frame, typography and image work must not independently choose conflicting format versions. Preserve one authoritative `Document`/`Editor`, strict validation, transactional history and atomic output.
 
-Deferred beyond this queue: licensed-font/fallback work, non-color tokens, flex, editable vectors/import, multiple artboards, PDF and live MCP. Comments, shaders and generation retain the evidence/scope prerequisites in the [tool rail plan](toolbar-plan.md). No cloud or collaboration expansion is authorized by this assessment.
+Resolved on 29 October 2026: [#4](https://github.com/slyim/papercraft/issues/4) and [#5](https://github.com/slyim/papercraft/issues/5), plus a local MCP server; see [verification](verification.md#agent-interface-cli-png-export-and-local-mcp-29-october-2026). Deferred beyond this queue: licensed-font/fallback work, non-color tokens, flex, editable vectors/import, multiple artboards, PDF and live editing of an open editor tab. Comments, shaders and generation retain the evidence/scope prerequisites in the [tool rail plan](toolbar-plan.md). No cloud or collaboration expansion is authorized by this assessment.
 
 ## Historical baseline and increments — 18 October 2026
 

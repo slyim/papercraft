@@ -1,6 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() -> eframe::Result {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if let Some(status) = papercraft::cli::run(&args) {
+        std::process::exit(status);
+    }
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_icon(papercraft::ui::window_icon())

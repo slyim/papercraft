@@ -389,7 +389,10 @@ impl Document {
         }
     }
 
-    fn target_mut(&mut self, target: ColorTarget) -> Option<(&mut [u8; 4], &mut Option<u64>)> {
+    pub(crate) fn target_mut(
+        &mut self,
+        target: ColorTarget,
+    ) -> Option<(&mut [u8; 4], &mut Option<u64>)> {
         match target {
             ColorTarget::Canvas => Some((&mut self.canvas, &mut self.canvas_token)),
             ColorTarget::Background => Some((&mut self.background, &mut self.background_token)),
@@ -874,6 +877,26 @@ impl Editor {
         let value = edit(&mut self.document);
         self.commit(before)?;
         Ok(value)
+    }
+
+    /// Applies a fallible `edit` as one history step. When `edit` returns an error or
+    /// leaves the document invalid, the document is restored and history is unchanged.
+    pub fn apply<T>(
+        &mut self,
+        edit: impl FnOnce(&mut Document) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let before = self.document.clone();
+        match edit(&mut self.document) {
+            Ok(value) => {
+                self.commit(before)?;
+                self.check_selection();
+                Ok(value)
+            }
+            Err(error) => {
+                self.document = before;
+                Err(error)
+            }
+        }
     }
 
     pub fn undo(&mut self) {

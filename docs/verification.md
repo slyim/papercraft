@@ -436,3 +436,24 @@ Rust gates are formatting, locked tests and warnings-denied Clippy. The local co
 - One local release watcher lost its API connection; resuming the watcher observed the same successful run without restarting its jobs. Superseded incomplete builds were cancelled, not published.
 
 The upload action reports a non-blocking Node 20→24 runtime warning and succeeds. macOS remains ad-hoc signed/not notarized; Windows remains unsigned. Physical keyboard/trackpad, native file-dialog choices, IME, screen readers, Windows editor-window interaction and authenticated Paper equivalence remain unverified. No new Paper/Craft runtime research or npm/REA suite was run for this Rust/packaging release.
+
+## Agent interface: CLI, PNG export and local MCP (29 October 2026)
+
+Host: Windows 11 x86_64 (display scale 125%), Rust 1.99.1 `x86_64-pc-windows-gnu` with MinGW-w64 GCC 16.2. CI's Windows target remains MSVC; this host had no MSVC linker. Contract: [agent interface](agent-interface.md). Resolves [#4](https://github.com/slyim/papercraft/issues/4) and [#5](https://github.com/slyim/papercraft/issues/5).
+
+### Completed checks
+
+- Baseline before the change: `cargo test --locked`, 76 passing tests.
+- After the change: `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` and `cargo test --locked` pass with **92 tests**. New coverage: PNG size by scale, paint order and alpha blending, hidden-layer omission, transparent background, clipping, token-resolved colors, glyph pixels inside the text layer, scale/side/area limits, valid RGBA PNG bytes; CLI inspection determinism and source preservation, HTML/SVG output equal to the document API, PNG output, preservation of an existing destination after a failed export, exit status 2 for six usage errors; MCP atomic batches as one undo step, rollback naming the failing operation, stale `expected_revision`, unknown fields, invalid geometry, wrong-kind fields, invalid token names, unknown operations, save/dirty/undo state, close refusal, render image content, reopening an open file, handshake, notifications and JSON-RPC errors.
+- Actual executable in a throwaway directory: `inspect` on v1 (`legacy.crumbs`), token-bearing v2 and the Unicode exchange fixture; `export` to PNG (1× and 2×), HTML and SVG. Malformed JSON and a version-99 file exit 1 with an actionable message; `--format gif`, missing arguments, `--scale` on SVG and unknown options exit 2; `--scale 50` exits 1. An existing destination kept its bytes after both a PNG-limit and a newer-version failure; the source file's SHA-256 was unchanged.
+- PNG output inspected visually: the 2× starter document (1920×1280) and the 640×400 Unicode fixture show correct order, alpha overlap, clamped pill radius, wrapping and İ/é/Greek glyphs; CJK shows the same placeholder boxes as the canvas.
+- MCP over real stdio pipes, driven by an external JSON-RPC client: 20 of 20 checks passed, including a seven-operation batch (artboard color, two tokens, two rectangles, two text layers), rollback of a failing batch, stale-revision and unknown-field rejection, token propagation, a 960×1040 render with wrapped Turkish text, save/undo/redo dirty-state transitions, SVG export, refusal to export onto the document's own file, and a clean exit when stdin closes.
+- `cargo run --locked --example verify_native -- target/verification selected 1470x922` passes. Its screenshot is pixel-identical to the same scenario built from the unchanged baseline, so moving `paint_document` into `render.rs` did not change canvas output.
+
+### Found, not changed
+
+- On this Windows host at 125% display scale, the native scenario window captures at 1260×1341 logical pixels and the fitted artboard is cropped on the left behind the tool rail. The baseline build produces the identical image, so this predates the change; Windows editor-window interaction remains unverified as before.
+
+### Not verified
+
+- macOS and Linux runs of the new tests (expected through CI), MSVC builds on Windows, Windows release-subsystem console attachment for `inspect` in an interactive terminal (debug builds use the console subsystem), and use with a specific third-party MCP client beyond the stdio JSON-RPC client above.

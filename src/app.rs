@@ -3,6 +3,7 @@ use crate::document::{
     NEW_TEXT, Node, NodeKind, TextStyle, atomic_write,
 };
 use crate::recents::Recents;
+use crate::render::{color, export_png, font_definitions, paint_document};
 use crate::snap::{self, Frame, Guide, Handle, SNAP_DISTANCE, Side, Snapper};
 use crate::ui::{
     self, ACCENT, BODY, BORDER, CAPTION, CONTROL, ICON, ICON_SMALL, ROW, Row, SHELL, SPACE_L,
@@ -40,6 +41,8 @@ enum Intent {
 enum ExportFormat {
     Html,
     Svg,
+    /// PNG at the given pixels per artboard unit.
+    Png(f32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -365,9 +368,7 @@ impl PaperCraftApp {
     }
 
     pub fn configure(ctx: &egui::Context) {
-        let mut fonts = egui::FontDefinitions::default();
-        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-        ctx.set_fonts(fonts);
+        ctx.set_fonts(font_definitions());
         ctx.set_visuals(egui::Visuals::dark());
         ctx.global_style_mut(|s| {
             s.spacing.item_spacing = vec2(8.0, 8.0);
@@ -792,7 +793,15 @@ impl PaperCraftApp {
         let (label, extension) = match format {
             ExportFormat::Html => ("HTML", "html"),
             ExportFormat::Svg => ("SVG", "svg"),
+            ExportFormat::Png(_) => ("PNG", "png"),
         };
+        // Check PNG limits before asking for a destination.
+        if let ExportFormat::Png(scale) = format
+            && let Err(error) = crate::render::png_size(&self.editor.document, scale)
+        {
+            self.status = error;
+            return;
+        }
         let Some(path) = rfd::FileDialog::new()
             .add_filter(label, &[extension])
             .set_file_name(format!("{}.{extension}", self.editor.document.name))
@@ -801,10 +810,11 @@ impl PaperCraftApp {
             return;
         };
         let data = match format {
-            ExportFormat::Html => self.editor.document.export_html(),
-            ExportFormat::Svg => self.editor.document.export_svg(),
+            ExportFormat::Html => self.editor.document.export_html().map(String::into_bytes),
+            ExportFormat::Svg => self.editor.document.export_svg().map(String::into_bytes),
+            ExportFormat::Png(scale) => export_png(&self.editor.document, scale),
         };
-        match data.and_then(|data| atomic_write(&path, data.as_bytes())) {
+        match data.and_then(|data| atomic_write(&path, &data)) {
             Ok(()) => self.status = format!("Exported {}", path.display()),
             Err(error) => self.status = error,
         }
@@ -814,6 +824,8 @@ impl PaperCraftApp {
         for (label, format) in [
             ("Export HTML…", ExportFormat::Html),
             ("Export SVG…", ExportFormat::Svg),
+            ("Export PNG 1×…", ExportFormat::Png(1.0)),
+            ("Export PNG 2×…", ExportFormat::Png(2.0)),
         ] {
             if ui.button(label).clicked() {
                 ui.close();
@@ -1944,7 +1956,7 @@ impl PaperCraftApp {
                             .fill(CONTROL)
                             .min_size(vec2(0.0, ROW)),
                     )
-                    .on_hover_text("Export artboard as HTML or SVG");
+                    .on_hover_text("Export artboard as HTML, SVG or PNG");
                 egui::Popup::menu(&export).show(|ui| self.export_menu(ui));
                 let zoom = ui
                     .add(
@@ -3083,62 +3095,6 @@ impl PaperCraftApp {
     }
 }
 
-/// Paints the artboard and its visible layers. `preview` rounds font sizes so small
-/// thumbnails do not rasterize a separate glyph set for every scale. The text of
-/// `editing` is left to the in-place editor.
-fn paint_document(
-    painter: &Painter,
-    document: &Document,
-    origin: Pos2,
-    zoom: f32,
-    clip: Rect,
-    preview: bool,
-    editing: Option<u64>,
-) {
-    let artboard = Rect::from_min_size(origin, vec2(document.width, document.height) * zoom);
-    let painter = painter.with_clip_rect(clip);
-    painter.rect_filled(artboard, 0.0, color(document.background_color()));
-    let content = painter.with_clip_rect(clip.intersect(artboard));
-    for node in document.nodes.iter().filter(|n| !n.hidden) {
-        let rect = Rect::from_min_size(
-            origin + vec2(node.x, node.y) * zoom,
-            vec2(node.width, node.height) * zoom,
-        );
-        if !rect.intersects(content.clip_rect()) {
-            continue;
-        }
-        match node.kind {
-            NodeKind::Rectangle => {
-                content.rect_filled(
-                    rect,
-                    (node.radius.min(node.width.min(node.height) / 2.0) * zoom).min(255.0) as u8,
-                    color(document.node_fill(node)),
-                );
-            }
-            NodeKind::Text if editing == Some(node.id) => {}
-            NodeKind::Text => {
-                let mut size = node.font_size * zoom;
-                if preview {
-                    if size < 2.0 {
-                        continue;
-                    }
-                    size = (size * 2.0).round() / 2.0;
-                }
-                let fill = color(document.node_fill(node));
-                let galley = content.layout(
-                    node.text.clone(),
-                    FontId::proportional(size),
-                    fill,
-                    rect.width(),
-                );
-                content
-                    .with_clip_rect(rect.intersect(artboard).intersect(clip))
-                    .galley(rect.min, galley, fill);
-            }
-        }
-    }
-}
-
 /// Size in artboard units of `text` at `font_size`, wrapped at `width` when given.
 fn text_size(painter: &Painter, text: &str, font_size: f32, width: Option<f32>) -> Vec2 {
     let font = FontId::proportional(font_size);
@@ -3240,10 +3196,6 @@ fn outline_mesh(
         );
     }
     mesh
-}
-
-fn color(c: [u8; 4]) -> Color32 {
-    Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
 }
 
 /// Existing files use their canonical path so aliases cannot open competing tabs.
