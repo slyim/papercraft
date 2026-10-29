@@ -219,7 +219,9 @@ pub fn paint_document(
     let artboard = Rect::from_min_size(origin, vec2(document.width, document.height) * zoom);
     let painter = painter.with_clip_rect(clip);
     painter.rect_filled(artboard, 0.0, color(document.background_color()));
-    let base_clip = clip.intersect(artboard);
+    // Workspace painting is not artboard-bounded. Default exports provide the
+    // artboard as their explicit clip; region exports provide a different clip.
+    let base_clip = clip;
     for node in document
         .nodes
         .iter()
@@ -424,6 +426,26 @@ pub struct Raster {
 /// Pixel dimensions of the artboard at `scale`, or an error when the scale or the
 /// resulting image is outside the PNG export limits.
 pub fn png_size(document: &Document, scale: f32) -> Result<(u32, u32), String> {
+    png_region_size(document.artboard_bounds(), scale)
+}
+
+/// Checks a world region and its pixel budget before any rendering allocation.
+/// Positions and spans have the same limits as authored node geometry.
+pub fn png_region_size(bounds: [f32; 4], scale: f32) -> Result<(u32, u32), String> {
+    let [left, top, right, bottom] = bounds;
+    let (w, h) = (right - left, bottom - top);
+    let limit = crate::document::MAX_COORDINATE;
+    if !bounds.iter().all(|v| v.is_finite())
+        || left.abs() > limit
+        || top.abs() > limit
+        || !(1.0..=limit).contains(&w)
+        || !(1.0..=limit).contains(&h)
+    {
+        return Err(
+            "Render region requires finite x/y within ±100,000 and width/height in 1..=100,000."
+                .into(),
+        );
+    }
     if !scale.is_finite() || !PNG_SCALE.contains(&scale) {
         return Err(format!(
             "PNG scale must be between {} and {}.",
@@ -432,16 +454,16 @@ pub fn png_size(document: &Document, scale: f32) -> Result<(u32, u32), String> {
         ));
     }
     let side = |n: f32| (n * scale).round().max(1.0);
-    let (width, height) = (side(document.width), side(document.height));
+    let (width, height) = (side(w), side(h));
     if width > MAX_PNG_SIDE as f32 || height > MAX_PNG_SIDE as f32 {
         return Err(format!(
-            "PNG export is limited to {MAX_PNG_SIDE} pixels per side; this artboard is {width}×{height} at {scale}×."
+            "PNG export is limited to {MAX_PNG_SIDE} pixels per side; this region is {width}×{height} at {scale}×."
         ));
     }
     let (width, height) = (width as u32, height as u32);
     if u64::from(width) * u64::from(height) > MAX_PNG_PIXELS {
         return Err(format!(
-            "PNG export is limited to {MAX_PNG_PIXELS} pixels; this artboard is {width}×{height} at {scale}×."
+            "PNG export is limited to {MAX_PNG_PIXELS} pixels; this region is {width}×{height} at {scale}×."
         ));
     }
     Ok((width, height))
@@ -450,8 +472,18 @@ pub fn png_size(document: &Document, scale: f32) -> Result<(u32, u32), String> {
 /// Renders the artboard at `scale` pixels per document unit, independent of any
 /// window, zoom, pan or display density.
 pub fn rasterize(document: &Document, scale: f32) -> Result<Raster, String> {
+    rasterize_region(document, document.artboard_bounds(), scale)
+}
+
+/// Renders a crop of the visible world composition. Outside the legacy artboard
+/// there is no background; those pixels remain transparent.
+pub fn rasterize_region(
+    document: &Document,
+    bounds: [f32; 4],
+    scale: f32,
+) -> Result<Raster, String> {
     document.validate()?;
-    let (width, height) = png_size(document, scale)?;
+    let (width, height) = png_region_size(bounds, scale)?;
     let ctx = egui::Context::default();
     ctx.set_fonts(font_definitions());
     let screen = Rect::from_min_size(Pos2::ZERO, vec2(width as f32, height as f32));
@@ -466,7 +498,8 @@ pub fn rasterize(document: &Document, scale: f32) -> Result<Raster, String> {
         };
         let mut output = ctx.run_ui(input, |ui| {
             let painter = ui.ctx().layer_painter(LayerId::background());
-            paint_document(&painter, document, Pos2::ZERO, scale, screen, false, None);
+            let origin = pos2(-bounds[0] * scale, -bounds[1] * scale);
+            paint_document(&painter, document, origin, scale, screen, false, None);
         });
         for (id, deltas) in std::mem::take(&mut output.textures_delta.set) {
             for delta in deltas {
@@ -533,7 +566,15 @@ pub fn rasterize(document: &Document, scale: f32) -> Result<Raster, String> {
 
 /// Encodes the artboard as PNG bytes.
 pub fn export_png(document: &Document, scale: f32) -> Result<Vec<u8>, String> {
-    let raster = rasterize(document, scale)?;
+    export_png_region(document, document.artboard_bounds(), scale)
+}
+
+pub fn export_png_region(
+    document: &Document,
+    bounds: [f32; 4],
+    scale: f32,
+) -> Result<Vec<u8>, String> {
+    let raster = rasterize_region(document, bounds, scale)?;
     let mut data = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut data, raster.width, raster.height);

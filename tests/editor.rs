@@ -379,8 +379,8 @@ fn drawing_with_the_text_tool_creates_the_dragged_geometry() {
     app.editor.undo();
     assert!(app.editor.document.nodes.is_empty());
 
-    // Escape leaves a creation tool without changing the document; starting outside
-    // the artboard creates nothing.
+    // Escape leaves a creation tool without changing the document. The workspace
+    // now permits authoring outside the artboard, but not outside the canvas.
     run(&ctx, &mut app, size, vec![key(egui::Key::R, true)]);
     run(&ctx, &mut app, size, vec![key(egui::Key::Escape, true)]);
     assert_eq!(app.tool, Tool::Select);
@@ -392,6 +392,20 @@ fn drawing_with_the_text_tool_creates_the_dragged_geometry() {
         size,
         outside,
         outside + egui::vec2(60.0, 60.0),
+    );
+    assert_eq!(app.editor.document.nodes.len(), 1);
+    let node = &app.editor.document.nodes[0];
+    assert!(node.x < 0.0 && node.y < 0.0);
+    app.editor.undo();
+    assert!(app.editor.document.nodes.is_empty());
+    app.tool = Tool::Rectangle;
+    let outside_canvas = egui::pos2(80.0, 200.0);
+    pointer_drag(
+        &ctx,
+        &mut app,
+        size,
+        outside_canvas,
+        outside_canvas + egui::vec2(10.0, 40.0),
     );
     assert!(app.editor.document.nodes.is_empty());
 }

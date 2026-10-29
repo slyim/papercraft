@@ -1,6 +1,6 @@
 # PaperCraft document format
 
-Version 3 and the design-tool fields planned for it are specified in [format version 3](format-v3.md); the rules below continue to apply to it.
+Current readers accept versions 1–3. The actual released v3 typography/toolkit collision is reconciled in [format version 3](format-v3.md); it is frozen at the v0.3.0 superset. Future persisted changes require v4 or later. The [current completion roadmap](editor-completion-plan.md) governs implementation, not the historical plans below.
 
 Written 18 October 2026, before the color-token persistence change was implemented. This page records compatibility, downgrade limits and rollback for each format version.
 
@@ -23,7 +23,7 @@ Version 2 adds these fields. A version 1 document has none of them.
 
 **Writer rule.** PaperCraft writes the lowest version that can represent the document. A document with no tokens is written as version 1, without `tokens`, `next_token_id` or binding keys, so its bytes keep the version 1 shape and older PaperCraft can open it. A document with at least one token is written as version 2.
 
-**Reader rule.** Versions 1 and 2 are accepted. Version 1 containing token fields is rejected as malformed. Versions above 2 are rejected with "created by a newer PaperCraft". Unknown fields are still rejected. Bindings to missing tokens are rejected on load and on every commit, so an invalid reference can never be saved.
+**Reader rule at the v2 increment.** Those readers accepted versions 1 and 2 and rejected versions above 2. Current readers also accept v3. Version 1 containing token fields is rejected as malformed, even at default values. Unknown fields are still rejected. Bindings to missing tokens are rejected on load and on every commit, so an invalid reference can never be saved.
 
 ## Migration and preservation of originals
 

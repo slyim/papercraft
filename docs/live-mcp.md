@@ -15,7 +15,8 @@ With several editor instances, choose **Copy live MCP command** in the editor's 
 - Manual and MCP edits appear through the same GUI event loop and history. Each MCP batch is atomic and one undo step. Inspector values, layers, rendering, dirty checks and saves read that editor.
 - While a local text/property edit, gesture, rename or confirmation is pending, tools other than listing return `Editor busy`. No draft is committed or discarded by that request. Finish the interaction and inspect before retrying.
 - Reads and exports do not switch tabs. Apply/undo/redo reveal their target tab. Opening a file already in a tab returns that tab rather than reloading disk over unsaved edits.
-- Saves cannot replace another open tab's file. An in-place format upgrade requires confirmation in the GUI, or an explicit Save As path. Save does not require an interactive file dialog from the agent.
+- Saves and exports cannot replace another open tab's source file; export cannot replace its own source either. An in-place format upgrade requires confirmation in the GUI, or a new Save As path. `allow_upgrade:true` is headless-only and does not bypass live confirmation. Save does not require an interactive file dialog from the agent.
+- `document_render` and PNG `document_export` accept `region:{x,y,width,height}` or `frame_id` for bounded world crops, including off-artboard content. They share the canvas painter, resolve absolute world coordinates and report world bounds/pixel dimensions. Frame crops include the visible composition, not only descendants. HTML/SVG region export rejects explicitly. Batch-local typed references and resulting layer bounds are the same as in headless MCP; see the [agent contract](agent-interface.md).
 - Requests have a 32 MiB bound, a bounded GUI queue and response deadlines. A timeout may occur after execution started; inspect the state before retrying. The bridge never automatically repeats a mutation.
 
 ## Local IPC
@@ -26,4 +27,4 @@ Each running editor owns a private temporary session directory under the legacy 
 
 ## Format and remaining scope
 
-Version 3 adds plain-text line height and left/center/right alignment. Versions 1 and 2 remain readable and are still written when the newer fields are unnecessary. Version 3 is frozen for the 0.2.0 release; frames, images, auto layout and other planned design-tool milestones need a later format revision and remain unimplemented.
+Versions 1 and 2 remain readable and are still written when later fields are unnecessary. v0.2.0 and v0.3.0 both wrote version 3 with different supported fields; current readers preserve v0.3.0's actual shape/frame/path/stroke/shader/directive superset, with absolute child coordinates. See [format reconciliation](format-v3.md). The workspace increment does not extend v3 or reinterpret coordinates. Images, authored layout, components, pages, full hierarchy semantics and an embedded ACP/provider runner remain unimplemented. The Agent panel is explicitly local notes/presets, not agent execution. The [current roadmap](editor-completion-plan.md) separates working, partial and missing behavior.

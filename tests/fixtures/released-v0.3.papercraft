@@ -1,0 +1,120 @@
+{
+  "version": 3,
+  "name": "Released v0.3 compatibility",
+  "width": 320.0,
+  "height": 200.0,
+  "background": [
+    248,
+    247,
+    243,
+    255
+  ],
+  "canvas": [
+    40,
+    40,
+    40,
+    255
+  ],
+  "next_id": 4,
+  "next_directive_id": 2,
+  "directives": [
+    {
+      "id": 1,
+      "layer_id": 1,
+      "x": -120.0,
+      "y": 20.0,
+      "message": "Local serializer fixture"
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "Offboard screen",
+      "kind": "frame",
+      "x": -120.0,
+      "y": 20.0,
+      "width": 100.0,
+      "height": 100.0,
+      "fill": [
+        244,
+        242,
+        236,
+        255
+      ],
+      "radius": 12.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "clip": true
+    },
+    {
+      "id": 2,
+      "name": "Text",
+      "kind": "text",
+      "x": -110.0,
+      "y": 30.0,
+      "width": 80.0,
+      "height": 50.0,
+      "fill": [
+        35,
+        40,
+        48,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Release file",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "line_height": 20.0,
+      "text_align": "center",
+      "parent": 1
+    },
+    {
+      "id": 3,
+      "name": "Path",
+      "kind": "path",
+      "x": 10.0,
+      "y": 10.0,
+      "width": 100.0,
+      "height": 100.0,
+      "fill": [
+        255,
+        107,
+        43,
+        0
+      ],
+      "radius": 0.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "stroke": [
+        255,
+        107,
+        43,
+        255
+      ],
+      "stroke_width": 3.0,
+      "points": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.1,
+          1.0
+        ],
+        [
+          0.9,
+          1.0
+        ],
+        [
+          1.0,
+          0.0
+        ]
+      ]
+    }
+  ]
+}

@@ -4,7 +4,7 @@ Date: 18 October 2026, Europe/Istanbul.
 
 Build an original, local design editor in Rust with egui. Paper research informs behavior; it does not supply application code. The first slice is one local artboard, rectangle/text layers, selection and ordering, an inspector, drag/resize, pan/zoom, undo/redo, `.papercraft` JSON save/open (also accepting legacy `.crumbs` files), and HTML export. This document defines acceptance checks, not a claim that they have passed.
 
-The first slice is implemented. The [verification record](verification.md) lists completed checks and remaining manual/platform checks separately. The milestones below remain the acceptance checklist for further work.
+The initial rectangle/text slice is implemented. The **[editor completion roadmap](editor-completion-plan.md)** is now the single current roadmap and source-backed inventory. The dated milestones and claims below are historical contracts; source and reproducible behavior take precedence when they conflict. The [verification record](verification.md) lists historical checks and remaining manual/platform checks separately.
 
 Current source also implements bounded SVG exchange, color tokens, arrangement, the T1 text/creation refinements, independent document tabs, marquee/group resize and edge/center snapping. The [current gap assessment](gap-assessment.md) separates source capabilities from published downloads and ranks agent-ready work. The dated increments below remain historical contracts; the [Craft source review](craft-source-review.md) and [Paper workflow evidence](../research/paper/workflow-evidence.md) separate source/documentation claims from runtime checks.
 

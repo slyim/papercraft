@@ -107,6 +107,20 @@ impl Server {
 
     fn tool(&mut self, name: &str, args: &Map<String, Value>) -> Result<Vec<Value>, String> {
         let text = |value: Value| Ok(vec![json!({ "type": "text", "text": value.to_string() })]);
+        if matches!(name, "document_save" | "document_export")
+            && let Some(path) = opt_str(args, "path")?
+            && self.sessions.iter().any(|(id, session)| {
+                Some(id.as_str()) != args.get("document_id").and_then(Value::as_str)
+                    && session
+                        .path
+                        .as_ref()
+                        .is_some_and(|p| same_file(p, std::path::Path::new(path)))
+            })
+        {
+            return Err(
+                "The destination belongs to another open document. Choose another path.".into(),
+            );
+        }
         match name {
             "document_new" => {
                 allow(args, &["name", "width", "height"])?;
@@ -188,21 +202,46 @@ impl Server {
                     ));
                 }
                 let mut selection_update = None;
-                let created = session.editor.apply(|doc| {
+                let mut refs = BTreeMap::new();
+                let mut created = session.editor.apply(|doc| {
                     let mut created = Vec::new();
                     for (index, operation) in operations.iter().enumerate() {
-                        apply_operation(doc, operation, &mut created, &mut selection_update)
-                            .map_err(|e| {
-                                format!("Operation {index} failed: {e} No changes were applied.")
-                            })?;
+                        apply_referenced_operation(
+                            doc,
+                            operation,
+                            &mut created,
+                            &mut selection_update,
+                            &mut refs,
+                        )
+                        .map_err(|e| {
+                            format!("Operation {index} failed: {e} No changes were applied.")
+                        })?;
                     }
                     Ok(created)
                 })?;
                 if let Some(ids) = selection_update {
                     session.editor.set_selection(ids);
                 }
+                for item in &mut created {
+                    if created_kind(item["op"].as_str().unwrap_or("")) == Some("layer")
+                        && let Some(node) = session
+                            .editor
+                            .document
+                            .nodes
+                            .iter()
+                            .find(|n| Some(n.id) == item["id"].as_u64())
+                    {
+                        item["bounds"] = json!(node.bounds());
+                    }
+                }
                 let mut value = session.state(&id);
                 value["created"] = json!(created);
+                value["refs"] = json!(
+                    refs.into_iter()
+                        .map(|(label, (_, id))| (label, id))
+                        .collect::<BTreeMap<_, _>>()
+                );
+                value["content_bounds"] = json!(session.editor.document.content_bounds());
                 text(value)
             }
             "document_undo" | "document_redo" => {
@@ -219,21 +258,33 @@ impl Server {
                 text(value)
             }
             "document_render" => {
-                allow(args, &["document_id", "scale"])?;
+                allow(args, &["document_id", "scale", "region", "frame_id"])?;
                 let scale = opt_f32(args, "scale")?.unwrap_or(1.0);
                 let (id, session) = self.session(args)?;
-                let png = render::export_png(&session.editor.document, scale)?;
-                let (width, height) = render::png_size(&session.editor.document, scale)?;
+                let bounds = render_bounds(&session.editor.document, args)?;
+                let (width, height) = render::png_region_size(bounds, scale)?;
+                let png = render::export_png_region(&session.editor.document, bounds, scale)?;
                 let mut value = session.state(&id);
                 value["width"] = json!(width);
                 value["height"] = json!(height);
+                value["bounds"] = json!(bounds);
                 Ok(vec![
                     json!({ "type": "image", "data": base64(&png), "mimeType": "image/png" }),
                     json!({ "type": "text", "text": value.to_string() }),
                 ])
             }
             "document_export" => {
-                allow(args, &["document_id", "format", "path", "scale"])?;
+                allow(
+                    args,
+                    &[
+                        "document_id",
+                        "format",
+                        "path",
+                        "scale",
+                        "region",
+                        "frame_id",
+                    ],
+                )?;
                 let format = req_str(args, "format")?.to_ascii_lowercase();
                 let path = PathBuf::from(req_str(args, "path")?);
                 let scale = opt_f32(args, "scale")?.unwrap_or(1.0);
@@ -241,15 +292,31 @@ impl Server {
                 if session.path.as_ref().is_some_and(|p| same_file(p, &path)) {
                     return Err("The export path is the document's own file.".into());
                 }
-                let data = export_bytes(&session.editor.document, &format, scale)?;
+                let bounds = render_bounds(&session.editor.document, args)?;
+                let has_region = args.contains_key("region") || args.contains_key("frame_id");
+                if format != "png" && (has_region || args.contains_key("scale")) {
+                    return Err("region, frame_id and scale apply only to PNG export. Use document_render or export PNG for a bounded world crop.".into());
+                }
+                let data = if format == "png" {
+                    render::export_png_region(&session.editor.document, bounds, scale)?
+                } else {
+                    export_bytes(&session.editor.document, &format, scale)?
+                };
                 crate::document::atomic_write(&path, &data)?;
                 let mut value = session.state(&id);
+                value["bounds"] = json!(bounds);
+                if format == "png" {
+                    let (width, height) = render::png_region_size(bounds, scale)?;
+                    value["width"] = json!(width);
+                    value["height"] = json!(height);
+                }
                 value["exported"] = json!(path.display().to_string());
                 value["bytes"] = json!(data.len());
                 text(value)
             }
             "document_save" => {
-                allow(args, &["document_id", "path"])?;
+                allow(args, &["document_id", "path", "allow_upgrade"])?;
+                let allow_upgrade = opt_bool(args, "allow_upgrade")?.unwrap_or(false);
                 let path = opt_str(args, "path")?.map(PathBuf::from);
                 let (id, session) = self.session_mut(args)?;
                 let path = path
@@ -260,6 +327,9 @@ impl Server {
                     .path
                     .as_ref()
                     .is_some_and(|p| same_file(p, &path) && version > session.file_version);
+                if upgraded && !allow_upgrade {
+                    return Err("Saving would upgrade this file. Use a new path or pass allow_upgrade: true to explicitly replace the original.".into());
+                }
                 session.editor.document.save(&path)?;
                 let previous = std::mem::replace(&mut session.file_version, version);
                 session.path = Some(path);
@@ -403,6 +473,136 @@ pub(crate) fn editor_tool(
     *path = session.path;
     *saved_revision = session.saved_revision;
     result
+}
+
+/// Resolves an explicit render crop without changing any authored geometry.
+fn render_bounds(doc: &Document, args: &Map<String, Value>) -> Result<[f32; 4], String> {
+    if args.contains_key("region") && args.contains_key("frame_id") {
+        return Err("Pass region or frame_id, not both.".into());
+    }
+    if let Some(value) = args.get("region") {
+        let region = value
+            .as_object()
+            .ok_or("region must be {x, y, width, height}.")?;
+        allow(region, &["x", "y", "width", "height"])?;
+        let number =
+            |key| opt_f32(region, key)?.ok_or_else(|| format!("region.{key} is required."));
+        let (x, y, w, h) = (
+            number("x")?,
+            number("y")?,
+            number("width")?,
+            number("height")?,
+        );
+        let bounds = [x, y, x + w, y + h];
+        // Geometry and pixel budgets are checked together at the requested scale
+        // by the renderer, before allocation or writing.
+        return Ok(bounds);
+    }
+    if let Some(id) = opt_u64(args, "frame_id")? {
+        let frame = doc
+            .nodes
+            .iter()
+            .find(|n| n.id == id)
+            .ok_or_else(|| format!("No frame {id}."))?;
+        if frame.kind != NodeKind::Frame {
+            return Err(format!(
+                "Layer {id} is not a frame. Use region for a custom crop."
+            ));
+        }
+        return Ok(frame.bounds());
+    }
+    Ok(doc.artboard_bounds())
+}
+
+fn created_kind(op: &str) -> Option<&'static str> {
+    match op {
+        "create_token" => Some("token"),
+        "create_directive" => Some("directive"),
+        "create_frame" | "create_rectangle" | "create_ellipse" | "create_triangle"
+        | "create_shape" | "create_path" | "create_text" | "wrap_in_frame" | "duplicate_layers" => {
+            Some("layer")
+        }
+        _ => None,
+    }
+}
+
+type BatchRefs = BTreeMap<String, (&'static str, u64)>;
+
+fn resolve_ref(value: &mut Value, expected: &str, refs: &BatchRefs) -> Result<(), String> {
+    if let Some(object) = value.as_object() {
+        allow(object, &["ref"])?;
+        let label = req_str(object, "ref")?;
+        let &(kind, id) = refs.get(label).ok_or_else(|| {
+            format!("Unknown batch reference {label}; only earlier results may be referenced.")
+        })?;
+        if kind != expected {
+            return Err(format!("Reference {label} is a {kind}, not a {expected}."));
+        }
+        *value = json!(id);
+    }
+    Ok(())
+}
+
+fn apply_referenced_operation(
+    doc: &mut Document,
+    operation: &Value,
+    created: &mut Vec<Value>,
+    selection: &mut Option<Vec<u64>>,
+    refs: &mut BatchRefs,
+) -> Result<(), String> {
+    let mut operation = operation.clone();
+    let fields = operation
+        .as_object_mut()
+        .ok_or("Each operation must be an object.")?;
+    let op = req_str(fields, "op")?.to_owned();
+    let label = opt_str(fields, "ref")?.map(str::to_owned);
+    if let Some(label) = &label {
+        if label.is_empty()
+            || label.len() > 64
+            || !label
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+        {
+            return Err("ref must contain 1–64 ASCII letters/digits, _ or -.".into());
+        }
+        if refs.contains_key(label) {
+            return Err(format!("Duplicate batch reference {label}."));
+        }
+        if created_kind(&op).is_none() || op == "duplicate_layers" {
+            return Err(
+                "ref is supported only on single-result create operations and wrap_in_frame."
+                    .into(),
+            );
+        }
+        fields.remove("ref");
+    }
+    for (key, value) in fields.iter_mut() {
+        let expected = match key.as_str() {
+            "id" if matches!(op.as_str(), "update_token" | "delete_token") => "token",
+            "id" if matches!(op.as_str(), "resolve_directive" | "delete_directive") => "directive",
+            "id" | "parent" | "layer_id" => "layer",
+            "fill_token" | "stroke_token" | "background_token" | "canvas_token" => "token",
+            "ids" => {
+                if let Some(ids) = value.as_array_mut() {
+                    for id in ids {
+                        resolve_ref(id, "layer", refs)?;
+                    }
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        resolve_ref(value, expected, refs)?;
+    }
+    apply_operation(doc, &operation, created, selection)?;
+    if let Some(label) = label {
+        let id = created
+            .last()
+            .and_then(|v| v["id"].as_u64())
+            .ok_or("Operation returned no identifier.")?;
+        refs.insert(label, (created_kind(&op).expect("checked above"), id));
+    }
+    Ok(())
 }
 
 /// Applies one batch operation directly to `doc`. Validation of the whole document
@@ -1227,13 +1427,22 @@ const INSTRUCTIONS: &str = "PaperCraft edits local .papercraft documents. Open o
 inspect it, then send edits with document_apply as one batch per logical change; pass \
 expected_revision from your last inspect to avoid editing a state you have not seen. A batch is \
 all-or-nothing and one undo step. Use document_render to check the result visually, then \
-document_save. Every result reports revision, saved_revision and dirty.";
+document_save. Node x/y are absolute world coordinates even with a parent. Name a single created \
+result with ref and use {ref: label} in matching ID fields later in the same batch. \
+Use document_render with frame_id or region to inspect distant content. HTML/SVG remain artboard-only \
+and reject shaders/ancestor clipping. Headless in-place format upgrades require allow_upgrade:true; \
+live upgrades require GUI confirmation or a new path. State results report revision, saved_revision and dirty.";
 
 fn tools() -> Value {
     let id = json!({ "type": "string", "description": "Identifier returned by document_open or document_new." });
     let color = json!({ "description": "\"#rgb\", \"#rrggbb\", \"#rrggbbaa\" or [r, g, b, a]." });
-    let token_ref =
-        json!({ "description": "Token id (integer), token name (string), or null to detach." });
+    let local_ref = json!({"type":"object", "additionalProperties":false, "required":["ref"], "properties":{"ref":{"type":"string","minLength":1,"maxLength":64,"pattern":"^[A-Za-z0-9_-]+$"}}});
+    let layer_ref = json!({"oneOf":[{"type":"integer","minimum":1},local_ref]});
+    let token_ref = json!({ "oneOf":[{"type":"integer","minimum":1},{"type":"string"},{"type":"null"},local_ref], "description": "Token id, name, earlier typed batch reference, or null to detach." });
+    let region = json!({"type":"object","additionalProperties":false,"required":["x","y","width","height"],"properties":{
+        "x":{"type":"number","minimum":-100000,"maximum":100000}, "y":{"type":"number","minimum":-100000,"maximum":100000},
+        "width":{"type":"number","minimum":1,"maximum":100000}, "height":{"type":"number","minimum":1,"maximum":100000}
+    }});
     let mut op_properties = json!({
         "op": { "type": "string", "enum": [
             "create_frame", "create_rectangle", "create_ellipse", "create_triangle", "create_shape",
@@ -1242,26 +1451,27 @@ fn tools() -> Value {
             "wrap_in_frame", "set_artboard", "create_token", "update_token", "delete_token",
             "create_directive", "resolve_directive", "delete_directive"
         ] },
-        "id": { "description": "Layer, token or directive id (or token name for update_token/delete_token)." },
-        "ids": { "type": "array", "items": { "type": "integer" }, "description": "Layer ids." },
+        "ref": { "type":"string", "minLength":1, "maxLength":64, "pattern":"^[A-Za-z0-9_-]+$", "description":"Name a single created result for use later in this batch as {ref: label}; not persisted." },
+        "id": { "oneOf":[{"type":"integer","minimum":1},{"type":"string"},local_ref], "description": "Layer/token/directive id or typed batch reference; token names only on token operations." },
+        "ids": { "type": "array", "items": layer_ref, "description": "Layer ids or earlier layer references." },
         "name": { "type": "string" },
         "shape": { "type": "string", "enum": ["rectangle", "ellipse", "triangle"] },
-        "x": { "type": "number" },
-        "y": { "type": "number" },
-        "width": { "type": "number" },
-        "height": { "type": "number" },
+        "x": { "type": "number", "minimum":-100000, "maximum":100000, "description":"Absolute world x, including children." },
+        "y": { "type": "number", "minimum":-100000, "maximum":100000, "description":"Absolute world y, including children." },
+        "width": { "type": "number", "minimum":1, "maximum":100000 },
+        "height": { "type": "number", "minimum":1, "maximum":100000 },
         "fill": color.clone(),
         "fill_token": token_ref.clone(),
-        "radius": { "type": "number", "description": "Corner radius (rectangle and frame layers only)." },
+        "radius": { "type": "number", "minimum":0, "maximum":100000, "description": "Corner radius (rectangle and frame layers only)." },
         "text": { "type": "string" },
-        "font_size": { "type": "number" },
+        "font_size": { "type": "number", "minimum":1, "maximum":512 },
     });
     op_properties
         .as_object_mut()
         .expect("object")
         .extend(
             json!({
-                "line_height": { "type": ["number", "null"] },
+                "line_height": { "type": ["number", "null"], "minimum":1, "maximum":4096 },
                 "text_align": { "type": "string", "enum": ["left", "center", "right"] },
                 "fit_text": { "type": "boolean", "description": "When true on a text layer, sets height to the measured text height." },
                 "hidden": { "type": "boolean" },
@@ -1286,16 +1496,16 @@ fn tools() -> Value {
         .expect("object")
         .extend(
             json!({
-                "parent": { "type": ["integer", "null"], "description": "Parent frame layer id, or null for top-level." },
+                "parent": { "oneOf":[layer_ref,{"type":"null"}], "description": "Earlier frame id or batch reference, or null. Child x/y stay absolute world coordinates." },
                 "clip": { "type": "boolean", "description": "Clip child layers to frame bounds (frame layers only)." },
                 "stroke": color,
                 "stroke_token": token_ref,
                 "stroke_width": { "type": "number", "minimum": 0, "maximum": 1000 },
-                "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "Normalized [x, y] path control points in 0..=1 (path layers only)." },
-                "svg_path": { "type": "string", "description": "SVG path data ('M x y L x y ... Z') normalized into path points (path layers only)." },
+                "points": { "type": "array", "minItems":2, "maxItems":10000, "items": { "type": "array", "minItems":2, "maxItems":2, "items": { "type": "number", "minimum":0, "maximum":1 } }, "description": "Normalized straight path vertices; not curve control points (path layers only)." },
+                "svg_path": { "type": "string", "description": "One absolute M/L contour with optional final Z, normalized into vertices. Relative/curve/multiple-subpath input rejects (path layers only)." },
                 "closed": { "type": "boolean", "description": "Whether the vector path is closed (path layers only)." },
                 "shader": { "type": ["object", "null"], "description": "Procedural shader fill {kind: linear_gradient|radial_gradient|mesh|grain|halftone, secondary?, angle?, intensity?} or null." },
-                "layer_id": { "type": ["integer", "null"], "description": "Optional target layer id for an agent directive." },
+                "layer_id": { "oneOf":[layer_ref,{"type":"null"}], "description": "Optional target layer id or earlier batch reference for a directive." },
                 "message": { "type": "string", "description": "Agent directive note or prompt." },
                 "resolved": { "type": "boolean", "description": "Whether the directive is resolved (default true)." }
             })
@@ -1323,18 +1533,18 @@ fn tools() -> Value {
         },
         {
             "name": "document_inspect",
-            "description": "Describe the artboard, ordered layers (paint order, first is bottom), color tokens and agent directives. Colors are resolved #rrggbbaa values.",
+            "description": "Inspect absolute world geometry, artboard/content/layer bounds, effective visibility/locking, capabilities/limitations, ordered layers (first is bottom), tokens, directives and revision/selection state. Colors are resolved #rrggbbaa values.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id"],
                 "properties": { "document_id": id } }
         },
         {
             "name": "document_apply",
-            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_frame, create_rectangle, create_ellipse, create_triangle, create_shape, create_path, create_text {name,shape,parent,clip,x,y,width,height,fill,fill_token,stroke,stroke_token,stroke_width,radius,points,svg_path,closed,shader|text,font_size,line_height,text_align,fit_text,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; select_layers {ids}; align_layers {ids,align}; distribute_layers {ids,axis}; duplicate_layers {ids,offset_x,offset_y}; wrap_in_frame {ids,name?}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id|name}; create_directive {layer_id?,x?,y?,message}; resolve_directive {id,resolved?}; delete_directive {id}. Tokens may be referenced by id or name. A literal fill/stroke detaches a token; fill_token/stroke_token null detaches and keeps the color. Unknown fields are errors. Created ids are returned in order.",
+            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_frame, create_rectangle, create_ellipse, create_triangle, create_shape, create_path, create_text {name,shape,parent,clip,x,y,width,height,fill,fill_token,stroke,stroke_token,stroke_width,radius,points,svg_path,closed,shader|text,font_size,line_height,text_align,fit_text,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; select_layers {ids}; align_layers {ids,align}; distribute_layers {ids,axis}; duplicate_layers {ids,offset_x,offset_y}; wrap_in_frame {ids,name?}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id|name}; create_directive {layer_id?,x?,y?,message}; resolve_directive {id,resolved?}; delete_directive {id}. Tokens may be referenced by id or name. A literal fill/stroke detaches a token; fill_token/stroke_token null detaches and keeps the color. Unknown fields are errors. Single-result creations/wrap may add ref; later matching IDs accept {ref:label}, typed and batch-local. Returns ordered created ids with final layer bounds, refs, content_bounds and state.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id", "operations"],
                 "properties": {
                     "document_id": id,
-                    "expected_revision": { "type": "integer", "description": "Reject the batch unless the document is at this revision." },
-                    "operations": { "type": "array", "items": { "type": "object", "required": ["op"],
+                    "expected_revision": { "type": "integer", "minimum":0, "description": "Reject the batch unless the document is at this revision." },
+                    "operations": { "type": "array", "minItems":1, "maxItems":10000, "items": { "type": "object", "additionalProperties":false, "required": ["op"],
                         "properties": op_properties } } } }
         },
         {
@@ -1351,22 +1561,24 @@ fn tools() -> Value {
         },
         {
             "name": "document_render",
-            "description": "Render the artboard to PNG with the editor's own text layout, independent of any window. Returns the image.",
+            "description": "Render PNG with the canvas painter. Default is the artboard; pass region or frame_id (not both) for a world crop of the entire visible composition. Outside the artboard is transparent. Returns image, world bounds, dimensions and state.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id"],
-                "properties": { "document_id": id, "scale": { "type": "number", "minimum": 0.1, "maximum": 8, "default": 1 } } }
+                "not":{"required":["region","frame_id"]},
+                "properties": { "document_id": id, "region":region, "frame_id":{"type":"integer","minimum":1}, "scale": { "type": "number", "minimum": 0.1, "maximum": 8, "default": 1 } } }
         },
         {
             "name": "document_export",
-            "description": "Export the artboard to html, svg or png at path (written atomically).",
+            "description": "Export atomically. HTML/SVG are artboard-only with text font/wrap limitations; shaders and ancestor clipping reject (use PNG). PNG accepts region or frame_id for a bounded world crop. Open source paths are protected.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id", "format", "path"],
+                "not":{"required":["region","frame_id"]},
                 "properties": { "document_id": id, "format": { "type": "string", "enum": ["html", "svg", "png"] },
-                    "path": { "type": "string" }, "scale": { "type": "number", "minimum": 0.1, "maximum": 8 } } }
+                    "path": { "type": "string" }, "region":region, "frame_id":{"type":"integer","minimum":1}, "scale": { "type": "number", "minimum": 0.1, "maximum": 8 } } }
         },
         {
             "name": "document_save",
-            "description": "Validate and write the document atomically to its file, or to path (which becomes its file).",
+            "description": "Validate and save atomically. Headless in-place upgrades require allow_upgrade:true; live upgrades require GUI confirmation or a new path. Other open source files are protected.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id"],
-                "properties": { "document_id": id, "path": { "type": "string" } } }
+                "properties": { "document_id": id, "path": { "type": "string" }, "allow_upgrade":{"type":"boolean","default":false} } }
         },
         {
             "name": "document_close",

@@ -1,4 +1,4 @@
-//! Canvas gesture geometry in artboard units: resize handles, mapping layers from one
+//! Canvas gesture geometry in absolute world units: resize handles, mapping layers from one
 //! frame to another, and snapping to the edges and centers of layers and the artboard.
 
 /// Axis-aligned bounds `[left, top, right, bottom]`.

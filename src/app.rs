@@ -44,7 +44,17 @@ enum ExportFormat {
     Svg,
     /// PNG at the given pixels per artboard unit.
     Png(f32),
+    SelectionPng,
 }
+
+#[derive(Clone, Copy)]
+enum FitTarget {
+    Artboard,
+    Content,
+    Selection,
+}
+
+const MIN_ZOOM: f32 = 0.001;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
@@ -73,7 +83,7 @@ pub struct ToolSpec {
     pub group: u8,
 }
 
-/// Tools in rail order. Only implemented tools are listed.
+/// Rail entries. The legacy Path preset is explicitly not an authored Pen tool.
 pub const TOOLS: [ToolSpec; 7] = [
     ToolSpec {
         tool: Tool::Select,
@@ -106,7 +116,7 @@ pub const TOOLS: [ToolSpec; 7] = [
     ToolSpec {
         tool: Tool::Pen,
         glyph: icon::PEN_NIB,
-        label: "Pen",
+        label: "Path preset",
         key: Key::P,
         group: 1,
     },
@@ -149,6 +159,8 @@ enum RightTab {
 
 struct Drag {
     before: Document,
+    /// Temporary geometry, never authoritative until a successful release.
+    preview: Document,
     start: Pos2,
     /// Layers moved together, or the single resized layer.
     nodes: IdSet,
@@ -168,6 +180,8 @@ struct Marquee {
     current: Pos2,
     /// Selection kept when the marquee started with Shift.
     base: Vec<u64>,
+    /// Selection restored if the gesture is cancelled.
+    before: Vec<u64>,
 }
 
 /// A token change requested by an inspector color control, applied after the panel.
@@ -266,7 +280,7 @@ struct Tab {
     path: Option<PathBuf>,
     zoom: f32,
     pan: Vec2,
-    fit: bool,
+    fit: Option<FitTarget>,
     file_version: u32,
     selected_token: Option<u64>,
     text_style: TextStyle,
@@ -285,7 +299,7 @@ impl Tab {
             path: None,
             zoom: 1.0,
             pan: Vec2::ZERO,
-            fit: true,
+            fit: Some(FitTarget::Artboard),
             selected_token: None,
             text_style: TextStyle::default(),
             dirty: false,
@@ -310,10 +324,14 @@ pub struct PaperCraftApp {
     status: String,
     zoom: f32,
     pan: Vec2,
-    fit: bool,
+    fit: Option<FitTarget>,
     drag: Option<Drag>,
     marquee: Option<Marquee>,
     creation: Option<Creation>,
+    /// A cancelled press stays inert through release, even before drag threshold.
+    ignore_canvas_pointer: bool,
+    /// Last observed input state, including a press before the drag threshold.
+    pointer_down: bool,
     text_edit: Option<TextEditing>,
     /// Style of the text layer most recently selected; new text layers use it.
     text_style: TextStyle,
@@ -372,10 +390,12 @@ impl PaperCraftApp {
             status: "Starter document · local and editable".into(),
             zoom: 1.0,
             pan: Vec2::ZERO,
-            fit: true,
+            fit: Some(FitTarget::Artboard),
             drag: None,
             marquee: None,
             creation: None,
+            ignore_canvas_pointer: false,
+            pointer_down: false,
             text_edit: None,
             text_style: TextStyle::default(),
             snapping: true,
@@ -558,7 +578,8 @@ impl PaperCraftApp {
             "document_id": self.live_id(index), "path": self.tab_path(index),
             "revision": editor.revision(), "saved_revision": saved_revision,
             "dirty": self.tab_dirty(index), "can_undo": editor.can_undo(),
-            "can_redo": editor.can_redo(), "active": index == self.active,
+            "can_redo": editor.can_redo(), "selected_ids": editor.selection(),
+            "active": index == self.active,
         })
     }
 
@@ -590,6 +611,7 @@ impl PaperCraftApp {
             || self.drag.is_some()
             || self.creation.is_some()
             || self.marquee.is_some()
+            || self.pointer_down
             || self.pending.is_some()
             || self.upgrade_prompt
         {
@@ -644,7 +666,7 @@ impl PaperCraftApp {
             self.close_tab();
             return text(json!({"closed":id}));
         }
-        if name == "document_save" {
+        if matches!(name, "document_save" | "document_export") {
             let destination = opt_str(args, "path")?
                 .map(PathBuf::from)
                 .or_else(|| self.tab_path(index).map(PathBuf::from));
@@ -655,16 +677,19 @@ impl PaperCraftApp {
                             .tab_path(i)
                             .is_some_and(|p| crate::cli::same_file(p, path))
                 }) {
-                    return Err("The save path belongs to another open tab.".into());
+                    return Err(
+                        "The destination belongs to another open tab. Choose another path.".into(),
+                    );
                 }
                 let version = if index == self.active {
                     self.file_version
                 } else {
                     self.tabs[index].file_version
                 };
-                if self
-                    .tab_path(index)
-                    .is_some_and(|p| crate::cli::same_file(p, path))
+                if name == "document_save"
+                    && self
+                        .tab_path(index)
+                        .is_some_and(|p| crate::cli::same_file(p, path))
                     && version < self.tab_document(index).required_version()
                 {
                     return Err("Saving would upgrade this file. Use a new path or confirm the upgrade in the editor.".into());
@@ -803,11 +828,9 @@ impl PaperCraftApp {
 
     /// Drops in-progress gestures and edits that belong to the active document.
     fn clear_transient(&mut self) {
+        self.cancel_canvas_gesture();
         self.property_before = None;
         self.text_edit = None;
-        self.drag = None;
-        self.creation = None;
-        self.marquee = None;
         self.renaming = None;
         self.upgrade_prompt = false;
     }
@@ -816,6 +839,7 @@ impl PaperCraftApp {
     fn open_tab(&mut self, document: Document, path: Option<PathBuf>) {
         if self.document_open {
             self.flush_properties();
+            self.clear_transient();
             self.swap_tab(self.active);
             self.active += 1;
             self.tabs.insert(self.active, Tab::placeholder());
@@ -834,7 +858,7 @@ impl PaperCraftApp {
             return false;
         }
         // Uncommitted edits change the document without a new revision.
-        if self.property_before.is_some() || self.drag.is_some() || self.text_edit.is_some() {
+        if self.property_before.is_some() || self.text_edit.is_some() {
             return self.editor.document != self.saved;
         }
         let revision = self.editor.revision();
@@ -932,7 +956,7 @@ impl PaperCraftApp {
         self.editor = Editor::new(document);
         self.saved_revision = Some(0);
         self.path = path;
-        self.fit = true;
+        self.fit = Some(FitTarget::Artboard);
         self.property_before = None;
         self.drag = None;
         self.marquee = None;
@@ -1084,7 +1108,7 @@ impl PaperCraftApp {
         let (label, extension) = match format {
             ExportFormat::Html => ("HTML", "html"),
             ExportFormat::Svg => ("SVG", "svg"),
-            ExportFormat::Png(_) => ("PNG", "png"),
+            ExportFormat::Png(_) | ExportFormat::SelectionPng => ("PNG", "png"),
         };
         // Check PNG limits before asking for a destination.
         if let ExportFormat::Png(scale) = format
@@ -1093,6 +1117,25 @@ impl PaperCraftApp {
             self.status = error;
             return;
         }
+        let data = match format {
+            ExportFormat::Html => self.editor.document.export_html().map(String::into_bytes),
+            ExportFormat::Svg => self.editor.document.export_svg().map(String::into_bytes),
+            ExportFormat::Png(scale) => export_png(&self.editor.document, scale),
+            ExportFormat::SelectionPng => self
+                .editor
+                .selection_bounds()
+                .ok_or_else(|| "Select visible, unlocked layers to export a region.".to_string())
+                .and_then(|bounds| {
+                    crate::render::export_png_region(&self.editor.document, bounds, 1.0)
+                }),
+        };
+        let data = match data {
+            Ok(data) => data,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
         let Some(path) = rfd::FileDialog::new()
             .add_filter(label, &[extension])
             .set_file_name(format!("{}.{extension}", self.editor.document.name))
@@ -1100,12 +1143,14 @@ impl PaperCraftApp {
         else {
             return;
         };
-        let data = match format {
-            ExportFormat::Html => self.editor.document.export_html().map(String::into_bytes),
-            ExportFormat::Svg => self.editor.document.export_svg().map(String::into_bytes),
-            ExportFormat::Png(scale) => export_png(&self.editor.document, scale),
-        };
-        match data.and_then(|data| atomic_write(&path, &data)) {
+        if (0..self.tabs.len()).any(|i| {
+            self.tab_path(i)
+                .is_some_and(|p| crate::cli::same_file(p, &path))
+        }) {
+            self.status = "Export cannot replace an open document. Choose another path.".into();
+            return;
+        }
+        match atomic_write(&path, &data) {
             Ok(()) => self.status = format!("Exported {}", path.display()),
             Err(error) => self.status = error,
         }
@@ -1117,6 +1162,7 @@ impl PaperCraftApp {
             ("Export SVG…", ExportFormat::Svg),
             ("Export PNG 1×…", ExportFormat::Png(1.0)),
             ("Export PNG 2×…", ExportFormat::Png(2.0)),
+            ("Export selection PNG 1×…", ExportFormat::SelectionPng),
         ] {
             if ui.button(label).clicked() {
                 ui.close();
@@ -1174,7 +1220,7 @@ impl PaperCraftApp {
 
     /// Adds a text layer at `at` and edits it. Without `rect` the layer is sized to its
     /// content and keeps following it while edited.
-    fn place_text(&mut self, painter: &Painter, at: Pos2, rect: Option<Rect>) {
+    fn place_text(&mut self, painter: &Painter, at: Pos2, rect: Option<Rect>, parent: Option<u64>) {
         self.sync_text_style();
         let style = self.text_style;
         let geometry = match rect {
@@ -1184,7 +1230,10 @@ impl PaperCraftApp {
                 [at.x, at.y, size.x, size.y]
             }
         };
-        match self.editor.add_text_at(geometry, style) {
+        match self
+            .editor
+            .add_configured_at(NodeKind::Text, geometry, style, parent, None)
+        {
             Ok(id) => self.begin_text_edit(id, rect.is_none()),
             Err(error) => self.status = error,
         }
@@ -1193,7 +1242,7 @@ impl PaperCraftApp {
     /// Zooms around the canvas center by `factor`.
     fn zoom_by(&mut self, factor: f32) {
         let old = self.zoom;
-        self.zoom = (self.zoom * factor).clamp(0.05, 4.0);
+        self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, 4.0);
         self.pan *= self.zoom / old;
     }
 
@@ -1299,7 +1348,19 @@ impl PaperCraftApp {
             {
                 self.begin_text_edit(id, false);
             }
-            if ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::F)) {
+            if ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::Num1)) {
+                self.fit = Some(FitTarget::Content);
+            } else if ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::Num2)) {
+                if self.editor.selection_bounds().is_some() {
+                    self.fit = Some(FitTarget::Selection);
+                } else {
+                    self.status =
+                        "Select a visible, unlocked layer to fit, or use Shift+1 for content."
+                            .into();
+                }
+            } else if ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::Num0)) {
+                self.fit = Some(FitTarget::Artboard);
+            } else if ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::F)) {
                 if !self.editor.arrangeable().is_empty() {
                     self.flush_properties();
                     let result = self.editor.wrap_selection_in_frame().map(|_| ());
@@ -1348,7 +1409,27 @@ impl PaperCraftApp {
         self.result(result);
     }
 
+    /// Runs before live requests in both visible UI and background logic frames.
+    fn process_canvas_input(&mut self, ctx: &egui::Context) {
+        self.pointer_down = ctx.input(|i| i.pointer.any_down());
+        let gesture = self.drag.is_some() || self.creation.is_some() || self.marquee.is_some();
+        if gesture || self.pointer_down {
+            let lost_focus = ctx.input(|i| {
+                !i.focused
+                    || i.events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::WindowFocused(false)))
+            });
+            let escape = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+            if lost_focus || escape {
+                self.cancel_canvas_gesture();
+                self.ignore_canvas_pointer = true;
+            }
+        }
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.process_canvas_input(ui.ctx());
         self.poll_live(ui.ctx());
         let ctx = ui.ctx().clone();
         let finish_gesture_first =
@@ -1482,7 +1563,8 @@ impl PaperCraftApp {
                             ),
                             ("⌘ / Ctrl + Shift + H, L", "Hide / lock selection"),
                             ("Delete / Backspace", "Delete unlocked selection"),
-                            ("F", "Fit artboard"),
+                            ("F / Shift + F", "Frame tool / wrap selection"),
+                            ("Shift + 1 / 2 / 0", "Fit content / selection / artboard"),
                             ("Space + drag / middle drag", "Pan"),
                             ("Scroll", "Pan"),
                             ("⌘ / Ctrl + scroll", "Zoom around pointer"),
@@ -1493,6 +1575,10 @@ impl PaperCraftApp {
                         }
                     });
             });
+        // Consume the eventual release in every view, including the dashboard.
+        if !ctx.input(|i| i.pointer.any_down()) {
+            self.ignore_canvas_pointer = false;
+        }
     }
 
     fn tab_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -2322,8 +2408,18 @@ impl PaperCraftApp {
                     if item(ui, "Zoom to 100%", "") {
                         self.zoom_by(1.0 / self.zoom);
                     }
-                    if item(ui, "Zoom to fit", "F") {
-                        self.fit = true;
+                    if item(ui, "Fit content", "Shift+1") {
+                        self.fit = Some(FitTarget::Content);
+                    }
+                    if item(ui, "Fit selection", "Shift+2") {
+                        if self.editor.selection_bounds().is_some() {
+                            self.fit = Some(FitTarget::Selection);
+                        } else {
+                            self.status = "Select a visible, unlocked layer to fit.".into();
+                        }
+                    }
+                    if item(ui, "Fit artboard", "Shift+0") {
+                        self.fit = Some(FitTarget::Artboard);
                     }
                 });
             },
@@ -3114,18 +3210,13 @@ impl PaperCraftApp {
     }
 
     fn agent_panel(&mut self, ui: &mut egui::Ui) {
-        const MODELS: [&str; 4] = [
-            "Gemini 4 Argon",
-            "Claude Opus",
-            "SVG Vector Specialist",
-            "Shader & Theme Artist",
-        ];
+        const CATEGORIES: [&str; 4] = ["General", "Interface review", "Vectors", "Appearance"];
         let text_margin = egui::Margin::symmetric(8, 4);
         let text_frame = egui::Frame::NONE
             .fill(CONTROL)
             .corner_radius(ui::RADIUS)
             .inner_margin(text_margin);
-        inspector_heading(ui, "ACP Agent Studio", true, false);
+        inspector_heading(ui, "Local notes & presets", true, false);
         let mut gen_badge = false;
         let mut apply_aurora = false;
         let mut wrap_frame = false;
@@ -3133,12 +3224,12 @@ impl PaperCraftApp {
         let mut run_prompt = false;
         inspector_body(ui, |ui| {
             let status_text = if self.live.is_some() {
-                "● Live MCP Connected"
+                "Live MCP session available"
             } else {
-                "● Live MCP Ready (Local)"
+                "No live MCP session"
             };
             ui.label(RichText::new(status_text).size(CAPTION).color(ACCENT));
-            for (index, model) in MODELS.iter().enumerate() {
+            for (index, model) in CATEGORIES.iter().enumerate() {
                 let mut active = self.agent_model == index;
                 if ui::check_row(ui, &mut active, model, "", true).clicked() {
                     self.agent_model = index;
@@ -3147,16 +3238,17 @@ impl PaperCraftApp {
             ui.add(
                 egui::TextEdit::multiline(&mut self.agent_prompt)
                     .id(egui::Id::new(("agent_prompt", self.document_key)))
-                    .hint_text(RichText::new("Prompt the active ACP agent…").color(TEXT_DIM))
+                    .hint_text(RichText::new("Record a note (no agent execution)…").color(TEXT_DIM))
                     .frame(text_frame)
                     .margin(text_margin)
                     .desired_rows(3)
                     .desired_width(f32::INFINITY),
             );
-            if ui::wide_button(ui, "Dispatch Agent Prompt", "", true).clicked() {
+            ui.label(RichText::new("External MCP clients edit this document. These presets do not run a provider or ACP agent.").size(CAPTION).color(TEXT_DIM));
+            if ui::wide_button(ui, "Record note", "", true).clicked() {
                 run_prompt = true;
             }
-            if ui::wide_button(ui, "Generate Vector Badge (SVG Path)", "", true).clicked() {
+            if ui::wide_button(ui, "Insert preset vector badge", "", true).clicked() {
                 gen_badge = true;
             }
             if ui::wide_button(ui, "Apply Aurora Shader to Selection", "", true).clicked() {
@@ -3165,14 +3257,14 @@ impl PaperCraftApp {
             if ui::wide_button(ui, "Wrap Selection in Frame", "", true).clicked() {
                 wrap_frame = true;
             }
-            if ui::wide_button(ui, "Copy ACP / Live MCP Command", "", true).clicked() {
+            if ui::wide_button(ui, "Copy Live MCP Command", "", true).clicked() {
                 copy_cmd = true;
             }
             for entry in self.agent_log.iter().rev().take(4) {
                 ui.label(RichText::new(entry).size(CAPTION).color(TEXT_DIM));
             }
         });
-        let model_name = MODELS[self.agent_model.min(MODELS.len() - 1)];
+        let model_name = CATEGORIES[self.agent_model.min(CATEGORIES.len() - 1)];
         if run_prompt {
             let prompt = self.agent_prompt.trim().to_string();
             if !prompt.is_empty() {
@@ -3182,33 +3274,47 @@ impl PaperCraftApp {
         }
         if gen_badge {
             self.flush_properties();
-            let r = self
-                .editor
-                .add_at(NodeKind::Path, 160.0, 140.0, 160.0, 160.0);
-            if r.is_ok()
-                && let Some(id) = self.editor.selected()
-                && let Some(node) = self.editor.document.nodes.iter_mut().find(|n| n.id == id)
-            {
-                node.name = "Vector Badge".into();
-                node.points = vec![
-                    [0.5, 0.0],
-                    [0.62, 0.35],
-                    [0.98, 0.35],
-                    [0.68, 0.57],
-                    [0.79, 0.91],
-                    [0.5, 0.70],
-                    [0.21, 0.91],
-                    [0.32, 0.57],
-                    [0.02, 0.35],
-                    [0.38, 0.35],
-                ];
-                node.closed = true;
-                self.editor.document.normalize();
-                self.dirty_cache.set(None);
-                self.agent_log
-                    .push(format!("{model_name}: Generated Vector Badge #{id}"));
+            let result = self.editor.apply(|doc| {
+                let id = doc.next_id;
+                doc.next_id = id
+                    .checked_add(1)
+                    .ok_or("Layer identifiers are exhausted.")?;
+                doc.nodes.push(Node {
+                    id,
+                    name: "Vector Badge".into(),
+                    kind: NodeKind::Path,
+                    x: 160.0,
+                    y: 140.0,
+                    width: 160.0,
+                    height: 160.0,
+                    fill: [255, 107, 43, 0],
+                    stroke: Some([255, 107, 43, 255]),
+                    stroke_width: 3.0,
+                    points: vec![
+                        [0.5, 0.0],
+                        [0.62, 0.35],
+                        [0.98, 0.35],
+                        [0.68, 0.57],
+                        [0.79, 0.91],
+                        [0.5, 0.70],
+                        [0.21, 0.91],
+                        [0.32, 0.57],
+                        [0.02, 0.35],
+                        [0.38, 0.35],
+                    ],
+                    closed: true,
+                    ..Node::default()
+                });
+                Ok(id)
+            });
+            match result {
+                Ok(id) => {
+                    self.editor.select(Some(id));
+                    self.agent_log
+                        .push(format!("{model_name}: Inserted preset badge #{id}"));
+                }
+                Err(error) => self.status = error,
             }
-            self.result(r);
         }
         if apply_aurora {
             self.flush_properties();
@@ -3419,8 +3525,35 @@ impl PaperCraftApp {
     /// Bounds and layers that resize handles act on: the visible, unlocked selected
     /// layers. A single layer resizes alone; several scale together.
     fn resize_target(&self) -> Option<(Frame, IdSet)> {
-        let frame = self.editor.selection_bounds()?;
-        Some((frame, self.editor.arrangeable().into_iter().collect()))
+        let ids: IdSet = self.editor.arrangeable().into_iter().collect();
+        let frame = if let Some(drag) = &self.drag {
+            drag.preview
+                .nodes
+                .iter()
+                .filter(|n| ids.contains(&n.id))
+                .map(Node::bounds)
+                .reduce(|a, b| {
+                    [
+                        a[0].min(b[0]),
+                        a[1].min(b[1]),
+                        a[2].max(b[2]),
+                        a[3].max(b[3]),
+                    ]
+                })?
+        } else {
+            self.editor.selection_bounds()?
+        };
+        Some((frame, ids))
+    }
+
+    fn cancel_canvas_gesture(&mut self) {
+        self.ignore_canvas_pointer |=
+            self.drag.is_some() || self.creation.is_some() || self.marquee.is_some();
+        self.drag = None;
+        self.creation = None;
+        if let Some(marquee) = self.marquee.take() {
+            self.editor.set_selection(marquee.before);
+        }
     }
 
     fn start_drag(&mut self, start: Pos2, nodes: IdSet, handle: Option<Handle>, frame: Frame) {
@@ -3430,11 +3563,12 @@ impl PaperCraftApp {
             .map(|(index, _)| index)
             .collect();
         let others = (document.nodes.iter())
-            .filter(|n| !n.hidden && !nodes.contains(&n.id))
-            .map(node_frame);
+            .filter(|n| !nodes.contains(&n.id))
+            .filter_map(|n| document.visible_bounds(n));
         let snapper = Snapper::new([0.0, 0.0, document.width, document.height], others);
         self.drag = Some(Drag {
             before: document.clone(),
+            preview: document.clone(),
             start,
             nodes,
             indices,
@@ -3447,8 +3581,8 @@ impl PaperCraftApp {
     /// Moves or resizes the gesture's layers for the pointer at `pointer` and returns
     /// the guides of any snapped edges or centers.
     fn apply_drag(
-        &mut self,
-        drag: &Drag,
+        &self,
+        drag: &mut Drag,
         pointer: Pos2,
         snapping: bool,
         keep_aspect: bool,
@@ -3456,7 +3590,7 @@ impl PaperCraftApp {
         let delta = (pointer - drag.start) / self.zoom;
         let threshold = SNAP_DISTANCE / self.zoom;
         let snapper = snapping.then_some(&drag.snapper);
-        let nodes = &mut self.editor.document.nodes;
+        let nodes = &mut drag.preview.nodes;
         let frame = if let Some(handle) = drag.handle {
             let to = snap::resize_frame(
                 drag.frame,
@@ -3504,17 +3638,27 @@ impl PaperCraftApp {
     fn canvas(&mut self, ui: &mut egui::Ui) {
         let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         let canvas = response.rect;
-        if self.fit {
-            // Leave a 64 pt margin around the fitted artboard.
-            let margin = 2.0 * ui::SPACE_3XL;
-            self.zoom = ((canvas.width() - margin) / self.editor.document.width)
-                .min((canvas.height() - margin) / self.editor.document.height)
-                .clamp(0.05, 2.0);
-            self.pan = Vec2::ZERO;
-            self.fit = false;
-        }
         let size = vec2(self.editor.document.width, self.editor.document.height);
-        if response.hovered() {
+        if let Some(target) = self.fit.take() {
+            let bounds = match target {
+                FitTarget::Artboard => Some(self.editor.document.artboard_bounds()),
+                FitTarget::Content => self.editor.document.content_bounds(),
+                FitTarget::Selection => self.editor.selection_bounds(),
+            }
+            .unwrap_or(self.editor.document.artboard_bounds());
+            let extent = vec2(bounds[2] - bounds[0], bounds[3] - bounds[1]);
+            let center = vec2((bounds[0] + bounds[2]) * 0.5, (bounds[1] + bounds[3]) * 0.5);
+            let margin = 2.0 * ui::SPACE_3XL;
+            self.zoom = ((canvas.width() - margin) / extent.x)
+                .min((canvas.height() - margin) / extent.y)
+                .clamp(MIN_ZOOM, 2.0);
+            self.pan = (size * 0.5 - center) * self.zoom;
+        }
+        let geometry_gesture = self.drag.is_some()
+            || self.creation.is_some()
+            || self.marquee.is_some()
+            || self.ignore_canvas_pointer;
+        if response.hovered() && !geometry_gesture {
             let (scroll, zoom_delta, pointer, modifiers) = ui.input(|i| {
                 (
                     i.smooth_scroll_delta,
@@ -3533,7 +3677,7 @@ impl PaperCraftApp {
                     } else {
                         (scroll.y * 0.005).exp()
                     })
-                .clamp(0.05, 4.0);
+                .clamp(MIN_ZOOM, 4.0);
                 if let Some(pointer) = pointer {
                     self.pan = self.pan * (self.zoom / old_zoom)
                         + (pointer - canvas.center()) * (1.0 - self.zoom / old_zoom);
@@ -3542,10 +3686,11 @@ impl PaperCraftApp {
                 self.pan += scroll;
             }
         }
-        let panning = self.tool == Tool::Hand
-            || ui.input(|i| {
-                i.key_down(Key::Space) || i.pointer.button_down(egui::PointerButton::Middle)
-            });
+        let panning = !geometry_gesture
+            && (self.tool == Tool::Hand
+                || ui.input(|i| {
+                    i.key_down(Key::Space) || i.pointer.button_down(egui::PointerButton::Middle)
+                }));
         if response.dragged() && panning {
             self.pan += ui.input(|i| i.pointer.delta());
         }
@@ -3578,9 +3723,13 @@ impl PaperCraftApp {
             self.text_style = style;
         }
         self.sync_text_style();
+        let displayed = self
+            .drag
+            .as_ref()
+            .map_or(&self.editor.document, |drag| &drag.preview);
         paint_document(
             &painter,
-            &self.editor.document,
+            displayed,
             origin,
             self.zoom,
             canvas,
@@ -3612,24 +3761,14 @@ impl PaperCraftApp {
             && self.marquee.is_none()
             && self.text_edit.is_none()
             && let Some(pointer) = ui.input(|i| i.pointer.hover_pos())
-            && artboard.contains(pointer)
             && !target
                 .as_ref()
                 .is_some_and(|(frame, _)| handle_at(to_screen(*frame), pointer).is_some())
         {
             let point = ((pointer - origin) / self.zoom).to_pos2();
-            if let Some(hovered) = self
-                .editor
-                .document
-                .nodes
-                .iter()
-                .rev()
-                .find(|n| {
-                    !n.hidden
-                        && !n.locked
-                        && Rect::from_min_size(pos2(n.x, n.y), vec2(n.width, n.height))
-                            .contains(point)
-                })
+            if let Some(hovered) = displayed
+                .hit_test([point.x, point.y])
+                .and_then(|id| displayed.nodes.iter().find(|n| n.id == id))
                 .filter(|n| !self.editor.is_selected(n.id))
             {
                 let rect = screen(hovered);
@@ -3644,12 +3783,10 @@ impl PaperCraftApp {
             }
         }
         let multiple = self.editor.selection().len() > 1;
-        let outlines = self
-            .editor
-            .document
+        let outlines = displayed
             .nodes
             .iter()
-            .filter(|n| self.editor.is_selected(n.id) && !n.hidden)
+            .filter(|n| self.editor.is_selected(n.id) && !displayed.is_effectively_hidden(n))
             .map(screen)
             .filter(|r| r.intersects(canvas));
         painter.add(outline_mesh(
@@ -3658,7 +3795,8 @@ impl PaperCraftApp {
             ACCENT,
             ppp,
         ));
-        if multiple && let Some([left, top, right, bottom]) = self.editor.selection_bounds() {
+        if multiple && let Some((bounds, _)) = &target {
+            let [left, top, right, bottom] = *bounds;
             let bounds = Rect::from_min_max(
                 origin + vec2(left, top) * self.zoom,
                 origin + vec2(right, bottom) * self.zoom,
@@ -3708,9 +3846,13 @@ impl PaperCraftApp {
             {
                 ui.ctx().set_cursor_icon(resize_cursor(handle));
             }
-            if let Some(node) = self.editor.selected_node() {
-                paint_dimension_pill(&painter, rect, canvas, node.width, node.height);
-            }
+            paint_dimension_pill(
+                &painter,
+                rect,
+                canvas,
+                frame[2] - frame[0],
+                frame[3] - frame[1],
+            );
         }
         for directive in self
             .editor
@@ -3739,6 +3881,7 @@ impl PaperCraftApp {
         }
         let to_document = move |p: Pos2| ((p - origin) / zoom).to_pos2();
         if !panning
+            && !self.ignore_canvas_pointer
             && self.pending.is_none()
             && let Some(kind) = self.tool.creates()
         {
@@ -3746,7 +3889,7 @@ impl PaperCraftApp {
             if response.drag_started()
                 && let Some(press) = ui.input(|i| i.pointer.press_origin())
             {
-                if artboard.contains(press) {
+                if canvas.contains(press) {
                     self.flush_properties();
                     self.creation = Some(Creation {
                         kind,
@@ -3754,7 +3897,7 @@ impl PaperCraftApp {
                         current: to_document(press),
                     });
                 } else {
-                    self.status = "Start inside the artboard to add a layer.".into();
+                    self.status = "Start inside the canvas to add a layer.".into();
                 }
             }
             if let (Some(creation), Some(pointer)) = (&mut self.creation, pointer) {
@@ -3764,10 +3907,10 @@ impl PaperCraftApp {
             // A click, or a drag too small to see, places a layer at the pointer.
             let finished = if response.clicked() {
                 pointer.and_then(|p| {
-                    if artboard.contains(p) {
+                    if canvas.contains(p) {
                         Some((kind, to_document(p), None))
                     } else {
-                        self.status = "Click inside the artboard to add a layer.".into();
+                        self.status = "Click inside the canvas to add a layer.".into();
                         None
                     }
                 })
@@ -3791,12 +3934,11 @@ impl PaperCraftApp {
                             .rev()
                             .find(|n| {
                                 n.kind == NodeKind::Frame
-                                    && !n.hidden
-                                    && !n.locked
-                                    && at.x >= n.x
-                                    && at.x <= n.x + n.width
-                                    && at.y >= n.y
-                                    && at.y <= n.y + n.height
+                                    && !self.editor.document.is_effectively_hidden(n)
+                                    && !self.editor.document.is_effectively_locked(n)
+                                    && self.editor.document.visible_bounds(n).is_some_and(|b| {
+                                        at.x >= b[0] && at.x <= b[2] && at.y >= b[1] && at.y <= b[3]
+                                    })
                             })
                             .map(|n| n.id)
                     })
@@ -3810,28 +3952,24 @@ impl PaperCraftApp {
                     | NodeKind::Triangle
                     | NodeKind::Path => {
                         let rect = rect.unwrap_or(Rect::from_min_size(at, CLICK_SIZE));
-                        let result = self.editor.add_at(
-                            kind,
-                            rect.min.x,
-                            rect.min.y,
-                            rect.width().max(1.0),
-                            rect.height().max(1.0),
-                        );
-                        if result.is_ok()
-                            && let Some(id) = self.editor.selected()
-                            && let Some(node) =
-                                self.editor.document.nodes.iter_mut().find(|n| n.id == id)
-                        {
-                            if was_shader_tool {
-                                node.shader = Some(ShaderFill::default());
-                            }
-                            if let Some(frame_id) = parent_frame_id {
-                                node.parent = Some(frame_id);
-                            }
-                        }
+                        let result = self
+                            .editor
+                            .add_configured_at(
+                                kind,
+                                [
+                                    rect.min.x,
+                                    rect.min.y,
+                                    rect.width().max(1.0),
+                                    rect.height().max(1.0),
+                                ],
+                                TextStyle::default(),
+                                parent_frame_id,
+                                was_shader_tool.then(ShaderFill::default),
+                            )
+                            .map(|_| ());
                         self.result(result);
                     }
-                    NodeKind::Text => self.place_text(&painter, at, rect),
+                    NodeKind::Text => self.place_text(&painter, at, rect, parent_frame_id),
                 }
             }
             if let Some(creation) = &self.creation {
@@ -3848,7 +3986,7 @@ impl PaperCraftApp {
                 painter.rect_filled(preview, 0.0, ACCENT.gamma_multiply(0.12));
                 painter.rect_stroke(preview, 0.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
             }
-        } else if !panning && self.pending.is_none() {
+        } else if !panning && !self.ignore_canvas_pointer && self.pending.is_none() {
             let pointer = response.interact_pointer_pos();
             // Shift adds to or removes from the selection. A drag uses the modifiers of
             // its press, so Shift pressed during the drag only constrains the resize.
@@ -3877,22 +4015,8 @@ impl PaperCraftApp {
                             Some((handle_at(to_screen(*frame), hit_point)?, *frame, ids))
                         });
                 let hit = || {
-                    if !artboard.contains(hit_point) {
-                        return None;
-                    }
                     let point = to_document(hit_point);
-                    self.editor
-                        .document
-                        .nodes
-                        .iter()
-                        .rev()
-                        .find(|n| {
-                            !n.hidden
-                                && !n.locked
-                                && Rect::from_min_size(pos2(n.x, n.y), vec2(n.width, n.height))
-                                    .contains(point)
-                        })
-                        .map(|n| n.id)
+                    self.editor.document.hit_test([point.x, point.y])
                 };
                 if let Some((handle, frame, ids)) = handle {
                     // A click on a handle keeps the selection.
@@ -3925,8 +4049,10 @@ impl PaperCraftApp {
                             } else {
                                 Vec::new()
                             };
+                            let before = self.editor.selection().to_vec();
                             self.editor.set_selection(base.iter().copied());
                             self.marquee = Some(Marquee {
+                                before,
                                 start: to_document(hit_point),
                                 current: to_document(hit_point),
                                 base,
@@ -3940,15 +4066,13 @@ impl PaperCraftApp {
             // Double-clicking a text layer edits it in place.
             if response.double_clicked()
                 && let Some(pointer) = pointer
-                && artboard.contains(pointer)
             {
                 let point = to_document(pointer);
-                let hit = self.editor.document.nodes.iter().rev().find(|n| {
-                    !n.hidden
-                        && !n.locked
-                        && Rect::from_min_size(pos2(n.x, n.y), vec2(n.width, n.height))
-                            .contains(point)
-                });
+                let hit = self
+                    .editor
+                    .document
+                    .hit_test([point.x, point.y])
+                    .and_then(|id| self.editor.document.nodes.iter().find(|n| n.id == id));
                 if let Some(id) = hit.filter(|n| n.kind == NodeKind::Text).map(|n| n.id) {
                     self.begin_text_edit(id, false);
                 }
@@ -3958,8 +4082,8 @@ impl PaperCraftApp {
             {
                 let snapping = self.snapping && !ui.input(|i| i.modifiers.command);
                 let keep_aspect = ui.input(|i| i.modifiers.shift);
-                if let Some(drag) = self.drag.take() {
-                    let guides = self.apply_drag(&drag, pointer, snapping, keep_aspect);
+                if let Some(mut drag) = self.drag.take() {
+                    let guides = self.apply_drag(&mut drag, pointer, snapping, keep_aspect);
                     paint_guides(&painter, &guides, origin, self.zoom);
                     self.drag = Some(drag);
                 }
@@ -3972,7 +4096,14 @@ impl PaperCraftApp {
                         .document
                         .nodes
                         .iter()
-                        .filter(|n| !n.hidden && !n.locked && snap::intersects(node_frame(n), area))
+                        .filter(|n| {
+                            !self.editor.document.is_effectively_locked(n)
+                                && self
+                                    .editor
+                                    .document
+                                    .visible_bounds(n)
+                                    .is_some_and(|b| snap::intersects(b, area))
+                        })
                         .map(|n| n.id)
                         .collect();
                     let ids = marquee.base.iter().copied().chain(inside);
@@ -3993,7 +4124,10 @@ impl PaperCraftApp {
             self.creation = None;
             self.marquee = None;
             if let Some(drag) = self.drag.take() {
-                let result = self.editor.commit(drag.before);
+                let result = self.editor.apply(|document| {
+                    *document = drag.preview;
+                    Ok(())
+                });
                 self.result(result);
             }
         }
@@ -4786,6 +4920,7 @@ fn rail_separator(ui: &mut egui::Ui) {
 
 impl eframe::App for PaperCraftApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.process_canvas_input(ctx);
         self.poll_live(ctx);
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
             self.flush_properties();
@@ -4913,10 +5048,48 @@ mod tests {
     }
 
     #[test]
+    fn background_input_cancels_a_draft_without_rendering_the_editor() {
+        let mut app = PaperCraftApp::from_document(Document::example());
+        app.editor.add(NodeKind::Rectangle).unwrap();
+        app.editor.undo();
+        let original = app.editor.document.clone();
+        let revision = app.editor.revision();
+        let node = &original.nodes[0];
+        app.start_drag(
+            Pos2::ZERO,
+            [node.id].into_iter().collect(),
+            None,
+            node.bounds(),
+        );
+        app.drag.as_mut().unwrap().preview.nodes[0].x += 20.0;
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                focused: false,
+                ..Default::default()
+            },
+            |ui| {
+                app.process_canvas_input(ui.ctx());
+            },
+        );
+        output.textures_delta.clear();
+        assert!(app.drag.is_none());
+        assert_eq!(app.editor.document, original);
+        assert_eq!(app.editor.revision(), revision);
+        assert!(app.editor.can_redo());
+        // Even without a rendered UI, the cancelled/up pointer is no longer busy.
+        let request = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"document_inspect","arguments":{"document_id":app.live_id(0)}}});
+        let response = app.handle_live_request(&request.to_string()).unwrap();
+        assert_ne!(response["result"]["isError"], true);
+    }
+
+    #[test]
     fn tab_switches_preserve_dirty_state_and_document_local_text_styles() {
         let mut app = PaperCraftApp::from_document(Document::example());
         assert!(!app.dirty());
         app.editor.add(NodeKind::Rectangle).unwrap();
+        app.zoom = 0.25;
+        app.pan = vec2(-400.0, 100.0);
         app.text_style = TextStyle {
             font_size: 44.0,
             fill_token: Some(1),
@@ -4926,6 +5099,8 @@ mod tests {
         app.open_tab(Document::default(), None);
         assert!(!app.dirty());
         assert_eq!(app.text_style, TextStyle::default());
+        assert_eq!(app.zoom, 1.0);
+        assert_eq!(app.pan, Vec2::ZERO);
         app.editor.add(NodeKind::Rectangle).unwrap();
         app.set_saved(app.editor.document.clone());
         assert!(!app.dirty());
@@ -4936,12 +5111,39 @@ mod tests {
         );
         assert_eq!(app.text_style.font_size, 44.0);
         assert_eq!(app.text_style.fill_token, Some(1));
+        assert_eq!(app.zoom, 0.25);
+        assert_eq!(app.pan, vec2(-400.0, 100.0));
         app.activate_tab(1);
         assert!(!app.dirty());
         assert_eq!(app.text_style, TextStyle::default());
         assert!(app.close_document());
         assert!(app.dirty());
         assert!(!app.close_document());
+    }
+
+    #[test]
+    fn opening_a_tab_cancels_marquee_before_storing_the_old_editor() {
+        let mut app = PaperCraftApp::from_document(Document::example());
+        app.editor.add(NodeKind::Rectangle).unwrap();
+        app.editor.undo();
+        let original = app.editor.document.clone();
+        let revision = app.editor.revision();
+        let id = original.nodes[0].id;
+        app.editor.select(Some(id));
+        app.marquee = Some(Marquee {
+            start: Pos2::ZERO,
+            current: pos2(10.0, 10.0),
+            base: Vec::new(),
+            before: vec![id],
+        });
+        app.editor.select(None); // temporary marquee selection
+        app.open_tab(Document::default(), None);
+        assert!(app.ignore_canvas_pointer, "the old press must stay inert");
+        app.activate_tab(0);
+        assert_eq!(app.editor.selection(), &[id]);
+        assert_eq!(app.editor.document, original);
+        assert_eq!(app.editor.revision(), revision);
+        assert!(app.editor.can_redo());
     }
 
     #[test]

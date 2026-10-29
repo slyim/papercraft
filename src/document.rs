@@ -295,18 +295,40 @@ pub fn default_path_points() -> Vec<[f32; 2]> {
 /// Parses a simple SVG `M x y L x y ... [Z]` path string into normalized `[0.0..=1.0]` points
 /// and a `closed` flag.
 pub fn parse_svg_path_points(d: &str) -> Result<(Vec<[f32; 2]>, bool), String> {
+    if !d.trim_start().starts_with('M') || d.chars().filter(|c| *c == 'M').count() != 1 {
+        return Err("SVG input supports one absolute M/L contour only. Multiple subpaths and relative commands are unsupported.".into());
+    }
     let mut closed = false;
     let mut cleaned = String::with_capacity(d.len());
+    let mut segments = Vec::new();
     for ch in d.chars() {
+        if closed && !ch.is_whitespace() {
+            return Err("SVG input supports one contour with an optional final Z only.".into());
+        }
         match ch {
             'Z' | 'z' => {
                 closed = true;
                 cleaned.push(' ');
             }
-            'M' | 'm' | 'L' | 'l' | 'C' | 'c' | 'Q' | 'q' | ',' => {
+            'M' | 'L' => {
                 cleaned.push(' ');
+                segments.push(cleaned.len());
+            }
+            ',' => cleaned.push(' '),
+            'm' | 'l' | 'C' | 'c' | 'Q' | 'q' | 'H' | 'h' | 'V' | 'v' | 'S' | 's' | 'T' | 't'
+            | 'A' | 'a' => {
+                return Err(format!(
+                    "SVG command {ch} is unsupported. Use an absolute M/L polyline; curve authoring is not implemented."
+                ));
             }
             _ => cleaned.push(ch),
+        }
+    }
+    segments.push(cleaned.len());
+    for range in segments.windows(2) {
+        let count = cleaned[range[0]..range[1]].split_whitespace().count();
+        if count < 2 || !count.is_multiple_of(2) {
+            return Err("Each SVG M/L command requires complete coordinate pairs.".into());
         }
     }
     let mut coords = Vec::new();
@@ -389,6 +411,12 @@ impl TextAlign {
 pub const LINE_HEIGHT: std::ops::RangeInclusive<f32> = 1.0..=4096.0;
 
 impl Node {
+    /// Authored world bounds `[left, top, right, bottom]`. Parent links do not
+    /// change the absolute-coordinate contract of released v3 files.
+    pub fn bounds(&self) -> [f32; 4] {
+        [self.x, self.y, self.x + self.width, self.y + self.height]
+    }
+
     /// Whether the layer uses a version 3 field or node kind.
     pub fn uses_v3(&self) -> bool {
         self.line_height.is_some()
@@ -965,6 +993,69 @@ impl Document {
         false
     }
 
+    /// Inherited locking for workspace selection. Mutation inheritance is handled
+    /// separately by each model operation until the hierarchy milestone.
+    pub fn is_effectively_locked(&self, node: &Node) -> bool {
+        if node.locked {
+            return true;
+        }
+        let mut current = node.parent;
+        for _ in 0..=self.nodes.len() {
+            let Some(layer) = current.and_then(|id| self.nodes.iter().find(|n| n.id == id)) else {
+                break;
+            };
+            if layer.locked {
+                return true;
+            }
+            current = layer.parent;
+        }
+        false
+    }
+
+    /// Legacy artboard: a background and default export region, not workspace bounds.
+    pub fn artboard_bounds(&self) -> [f32; 4] {
+        [0.0, 0.0, self.width, self.height]
+    }
+
+    /// Visible axis-aligned world bounds after rectangular ancestor clipping.
+    pub fn visible_bounds(&self, node: &Node) -> Option<[f32; 4]> {
+        if self.is_effectively_hidden(node) {
+            return None;
+        }
+        let mut bounds = node.bounds();
+        if let Some(clip) = self.ancestors_clip_rect(node) {
+            bounds = [
+                bounds[0].max(clip[0]),
+                bounds[1].max(clip[1]),
+                bounds[2].min(clip[2]),
+                bounds[3].min(clip[3]),
+            ];
+        }
+        (bounds[0] < bounds[2] && bounds[1] < bounds[3]).then_some(bounds)
+    }
+
+    pub fn content_bounds(&self) -> Option<[f32; 4]> {
+        self.nodes
+            .iter()
+            .filter_map(|n| self.visible_bounds(n))
+            .reduce(union_bounds)
+    }
+
+    /// Bounding-box selection in paint order. Shape/stroke-aware hits are a later
+    /// slice; all canvas hit consumers share this explicit contract.
+    pub fn hit_test(&self, point: [f32; 2]) -> Option<u64> {
+        self.nodes
+            .iter()
+            .rev()
+            .find(|node| {
+                !self.is_effectively_locked(node)
+                    && self.visible_bounds(node).is_some_and(|b| {
+                        point[0] >= b[0] && point[0] <= b[2] && point[1] >= b[1] && point[1] <= b[3]
+                    })
+            })
+            .map(|node| node.id)
+    }
+
     /// Returns all node IDs whose `parent` chain includes `frame_id`.
     pub fn descendants_of(&self, frame_id: u64) -> IdSet {
         let mut descendants = IdSet::default();
@@ -1438,6 +1529,33 @@ impl Document {
         {
             return Err("Version 1 documents cannot contain color token fields.".into());
         }
+        // A frozen schema may not carry newer keys even at default/null values.
+        // Value-based validation alone cannot distinguish omitted from explicit defaults.
+        if version.is_some_and(|v| v < 3)
+            && (["directives", "next_directive_id"]
+                .iter()
+                .any(|key| fields.get(key).is_some())
+                || fields["nodes"].as_array().is_some_and(|nodes| {
+                    nodes.iter().any(|node| {
+                        [
+                            "line_height",
+                            "text_align",
+                            "parent",
+                            "clip",
+                            "stroke",
+                            "stroke_token",
+                            "stroke_width",
+                            "points",
+                            "closed",
+                            "shader",
+                        ]
+                        .iter()
+                        .any(|key| node.get(key).is_some())
+                    })
+                }))
+        {
+            return Err("Version 1 and 2 documents cannot contain version 3 fields, even at their defaults.".into());
+        }
         let mut doc: Self = serde_json::from_slice(&data)
             .map_err(|e| format!("Invalid PaperCraft document: {e}"))?;
         doc.validate()?;
@@ -1507,8 +1625,27 @@ impl Document {
         paint
     }
 
-    pub fn export_html(&self) -> Result<String, String> {
+    fn validate_vector_export(&self) -> Result<(), String> {
         self.validate()?;
+        for node in self.nodes.iter().filter(|n| !self.is_effectively_hidden(n)) {
+            if node.shader.is_some() {
+                return Err(format!(
+                    "Layer {} has a shader unsupported by HTML/SVG export. Use PNG or remove the shader.",
+                    node.id
+                ));
+            }
+            if self.ancestors_clip_rect(node).is_some() {
+                return Err(format!(
+                    "Layer {} has ancestor clipping unsupported by HTML/SVG export. Use PNG or disable ancestor clipping.",
+                    node.id
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn export_html(&self) -> Result<String, String> {
+        self.validate_vector_export()?;
         // Token names are restricted to CSS identifier characters by validation.
         let theme = if self.tokens.is_empty() {
             String::new()
@@ -1576,7 +1713,7 @@ impl Document {
     /// Exports the artboard in document units. Text keeps explicit line breaks;
     /// fonts are resolved by the receiving application.
     pub fn export_svg(&self) -> Result<String, String> {
-        self.validate()?;
+        self.validate_vector_export()?;
         let visible = self.nodes.iter().filter(|n| !self.is_effectively_hidden(n));
         if std::iter::once(self.name.as_str())
             .chain(visible.clone().flat_map(|n| [n.name.as_str(), n.text.as_str()]))
@@ -1747,7 +1884,16 @@ fn clamp_coordinate(value: f32) -> f32 {
 }
 
 fn node_rect(node: &Node) -> [f32; 4] {
-    [node.x, node.y, node.x + node.width, node.y + node.height]
+    node.bounds()
+}
+
+fn union_bounds(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    [
+        a[0].min(b[0]),
+        a[1].min(b[1]),
+        a[2].max(b[2]),
+        a[3].max(b[3]),
+    ]
 }
 
 impl Editor {
@@ -1827,7 +1973,9 @@ impl Editor {
             .document
             .nodes
             .iter()
-            .filter(|n| !n.hidden && !n.locked)
+            .filter(|n| {
+                !self.document.is_effectively_hidden(n) && !self.document.is_effectively_locked(n)
+            })
             .map(|n| n.id)
             .collect();
         self.set_selection(ids);
@@ -1839,7 +1987,11 @@ impl Editor {
         self.document
             .nodes
             .iter()
-            .filter(|n| self.is_selected(n.id) && !n.hidden && !n.locked)
+            .filter(|n| {
+                self.is_selected(n.id)
+                    && !self.document.is_effectively_hidden(n)
+                    && !self.document.is_effectively_locked(n)
+            })
             .map(|n| n.id)
             .collect()
     }
@@ -1849,16 +2001,13 @@ impl Editor {
         self.document
             .nodes
             .iter()
-            .filter(|n| self.is_selected(n.id) && !n.hidden && !n.locked)
-            .map(node_rect)
-            .reduce(|a, b| {
-                [
-                    a[0].min(b[0]),
-                    a[1].min(b[1]),
-                    a[2].max(b[2]),
-                    a[3].max(b[3]),
-                ]
+            .filter(|n| {
+                self.is_selected(n.id)
+                    && !self.document.is_effectively_hidden(n)
+                    && !self.document.is_effectively_locked(n)
             })
+            .map(node_rect)
+            .reduce(union_bounds)
     }
 
     pub fn commit(&mut self, before: Document) -> Result<(), String> {
@@ -1953,21 +2102,31 @@ impl Editor {
         width: f32,
         height: f32,
     ) -> Result<(), String> {
-        self.insert(kind, [x, y, width, height], TextStyle::default())
-            .map(|_| ())
+        self.add_configured_at(
+            kind,
+            [x, y, width, height],
+            TextStyle::default(),
+            None,
+            None,
+        )
+        .map(|_| ())
     }
 
     /// Adds a text layer using `style`, as one history step, selects it and returns its
     /// identifier. A token that no longer exists is not bound.
     pub fn add_text_at(&mut self, geometry: [f32; 4], style: TextStyle) -> Result<u64, String> {
-        self.insert(NodeKind::Text, geometry, style)
+        self.add_configured_at(NodeKind::Text, geometry, style, None, None)
     }
 
-    fn insert(
+    /// Initializes all creation fields before validation/history, including fields
+    /// previously appended by the GUI after a committed insertion.
+    pub fn add_configured_at(
         &mut self,
         kind: NodeKind,
         geometry: [f32; 4],
         style: TextStyle,
+        parent: Option<u64>,
+        shader: Option<ShaderFill>,
     ) -> Result<u64, String> {
         let [x, y, width, height] = geometry.map(|v| v.round());
         if ![x, y, width, height].iter().all(|v| v.is_finite()) {
@@ -2014,7 +2173,7 @@ impl Editor {
             } else {
                 TextAlign::Left
             },
-            parent: None,
+            parent,
             clip: kind == NodeKind::Frame,
             stroke: (kind == NodeKind::Path).then_some([255, 107, 43, 255]),
             stroke_token: None,
@@ -2025,7 +2184,7 @@ impl Editor {
                 Vec::new()
             },
             closed: false,
-            shader: None,
+            shader,
         });
         self.document.next_id = next;
         self.commit(before)?;

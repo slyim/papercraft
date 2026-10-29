@@ -17,20 +17,37 @@ struct Check {
     started: Instant,
     finished: bool,
     screenshot: bool,
+    fitted: bool,
 }
 
 impl eframe::App for Check {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+        if self.finished && !self.fitted {
+            input
+                .events
+                .push(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+            for pressed in [true, false] {
+                input.events.push(egui::Event::Key {
+                    key: egui::Key::Num1,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: egui::Modifiers::SHIFT,
+                });
+            }
+            self.fitted = true;
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.show(ui);
         if !self.finished && self.result.try_recv().is_ok() {
-            assert_eq!(self.app.editor.document.nodes.len(), 2);
-            assert_eq!(
-                self.app.editor.document.nodes[1].text,
-                "Live MCP reaches this window"
-            );
+            assert_eq!(self.app.editor.document.nodes.len(), 10);
+            assert_eq!(self.app.editor.document.nodes[1].text, "Your workspace");
+            assert_eq!(self.app.editor.document.nodes[6].text, "Project settings");
             assert!(self.app.editor.can_undo());
             self.finished = true;
-        } else if self.finished && !self.screenshot {
+        } else if self.finished && self.fitted && !self.screenshot {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
             self.screenshot = true;
@@ -104,8 +121,18 @@ fn client(binary: PathBuf, session: PathBuf, folder: PathBuf, send: mpsc::Sender
     let applied = tool(
         "document_apply",
         json!({"document_id":doc,"expected_revision":0,"operations":[
-            {"op":"create_rectangle","x":60,"y":70,"width":780,"height":330,"radius":24,"fill":"#d7f2dd"},
-            {"op":"create_text","x":100,"y":180,"width":700,"height":90,"text":"Live MCP reaches this window","font_size":36,"text_align":"center","fill":"#134b37"}
+            {"op":"create_token","ref":"ink","name":"ink","value":"#20392e"},
+            {"op":"create_token","ref":"accent","name":"accent","value":"#ff6b2b"},
+            {"op":"create_frame","ref":"workspace","name":"Workspace screen","x":-360,"y":70,"width":320,"height":400,"radius":0,"fill":"#f8f7f3"},
+            {"op":"create_text","parent":{"ref":"workspace"},"x":-336,"y":102,"width":272,"height":60,"text":"Your workspace","font_size":28,"fill_token":{"ref":"ink"}},
+            {"op":"create_text","parent":{"ref":"workspace"},"x":-336,"y":182,"width":272,"height":100,"text":"Two local screens, built through external live MCP. No toolbar simulation.","font_size":18,"fill_token":{"ref":"ink"}},
+            {"op":"create_rectangle","parent":{"ref":"workspace"},"x":-336,"y":374,"width":272,"height":48,"radius":8,"fill_token":{"ref":"accent"}},
+            {"op":"create_text","parent":{"ref":"workspace"},"x":-320,"y":384,"width":240,"height":28,"text":"Open project","font_size":20,"fill":"#fff","text_align":"center"},
+            {"op":"create_frame","ref":"settings","name":"Settings screen","x":1000,"y":70,"width":320,"height":400,"radius":0,"fill":"#f8f7f3"},
+            {"op":"create_text","parent":{"ref":"settings"},"x":1024,"y":102,"width":272,"height":60,"text":"Project settings","font_size":28,"fill_token":{"ref":"ink"}},
+            {"op":"create_text","parent":{"ref":"settings"},"x":1024,"y":182,"width":272,"height":100,"text":"Local files\nShared editing history\nPortable document state","font_size":18,"line_height":28,"fill_token":{"ref":"ink"}},
+            {"op":"create_rectangle","parent":{"ref":"settings"},"x":1024,"y":374,"width":272,"height":48,"radius":8,"fill_token":{"ref":"accent"}},
+            {"op":"create_text","parent":{"ref":"settings"},"x":1040,"y":384,"width":240,"height":28,"text":"Save settings","font_size":20,"fill":"#fff","text_align":"center"}
         ]}),
     );
     assert_eq!(applied["isError"], false);
@@ -119,17 +146,33 @@ fn client(binary: PathBuf, session: PathBuf, folder: PathBuf, send: mpsc::Sender
     let inspected: Value =
         serde_json::from_str(inspected["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(inspected["state"]["revision"], 1);
-    assert_eq!(inspected["layers"].as_array().unwrap().len(), 2);
+    assert_eq!(inspected["layers"].as_array().unwrap().len(), 10);
     assert_eq!(
-        tool("document_render", json!({"document_id":doc}))["content"][0]["mimeType"],
+        inspected["content_bounds"],
+        json!([-360.0, 70.0, 1320.0, 470.0])
+    );
+    assert_eq!(
+        tool("document_render", json!({"document_id":doc,"frame_id":1}))["content"][0]["mimeType"],
         "image/png"
     );
+    for (frame_id, filename) in [(1, "workspace.png"), (6, "settings.png")] {
+        let path = folder.join(filename);
+        assert_eq!(
+            tool(
+                "document_export",
+                json!({"document_id":doc,"format":"png","frame_id":frame_id,"path":path})
+            )["isError"],
+            false
+        );
+        let image = image::open(path).unwrap();
+        assert_eq!((image.width(), image.height()), (320, 400));
+    }
     let saved = folder.join("live-native.papercraft");
     assert_eq!(
         tool("document_save", json!({"document_id":doc,"path":saved}))["isError"],
         false
     );
-    assert_eq!(Document::load(&saved).unwrap().nodes.len(), 2);
+    assert_eq!(Document::load(&saved).unwrap().nodes.len(), 10);
     for name in ["document_undo", "document_redo"] {
         assert_eq!(tool(name, json!({"document_id":doc}))["isError"], false);
     }
@@ -186,6 +229,7 @@ fn main() -> eframe::Result {
                 started: Instant::now(),
                 finished: false,
                 screenshot: false,
+                fitted: false,
             }))
         }),
     )

@@ -453,8 +453,16 @@ fn mcp_typography_fields_and_upgrade_report() {
     assert_eq!(layer["text_align"], "right");
     assert_eq!(inspected["version"], 3);
 
-    let (error, state) = call(&mut server, "document_save", json!({ "document_id": id }));
-    assert!(!error);
+    let original = std::fs::read(&path).unwrap();
+    let (error, message) = call(&mut server, "document_save", json!({ "document_id": id }));
+    assert!(error && message.as_str().unwrap().contains("allow_upgrade"));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    let (error, state) = call(
+        &mut server,
+        "document_save",
+        json!({ "document_id": id, "allow_upgrade":true }),
+    );
+    assert!(!error, "{state}");
     assert_eq!(state["version"], 3);
     assert!(state["upgraded_from"].as_u64().unwrap() < 3, "{state}");
     assert_eq!(Document::load(&path).unwrap().required_version(), 3);

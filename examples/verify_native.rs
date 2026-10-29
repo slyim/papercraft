@@ -33,6 +33,8 @@ const SCENARIOS: &[&str] = &[
     "text-token",
     "text-tabs",
     "typography",
+    "offboard",
+    "cancel",
 ];
 
 struct NativeCheck {
@@ -222,6 +224,55 @@ impl eframe::App for NativeCheck {
 impl NativeCheck {
     fn verify_scenario(&mut self, ctx: &egui::Context) {
         match self.scenario.as_str() {
+            "offboard" => {
+                let node = self
+                    .app
+                    .editor
+                    .selected_node()
+                    .expect("Offboard creation failed");
+                assert_eq!(
+                    [node.x, node.y, node.width, node.height],
+                    [-60.0, 100.0, 40.0, 60.0]
+                );
+                let doc = self.app.editor.document.clone();
+                let folder = self.output.parent().unwrap();
+                let path = folder.join("human-offboard.papercraft");
+                doc.save(&path).unwrap();
+                assert_eq!(Document::load(&path).unwrap(), doc);
+                atomic_write(
+                    &folder.join("human-offboard-region.png"),
+                    &papercraft::render::export_png_region(&doc, node.bounds(), 2.0).unwrap(),
+                )
+                .unwrap();
+                atomic_write(
+                    &folder.join("human-offboard.svg"),
+                    doc.export_svg().unwrap().as_bytes(),
+                )
+                .unwrap();
+                atomic_write(
+                    &folder.join("human-offboard.html"),
+                    doc.export_html().unwrap().as_bytes(),
+                )
+                .unwrap();
+                self.app.editor.undo();
+                assert!(self.app.editor.document.nodes.is_empty());
+                self.app.editor.redo();
+                assert_eq!(self.app.editor.document, doc);
+            }
+            "cancel" => {
+                assert_eq!(self.app.editor.document, self.initial_document);
+                assert_eq!(self.app.editor.revision(), self.initial_revision);
+                assert!(
+                    self.app.editor.can_redo(),
+                    "Escape must preserve existing redo"
+                );
+                self.app.editor.redo();
+                assert_eq!(
+                    self.app.editor.document.nodes.len(),
+                    self.initial_document.nodes.len() + 1
+                );
+                self.app.editor.undo();
+            }
             "resize" | "snapping" => {
                 let (index, expected) = if self.scenario == "resize" {
                     (0, [100.0, 100.0, 160.0, 140.0])
@@ -499,7 +550,12 @@ fn main() -> eframe::Result {
     .unwrap();
     println!("Model create/edit/undo/redo/save/reopen/HTML+SVG export verified.");
     let themed = token_workflow(&directory);
-    let document = if matches!(scenario.as_str(), "resize" | "snapping" | "marquee") {
+    let document = if scenario == "offboard" {
+        Document::default()
+    } else if matches!(
+        scenario.as_str(),
+        "resize" | "snapping" | "marquee" | "cancel"
+    ) {
         let mut editor = Editor::new(Document::default());
         let positions: &[f32] = if scenario == "marquee" {
             &[100.0, 300.0, 600.0]
@@ -575,6 +631,12 @@ fn main() -> eframe::Result {
     let mut app = PaperCraftApp::from_document(document.clone());
     match scenario.as_str() {
         "resize" => app.editor.select(Some(document.nodes[0].id)),
+        "cancel" => {
+            app.editor.add(NodeKind::Text).unwrap();
+            app.editor.undo();
+            app.editor.select(Some(document.nodes[0].id));
+            app.snapping = false;
+        }
         "selected" => app.editor.select(document.nodes.get(3).map(|n| n.id)),
         "tool" => app.tool = Tool::Rectangle,
         "text-token" => app.editor.select(Some(document.nodes[0].id)),
@@ -724,6 +786,31 @@ fn script(scenario: &str, size: [f32; 2], document: &Document) -> Vec<Vec<egui::
         modifiers: egui::Modifiers::NONE,
     };
     match scenario {
+        "offboard" => {
+            let focus = at(20.0, 20.0);
+            let (start, end) = (at(-60.0, 100.0), at(-20.0, 160.0));
+            vec![
+                vec![egui::Event::PointerMoved(focus), button(focus, true)],
+                vec![button(focus, false)],
+                vec![key(egui::Key::R, true)],
+                vec![key(egui::Key::R, false)],
+                vec![egui::Event::PointerMoved(start), button(start, true)],
+                vec![egui::Event::PointerMoved(start + (end - start) * 0.5)],
+                vec![egui::Event::PointerMoved(end)],
+                vec![button(end, false)],
+            ]
+        }
+        "cancel" => {
+            let (start, end) = (at(150.0, 150.0), at(190.0, 170.0));
+            vec![
+                vec![egui::Event::PointerMoved(start), button(start, true)],
+                vec![egui::Event::PointerMoved(start + (end - start) * 0.5)],
+                vec![egui::Event::PointerMoved(end)],
+                vec![key(egui::Key::Escape, true)],
+                vec![key(egui::Key::Escape, false)],
+                vec![button(end, false)],
+            ]
+        }
         "resize" | "snapping" => {
             let (start, end) = if scenario == "resize" {
                 (at(200.0, 200.0), at(260.0, 240.0))
