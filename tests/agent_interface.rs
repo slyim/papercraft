@@ -594,3 +594,218 @@ fn mcp_token_names_shapes_fit_text_and_arrangement() {
     assert!(!error);
     assert_eq!(state["selected_ids"], json!([]));
 }
+
+#[test]
+fn mcp_frames_paths_strokes_shaders_and_directives() {
+    let mut server = Server::default();
+    let id = new_document(&mut server);
+
+    let (error, state) = call(
+        &mut server,
+        "document_apply",
+        json!({
+            "document_id": id,
+            "operations": [
+                { "op": "create_token", "name": "accent", "value": "#ff6b2b" },
+                {
+                    "op": "create_rectangle",
+                    "name": "CardBg",
+                    "x": 20,
+                    "y": 15,
+                    "width": 80,
+                    "height": 50,
+                    "radius": 8,
+                    "fill": "#1e293b",
+                    "shader": {
+                        "kind": "mesh",
+                        "secondary": "#38bdf8",
+                        "angle": 45.0,
+                        "intensity": 0.75
+                    }
+                },
+                {
+                    "op": "create_ellipse",
+                    "name": "Orb",
+                    "x": 35,
+                    "y": 25,
+                    "width": 24,
+                    "height": 24,
+                    "fill": "#f8fafc",
+                    "stroke": "#94a3b8",
+                    "stroke_width": 2.0
+                },
+                { "op": "wrap_in_frame", "ids": [1, 2], "name": "Hero Card" },
+                {
+                    "op": "create_path",
+                    "name": "Wave",
+                    "parent": 3,
+                    "x": 25,
+                    "y": 30,
+                    "width": 60,
+                    "height": 30,
+                    "points": [[0.0, 0.8], [0.5, 0.2], [1.0, 0.8]],
+                    "stroke_token": "accent",
+                    "stroke_width": 3.0
+                },
+                {
+                    "op": "create_path",
+                    "name": "Badge",
+                    "x": 120,
+                    "y": 20,
+                    "width": 50,
+                    "height": 50,
+                    "svg_path": "M 0 0 L 50 0 L 25 50 Z",
+                    "fill": "#22c55e80",
+                    "stroke_token": "accent"
+                },
+                {
+                    "op": "create_directive",
+                    "layer_id": 3,
+                    "message": "Polish hero card contrast"
+                }
+            ]
+        }),
+    );
+    assert!(!error, "{state}");
+    assert_eq!(state["selected_ids"], json!([3]));
+
+    let (_, inspected) = call(
+        &mut server,
+        "document_inspect",
+        json!({ "document_id": id }),
+    );
+    let layers = inspected["layers"].as_array().unwrap();
+    let find_layer = |layer_id: u64| {
+        layers
+            .iter()
+            .find(|l| l["id"] == layer_id)
+            .expect("layer exists")
+    };
+
+    let frame = find_layer(3);
+    assert_eq!(frame["kind"], "frame");
+    assert_eq!(frame["name"], "Hero Card");
+    assert_eq!(frame["clip"], true);
+
+    let card = find_layer(1);
+    assert_eq!(card["parent"], 3);
+    assert_eq!(card["shader"]["kind"], "mesh");
+    assert_eq!(card["shader"]["secondary"], "#38bdf8ff");
+    assert_eq!(card["shader"]["angle"], 45.0);
+    assert_eq!(card["shader"]["intensity"], 0.75);
+
+    let orb = find_layer(2);
+    assert_eq!(orb["parent"], 3);
+    assert_eq!(orb["stroke"], "#94a3b8ff");
+    assert_eq!(orb["stroke_width"], 2.0);
+
+    let wave = find_layer(4);
+    assert_eq!(wave["kind"], "path");
+    assert_eq!(wave["parent"], 3);
+    assert_eq!(wave["closed"], false);
+    assert_eq!(wave["points"].as_array().unwrap().len(), 3);
+    assert_eq!(wave["stroke_token_name"], "accent");
+    assert_eq!(wave["stroke"], "#ff6b2bff");
+    assert_eq!(wave["stroke_width"], 3.0);
+
+    let badge = find_layer(5);
+    assert_eq!(badge["kind"], "path");
+    assert_eq!(badge["closed"], true);
+    assert_eq!(badge["points"].as_array().unwrap().len(), 3);
+    assert_eq!(badge["stroke_token_name"], "accent");
+
+    let directives = inspected["directives"].as_array().unwrap();
+    assert_eq!(directives.len(), 1);
+    assert_eq!(directives[0]["id"], 1);
+    assert_eq!(directives[0]["layer_id"], 3);
+    assert_eq!(directives[0]["message"], "Polish hero card contrast");
+    assert_eq!(directives[0]["resolved"], false);
+
+    // Attach a linear_gradient shader to the Frame and resolve the directive.
+    let (error, state) = call(
+        &mut server,
+        "document_apply",
+        json!({
+            "document_id": id,
+            "operations": [
+                {
+                    "op": "update_layer",
+                    "id": 3,
+                    "clip": false,
+                    "shader": {
+                        "kind": "linear_gradient",
+                        "secondary": "#e2e8f0",
+                        "angle": 120.0,
+                        "intensity": 0.6
+                    }
+                },
+                { "op": "resolve_directive", "id": 1, "resolved": true }
+            ]
+        }),
+    );
+    assert!(!error, "{state}");
+
+    let (_, inspected) = call(
+        &mut server,
+        "document_inspect",
+        json!({ "document_id": id }),
+    );
+    let frame = inspected["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["id"] == 3)
+        .unwrap();
+    assert_eq!(frame["clip"], false);
+    assert_eq!(frame["shader"]["kind"], "linear_gradient");
+    assert_eq!(inspected["directives"][0]["resolved"], true);
+
+    // Render the entire composition to PNG.
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 99,
+        "method": "tools/call",
+        "params": {
+            "name": "document_render",
+            "arguments": { "document_id": id, "scale": 1 }
+        }
+    });
+    let response = server.handle_line(&request.to_string()).unwrap();
+    let content = response["result"]["content"].as_array().unwrap();
+    assert_eq!(content[0]["type"], "image");
+    assert_eq!(content[0]["mimeType"], "image/png");
+    assert!(
+        content[0]["data"]
+            .as_str()
+            .unwrap()
+            .starts_with("iVBORw0KGgo")
+    );
+
+    // Delete the directive and clear the card shader.
+    let (error, state) = call(
+        &mut server,
+        "document_apply",
+        json!({
+            "document_id": id,
+            "operations": [
+                { "op": "delete_directive", "id": 1 },
+                { "op": "update_layer", "id": 1, "shader": null }
+            ]
+        }),
+    );
+    assert!(!error, "{state}");
+
+    let (_, inspected) = call(
+        &mut server,
+        "document_inspect",
+        json!({ "document_id": id }),
+    );
+    assert!(inspected["directives"].as_array().unwrap().is_empty());
+    let card = inspected["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["id"] == 1)
+        .unwrap();
+    assert!(card.get("shader").is_none());
+}

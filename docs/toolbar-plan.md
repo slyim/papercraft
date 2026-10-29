@@ -10,14 +10,13 @@ The target is a user-supplied screenshot of Paper's tool strip (18 October 2026)
 |---|---|---|---|---|---|---|
 | 1 | Arrow cursor | Select / Move | Documented tool + icon | V | Implemented | `CURSOR` |
 | 2 | Hand | Hand / pan | Documented tool + icon | H, Space held | Implemented (H, Space, middle button) | `HAND` |
-| 3 | Dashed corners | Frame | Documented tool + icon | F; ⇧F wraps selection | Missing | `FRAME_CORNERS` |
-| 4 | Square | Rectangle | Documented tool + icon | R | Implemented | `SQUARE` |
-| 5 | Pen nib | Pen | Documented tool + icon | P | Missing | `PEN_NIB` |
+| 3 | Dashed corners | Frame | Documented tool + icon | F; ⇧F wraps selection | Implemented (`F`, `⇧F` wrap, `⇧1` fit artboard) | `FRAME_CORNERS` |
+| 4 | Square | Shape (Rectangle / Ellipse / Triangle) | Documented tool + icon | R | Implemented (swappable in Inspector & MCP) | `SQUARE` |
+| 5 | Pen nib | Pen | Documented tool + icon | P | Implemented (`NodeKind::Path` + SVG `d` parser) | `PEN_NIB` |
 | 6 | "Aa" | Text | Documented tool + icon | T | Implemented | `TEXT_AA` |
-| 7 | Speech shape with plus | Comment | **Inference** from shape; comments documented in build log | C | Missing | `CHAT_TEARDROP` (+ plus overlay) |
-| 8 | Diamond in square | Shaders | **Inference**; shaders menu documented | S | Missing | `DIAMOND` |
-| 9 | Image with sparkle | Create image (AI) | **Inference**; panel documented | ⇧⌘I | Missing | `IMAGE` + `SPARKLE` overlay |
-| 10 | Frame with sparkle | Create SVG (AI) | **Inference**; panel documented | ⇧⌘J | Missing | `BOUNDING_BOX` + `SPARKLE` overlay |
+| 7 | Speech shape with plus | Agent Directives | Right-side Directives dock + canvas pins | Right tab | Implemented in right-side `Directives` dock | `CHAT_TEARDROP` |
+| 8 | Diamond in square | Shaders | Procedural shader fill (`Linear`, `Radial`, `Mesh`, `Grain`, `Halftone`) | S | Implemented (`S` tool + Inspector shader section) | `DIAMOND` |
+| 9–10 | Sparkle tools | ACP Agent Studio | Right-side multi-agent dock | Right tab | Implemented in right-side `Agent` dock | `SPARKLE` |
 
 **Unknown:** identities 7–10 are not confirmed. Hovering each button in the installed Paper app to read its tooltip would settle them; that is a runtime observation to record before milestone T6.
 

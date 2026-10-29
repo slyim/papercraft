@@ -21,6 +21,7 @@ fn text_node(id: u64, text: &str, line_height: Option<f32>, align: TextAlign) ->
         fill_token: None,
         line_height,
         text_align: align,
+        ..Node::default()
     }
 }
 

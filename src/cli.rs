@@ -210,6 +210,14 @@ pub fn describe(document: &Document) -> Value {
         "layers": document.nodes.iter().enumerate()
             .map(|(index, node)| describe_node(document, index, node))
             .collect::<Vec<_>>(),
+        "directives": document.directives.iter().map(|d| json!({
+            "id": d.id,
+            "layer_id": d.layer_id,
+            "x": d.x,
+            "y": d.y,
+            "message": d.message,
+            "resolved": d.resolved,
+        })).collect::<Vec<_>>(),
     })
 }
 
@@ -230,11 +238,46 @@ fn describe_node(document: &Document, index: usize, node: &Node) -> Value {
         "locked": node.locked,
     });
     let fields = value.as_object_mut().expect("object");
+    if node.parent.is_some() {
+        fields.insert("parent".into(), json!(node.parent));
+    }
+    if node.stroke_width > 0.0 || node.stroke.is_some() || node.stroke_token.is_some() {
+        fields.insert("stroke".into(), json!(document.node_stroke(node).map(hex)));
+        fields.insert("stroke_token".into(), json!(node.stroke_token));
+        fields.insert(
+            "stroke_token_name".into(),
+            json!(
+                node.stroke_token
+                    .and_then(|id| document.token(id))
+                    .map(|t| t.name.as_str())
+            ),
+        );
+        fields.insert("stroke_width".into(), json!(node.stroke_width));
+    }
+    if let Some(shader) = &node.shader {
+        fields.insert(
+            "shader".into(),
+            json!({
+                "kind": shader.kind.name(),
+                "secondary": hex(shader.secondary),
+                "angle": shader.angle,
+                "intensity": shader.intensity,
+            }),
+        );
+    }
     match node.kind {
+        NodeKind::Frame => {
+            fields.insert("clip".into(), json!(node.clip));
+            fields.insert("radius".into(), json!(node.radius));
+        }
         NodeKind::Rectangle => {
             fields.insert("radius".into(), json!(node.radius));
         }
         NodeKind::Ellipse | NodeKind::Triangle => {}
+        NodeKind::Path => {
+            fields.insert("points".into(), json!(node.points));
+            fields.insert("closed".into(), json!(node.closed));
+        }
         NodeKind::Text => {
             let metrics = render::measure_text(node);
             fields.insert("text".into(), json!(node.text));

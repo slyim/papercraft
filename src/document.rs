@@ -53,13 +53,22 @@ fn one() -> u64 {
 fn is_one(value: &u64) -> bool {
     *value == 1
 }
+fn is_zero_f32(v: &f32) -> bool {
+    *v == 0.0
+}
+fn is_false(v: &bool) -> bool {
+    !*v
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
+    Frame,
+    #[default]
     Rectangle,
     Ellipse,
     Triangle,
+    Path,
     Text,
 }
 
@@ -67,19 +76,38 @@ impl NodeKind {
     pub fn is_shape(self) -> bool {
         matches!(self, Self::Rectangle | Self::Ellipse | Self::Triangle)
     }
+    pub fn is_frame(self) -> bool {
+        self == Self::Frame
+    }
+    pub fn is_path(self) -> bool {
+        self == Self::Path
+    }
+    pub fn supports_radius(self) -> bool {
+        matches!(self, Self::Rectangle | Self::Frame)
+    }
+    pub fn supports_shader(self) -> bool {
+        matches!(
+            self,
+            Self::Frame | Self::Rectangle | Self::Ellipse | Self::Triangle
+        )
+    }
     pub fn name(self) -> &'static str {
         match self {
+            Self::Frame => "frame",
             Self::Rectangle => "rectangle",
             Self::Ellipse => "ellipse",
             Self::Triangle => "triangle",
+            Self::Path => "path",
             Self::Text => "text",
         }
     }
     pub fn label(self) -> &'static str {
         match self {
+            Self::Frame => "Frame",
             Self::Rectangle => "Rectangle",
             Self::Ellipse => "Ellipse",
             Self::Triangle => "Triangle",
+            Self::Path => "Path",
             Self::Text => "Text",
         }
     }
@@ -91,6 +119,89 @@ impl NodeKind {
             _ => None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShaderKind {
+    #[default]
+    LinearGradient,
+    RadialGradient,
+    Mesh,
+    Grain,
+    Halftone,
+}
+
+impl ShaderKind {
+    pub const ALL: [Self; 5] = [
+        Self::LinearGradient,
+        Self::RadialGradient,
+        Self::Mesh,
+        Self::Grain,
+        Self::Halftone,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::LinearGradient => "linear_gradient",
+            Self::RadialGradient => "radial_gradient",
+            Self::Mesh => "mesh",
+            Self::Grain => "grain",
+            Self::Halftone => "halftone",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LinearGradient => "Linear",
+            Self::RadialGradient => "Radial",
+            Self::Mesh => "Mesh",
+            Self::Grain => "Grain",
+            Self::Halftone => "Halftone",
+        }
+    }
+    pub fn from_name(s: &str) -> Option<Self> {
+        match s {
+            "linear_gradient" | "linear" => Some(Self::LinearGradient),
+            "radial_gradient" | "radial" => Some(Self::RadialGradient),
+            "mesh" => Some(Self::Mesh),
+            "grain" => Some(Self::Grain),
+            "halftone" => Some(Self::Halftone),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShaderFill {
+    pub kind: ShaderKind,
+    pub secondary: [u8; 4],
+    pub angle: f32,
+    pub intensity: f32,
+}
+
+impl Default for ShaderFill {
+    fn default() -> Self {
+        Self {
+            kind: ShaderKind::LinearGradient,
+            secondary: [255, 107, 43, 255],
+            angle: 45.0,
+            intensity: 0.65,
+        }
+    }
+}
+
+/// An agent/human spatial directive or annotation pin anchored to a layer or canvas point.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Directive {
+    pub id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer_id: Option<u64>,
+    pub x: f32,
+    pub y: f32,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub resolved: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -119,6 +230,128 @@ pub struct Node {
     /// Horizontal alignment of text rows within the layer (version 3).
     #[serde(default, skip_serializing_if = "TextAlign::is_left")]
     pub text_align: TextAlign,
+    /// Optional parent Frame identifier (version 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<u64>,
+    /// Whether a Frame clips its children to its bounds (version 3).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clip: bool,
+    /// Optional stroke RGBA color (version 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<[u8; 4]>,
+    /// Optional color token bound to `stroke` (version 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke_token: Option<u64>,
+    /// Stroke width in document units (version 3). `0.0` means no stroke.
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub stroke_width: f32,
+    /// Normalized `[0.0..=1.0, 0.0..=1.0]` points within the layer bounds for `NodeKind::Path` (version 3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<[f32; 2]>,
+    /// Whether a `NodeKind::Path` contour is closed (version 3).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub closed: bool,
+    /// Optional procedural shader fill (version 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shader: Option<ShaderFill>,
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        Self {
+            id: 1,
+            name: "Rectangle".into(),
+            kind: NodeKind::Rectangle,
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+            fill: [210, 214, 220, 255],
+            radius: 0.0,
+            text: String::new(),
+            font_size: 28.0,
+            hidden: false,
+            locked: false,
+            fill_token: None,
+            line_height: None,
+            text_align: TextAlign::Left,
+            parent: None,
+            clip: false,
+            stroke: None,
+            stroke_token: None,
+            stroke_width: 0.0,
+            points: Vec::new(),
+            closed: false,
+            shader: None,
+        }
+    }
+}
+
+/// Default normalized control points for a newly placed `NodeKind::Path` layer.
+pub fn default_path_points() -> Vec<[f32; 2]> {
+    vec![[0.08, 0.78], [0.36, 0.18], [0.66, 0.82], [0.92, 0.22]]
+}
+
+/// Parses a simple SVG `M x y L x y ... [Z]` path string into normalized `[0.0..=1.0]` points
+/// and a `closed` flag.
+pub fn parse_svg_path_points(d: &str) -> Result<(Vec<[f32; 2]>, bool), String> {
+    let mut closed = false;
+    let mut cleaned = String::with_capacity(d.len());
+    for ch in d.chars() {
+        match ch {
+            'Z' | 'z' => {
+                closed = true;
+                cleaned.push(' ');
+            }
+            'M' | 'm' | 'L' | 'l' | 'C' | 'c' | 'Q' | 'q' | ',' => {
+                cleaned.push(' ');
+            }
+            _ => cleaned.push(ch),
+        }
+    }
+    let mut coords = Vec::new();
+    for token in cleaned.split_whitespace() {
+        let value: f32 = token
+            .parse()
+            .map_err(|_| format!("Invalid SVG path coordinate “{token}”."))?;
+        if !value.is_finite() {
+            return Err("SVG path coordinates must be finite.".into());
+        }
+        coords.push(value);
+    }
+    if coords.len() < 4 || coords.len() % 2 != 0 {
+        return Err("SVG path must contain at least 2 coordinate pairs (M x y L x y).".into());
+    }
+    if coords.len() > 20_000 {
+        return Err("SVG path exceeds the 10,000 point limit.".into());
+    }
+    let mut raw: Vec<[f32; 2]> = coords.as_chunks::<2>().0.to_vec();
+    let already_normalized = raw
+        .iter()
+        .all(|[x, y]| (0.0..=1.0).contains(x) && (0.0..=1.0).contains(y));
+    if !already_normalized {
+        let in_percent = raw
+            .iter()
+            .all(|[x, y]| (0.0..=100.0).contains(x) && (0.0..=100.0).contains(y));
+        if in_percent {
+            for [x, y] in &mut raw {
+                *x = (*x / 100.0).clamp(0.0, 1.0);
+                *y = (*y / 100.0).clamp(0.0, 1.0);
+            }
+        } else {
+            let min_x = raw.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+            let max_x = raw.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max);
+            let min_y = raw.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
+            let max_y = raw.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
+            let span_x = (max_x - min_x).max(1.0);
+            let span_y = (max_y - min_y).max(1.0);
+            for [x, y] in &mut raw {
+                *x = ((*x - min_x) / span_x).clamp(0.0, 1.0);
+                *y = ((*y - min_y) / span_y).clamp(0.0, 1.0);
+            }
+        }
+    }
+    Ok((raw, closed))
 }
 
 /// Horizontal alignment of text rows within a text layer.
@@ -160,7 +393,18 @@ impl Node {
     pub fn uses_v3(&self) -> bool {
         self.line_height.is_some()
             || !self.text_align.is_left()
-            || matches!(self.kind, NodeKind::Ellipse | NodeKind::Triangle)
+            || matches!(
+                self.kind,
+                NodeKind::Frame | NodeKind::Ellipse | NodeKind::Triangle | NodeKind::Path
+            )
+            || self.parent.is_some()
+            || self.clip
+            || self.stroke.is_some()
+            || self.stroke_token.is_some()
+            || self.stroke_width > 0.0
+            || !self.points.is_empty()
+            || self.closed
+            || self.shader.is_some()
     }
 
     /// Changes the geometry of a shape layer. Only rectangles keep a corner radius.
@@ -229,6 +473,8 @@ pub enum ColorTarget {
     Background,
     /// Rectangle fill or text color of a layer.
     Node(u64),
+    /// Stroke color of a layer.
+    Stroke(u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,6 +519,12 @@ pub struct Document {
     /// Color tokens (version 2), in Theme panel order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tokens: Vec<ColorToken>,
+    /// Next directive identifier (version 3). Omitted while no directives exist.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub next_directive_id: u64,
+    /// Spatial directives and agent/human annotations (version 3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub directives: Vec<Directive>,
     pub nodes: Vec<Node>,
 }
 
@@ -290,6 +542,8 @@ impl Default for Document {
             next_id: 1,
             next_token_id: 1,
             tokens: Vec::new(),
+            next_directive_id: 1,
+            directives: Vec::new(),
             nodes: Vec::new(),
         }
     }
@@ -393,6 +647,7 @@ impl Document {
                 fill_token: None,
                 line_height: None,
                 text_align: TextAlign::Left,
+                ..Node::default()
             });
             doc.next_id += 1;
         }
@@ -401,7 +656,10 @@ impl Document {
 
     /// Lowest format version that can represent this document.
     pub fn required_version(&self) -> u32 {
-        if self.nodes.iter().any(Node::uses_v3) {
+        if self.nodes.iter().any(Node::uses_v3)
+            || !self.directives.is_empty()
+            || self.next_directive_id > 1
+        {
             3
         } else if self.tokens.is_empty() {
             1
@@ -413,7 +671,10 @@ impl Document {
     fn has_bindings(&self) -> bool {
         self.background_token.is_some()
             || self.canvas_token.is_some()
-            || self.nodes.iter().any(|n| n.fill_token.is_some())
+            || self
+                .nodes
+                .iter()
+                .any(|n| n.fill_token.is_some() || n.stroke_token.is_some())
     }
 
     /// Synchronizes bound literals with their tokens and sets the lowest representable
@@ -428,13 +689,22 @@ impl Document {
         resolve(&self.tokens, &mut self.canvas, self.canvas_token);
         for node in &mut self.nodes {
             resolve(&self.tokens, &mut node.fill, node.fill_token);
+            if let Some(token) = node
+                .stroke_token
+                .and_then(|id| self.tokens.iter().find(|t| t.id == id))
+            {
+                node.stroke = Some(token.value);
+            }
+        }
+        if self.tokens.is_empty() {
+            self.next_token_id = 1;
+        }
+        if self.directives.is_empty() {
+            self.next_directive_id = 1;
         }
         // Preserve unsupported versions so validation rejects them instead of downgrading.
         if (1..=CURRENT_VERSION).contains(&self.version) {
             self.version = self.required_version();
-        }
-        if self.tokens.is_empty() {
-            self.next_token_id = 1;
         }
     }
 
@@ -587,9 +857,19 @@ impl Document {
             .checked_add(originals.len() as u64)
             .ok_or("Layer identifiers are exhausted.")?;
         let first = self.next_id;
+        let id_map: Vec<(u64, u64)> = originals
+            .iter()
+            .enumerate()
+            .map(|(offset, node)| (node.id, first + offset as u64))
+            .collect();
         let mut copies = Vec::with_capacity(originals.len());
         for (offset, mut node) in originals.into_iter().enumerate() {
             node.id = first + offset as u64;
+            if let Some(pid) = node.parent
+                && let Some(&(_, mapped)) = id_map.iter().find(|&&(old, _)| old == pid)
+            {
+                node.parent = Some(mapped);
+            }
             node.x = (node.x + dx).clamp(-MAX_COORDINATE, MAX_COORDINATE);
             node.y = (node.y + dy).clamp(-MAX_COORDINATE, MAX_COORDINATE);
             let mut name_end = node.name.len().min(251);
@@ -616,11 +896,236 @@ impl Document {
     pub fn node_fill(&self, node: &Node) -> [u8; 4] {
         self.resolve(node.fill, node.fill_token)
     }
+    pub fn node_stroke(&self, node: &Node) -> Option<[u8; 4]> {
+        if node.stroke_width <= 0.0 {
+            return None;
+        }
+        if let Some(token) = node.stroke_token.and_then(|id| self.token(id)) {
+            return Some(token.value);
+        }
+        node.stroke
+    }
     pub fn background_color(&self) -> [u8; 4] {
         self.resolve(self.background, self.background_token)
     }
     pub fn canvas_color(&self) -> [u8; 4] {
         self.resolve(self.canvas, self.canvas_token)
+    }
+
+    /// Intersects `[left, top, right, bottom]` for all ancestor Frames of `node` where `clip` is `true`.
+    pub fn ancestors_clip_rect(&self, node: &Node) -> Option<[f32; 4]> {
+        let mut clip: Option<[f32; 4]> = None;
+        let mut current = node.parent;
+        let mut hops = 0;
+        while let Some(pid) = current {
+            if hops > self.nodes.len() {
+                break;
+            }
+            hops += 1;
+            let Some(parent) = self.nodes.iter().find(|n| n.id == pid) else {
+                break;
+            };
+            if parent.kind == NodeKind::Frame && parent.clip {
+                let rect = node_rect(parent);
+                clip = Some(match clip {
+                    None => rect,
+                    Some(c) => [
+                        c[0].max(rect[0]),
+                        c[1].max(rect[1]),
+                        c[2].min(rect[2]),
+                        c[3].min(rect[3]),
+                    ],
+                });
+            }
+            current = parent.parent;
+        }
+        clip
+    }
+
+    /// Returns `true` if `node.hidden` or any ancestor Frame of `node` is hidden.
+    pub fn is_effectively_hidden(&self, node: &Node) -> bool {
+        if node.hidden {
+            return true;
+        }
+        let mut current = node.parent;
+        let mut hops = 0;
+        while let Some(pid) = current {
+            if hops > self.nodes.len() {
+                break;
+            }
+            hops += 1;
+            let Some(parent) = self.nodes.iter().find(|n| n.id == pid) else {
+                break;
+            };
+            if parent.hidden {
+                return true;
+            }
+            current = parent.parent;
+        }
+        false
+    }
+
+    /// Returns all node IDs whose `parent` chain includes `frame_id`.
+    pub fn descendants_of(&self, frame_id: u64) -> IdSet {
+        let mut descendants = IdSet::default();
+        for node in &self.nodes {
+            if descendants.contains(&node.id) {
+                continue;
+            }
+            let mut current = node.parent;
+            let mut hops = 0;
+            while let Some(pid) = current {
+                if pid == frame_id || descendants.contains(&pid) {
+                    descendants.insert(node.id);
+                    break;
+                }
+                if hops > self.nodes.len() {
+                    break;
+                }
+                hops += 1;
+                current = self
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == pid)
+                    .and_then(|n| n.parent);
+            }
+        }
+        descendants
+    }
+
+    /// Wraps the unlocked, visible layers among `ids` in a new `NodeKind::Frame` inserted at the
+    /// earliest index among `ids`, and sets `node.parent = Some(frame_id)` on the wrapped layers.
+    pub fn wrap_in_frame(&mut self, ids: &[u64], name: Option<&str>) -> Result<u64, String> {
+        for &id in ids {
+            if !self.nodes.iter().any(|n| n.id == id) {
+                return Err(format!("No layer {id}."));
+            }
+        }
+        let target_ids: IdSet = ids.iter().copied().collect();
+        let arrangeable: IdSet = self
+            .nodes
+            .iter()
+            .filter(|n| target_ids.contains(&n.id) && !n.hidden && !n.locked)
+            .map(|n| n.id)
+            .collect();
+        if arrangeable.is_empty() {
+            return Err("No unlocked visible layers to wrap in a frame.".into());
+        }
+        let bounds = self
+            .nodes
+            .iter()
+            .filter(|n| arrangeable.contains(&n.id))
+            .map(node_rect)
+            .reduce(|a, b| {
+                [
+                    a[0].min(b[0]),
+                    a[1].min(b[1]),
+                    a[2].max(b[2]),
+                    a[3].max(b[3]),
+                ]
+            })
+            .expect("one or more arrangeable layers");
+        let left = (bounds[0] - 16.0).clamp(0.0, MAX_COORDINATE);
+        let top = (bounds[1] - 16.0).clamp(0.0, MAX_COORDINATE);
+        let right = (bounds[2] + 16.0).clamp(0.0, MAX_COORDINATE);
+        let bottom = (bounds[3] + 16.0).clamp(0.0, MAX_COORDINATE);
+        let width = (right - left).clamp(1.0, MAX_COORDINATE);
+        let height = (bottom - top).clamp(1.0, MAX_COORDINATE);
+        let frame_id = self.next_id;
+        let next = frame_id
+            .checked_add(1)
+            .ok_or("Layer identifiers are exhausted.")?;
+        let first_index = self
+            .nodes
+            .iter()
+            .position(|n| arrangeable.contains(&n.id))
+            .expect("one or more arrangeable layers");
+        for node in &mut self.nodes {
+            if arrangeable.contains(&node.id) {
+                node.parent = Some(frame_id);
+            }
+        }
+        self.nodes.insert(
+            first_index,
+            Node {
+                id: frame_id,
+                name: name
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("Frame")
+                    .into(),
+                kind: NodeKind::Frame,
+                x: left,
+                y: top,
+                width,
+                height,
+                fill: [255, 255, 255, 255],
+                radius: 12.0,
+                clip: true,
+                ..Node::default()
+            },
+        );
+        self.next_id = next;
+        Ok(frame_id)
+    }
+
+    pub fn add_directive(
+        &mut self,
+        layer_id: Option<u64>,
+        x: f32,
+        y: f32,
+        message: &str,
+    ) -> Result<u64, String> {
+        if self.directives.len() >= 1_000 {
+            return Err("Document exceeds the 1,000 directive limit.".into());
+        }
+        if let Some(lid) = layer_id
+            && !self.nodes.iter().any(|n| n.id == lid)
+        {
+            return Err(format!("No layer {lid}."));
+        }
+        if !x.is_finite() || !y.is_finite() {
+            return Err("Directive coordinates must be finite.".into());
+        }
+        let message = message.trim();
+        if message.is_empty() || message.len() > 4_000 {
+            return Err("Directive message must contain 1 to 4,000 bytes.".into());
+        }
+        let id = self.next_directive_id;
+        let next = id
+            .checked_add(1)
+            .ok_or("Directive identifiers are exhausted.")?;
+        self.directives.push(Directive {
+            id,
+            layer_id,
+            x: clamp_coordinate(x),
+            y: clamp_coordinate(y),
+            message: message.to_owned(),
+            resolved: false,
+        });
+        self.next_directive_id = next;
+        Ok(id)
+    }
+
+    pub fn resolve_directive(&mut self, id: u64, resolved: bool) -> Result<(), String> {
+        let directive = self
+            .directives
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or_else(|| format!("No directive {id}."))?;
+        directive.resolved = resolved;
+        Ok(())
+    }
+
+    pub fn delete_directive(&mut self, id: u64) -> Result<(), String> {
+        let before = self.directives.len();
+        self.directives.retain(|d| d.id != id);
+        if self.directives.len() == before {
+            return Err(format!("No directive {id}."));
+        }
+        if self.directives.is_empty() {
+            self.next_directive_id = 1;
+        }
+        Ok(())
     }
 
     /// Limits one shared translation so every layer position stays within range.
@@ -641,6 +1146,7 @@ impl Document {
             ColorTarget::Canvas => self.canvas_token,
             ColorTarget::Background => self.background_token,
             ColorTarget::Node(id) => self.nodes.iter().find(|n| n.id == id)?.fill_token,
+            ColorTarget::Stroke(id) => self.nodes.iter().find(|n| n.id == id)?.stroke_token,
         }
     }
 
@@ -654,6 +1160,14 @@ impl Document {
                 .iter()
                 .find(|n| n.id == id)
                 .map(|n| self.node_fill(n)),
+            ColorTarget::Stroke(id) => {
+                let node = self.nodes.iter().find(|n| n.id == id)?;
+                Some(
+                    node.stroke_token
+                        .and_then(|tid| self.token(tid))
+                        .map_or(node.stroke.unwrap_or([0, 0, 0, 255]), |t| t.value),
+                )
+            }
         }
     }
 
@@ -669,6 +1183,11 @@ impl Document {
                 .iter_mut()
                 .find(|n| n.id == id)
                 .map(|n| (&mut n.fill, &mut n.fill_token)),
+            ColorTarget::Stroke(id) => self
+                .nodes
+                .iter_mut()
+                .find(|n| n.id == id)
+                .map(|n| (n.stroke.get_or_insert([0, 0, 0, 255]), &mut n.stroke_token)),
         }
     }
 
@@ -681,12 +1200,14 @@ impl Document {
         if self.background_token == Some(id) {
             usage.push(ColorTarget::Background);
         }
-        usage.extend(
-            self.nodes
-                .iter()
-                .filter(|n| n.fill_token == Some(id))
-                .map(|n| ColorTarget::Node(n.id)),
-        );
+        for node in &self.nodes {
+            if node.fill_token == Some(id) {
+                usage.push(ColorTarget::Node(node.id));
+            }
+            if node.stroke_token == Some(id) {
+                usage.push(ColorTarget::Stroke(node.id));
+            }
+        }
         usage
     }
 
@@ -723,7 +1244,11 @@ impl Document {
         if self.version == 1 && (!self.tokens.is_empty() || self.has_bindings()) {
             return Err("Version 1 documents cannot contain color tokens.".into());
         }
-        if self.version < 3 && self.nodes.iter().any(Node::uses_v3) {
+        if self.version < 3
+            && (self.nodes.iter().any(Node::uses_v3)
+                || !self.directives.is_empty()
+                || self.next_directive_id > 1)
+        {
             return Err(
                 "Version 1 and 2 documents cannot contain line height, text alignment, ellipses or triangles."
                     .into(),
@@ -743,7 +1268,11 @@ impl Document {
         }
         let bound = [self.background_token, self.canvas_token]
             .into_iter()
-            .chain(self.nodes.iter().map(|n| n.fill_token))
+            .chain(
+                self.nodes
+                    .iter()
+                    .flat_map(|n| [n.fill_token, n.stroke_token]),
+            )
             .flatten();
         for id in bound {
             if !token_ids.contains(&id) {
@@ -757,11 +1286,17 @@ impl Document {
             return Err("Artboard dimensions must be between 1 and 100,000.".into());
         }
         let mut ids = StdHashSet::new();
+        let mut frame_ids = StdHashSet::new();
         for node in &self.nodes {
             if node.id == 0 || node.id >= self.next_id || !ids.insert(node.id) {
                 return Err(
                     "Layer identifiers must be unique and below the next identifier.".into(),
                 );
+            }
+            if let Some(pid) = node.parent
+                && !frame_ids.contains(&pid)
+            {
+                return Err("A layer parent must be an earlier Frame layer.".into());
             }
             if node.name.len() > 256 || node.text.len() > MAX_TEXT_BYTES {
                 return Err("Layer name or text is too long.".into());
@@ -775,6 +1310,8 @@ impl Document {
                 || !(0.0..=MAX_COORDINATE).contains(&node.radius)
                 || !node.font_size.is_finite()
                 || !(1.0..=512.0).contains(&node.font_size)
+                || !node.stroke_width.is_finite()
+                || !(0.0..=1000.0).contains(&node.stroke_width)
             {
                 return Err("Layer geometry contains an invalid or out-of-range number.".into());
             }
@@ -789,15 +1326,77 @@ impl Document {
                     return Err("Only rectangles have a corner radius.".into());
                 }
             }
+            if node.kind == NodeKind::Path {
+                if !(2..=10_000).contains(&node.points.len()) {
+                    return Err("Path layers must contain between 2 and 10,000 points.".into());
+                }
+                if !node.points.iter().all(|[x, y]| {
+                    x.is_finite()
+                        && y.is_finite()
+                        && (0.0..=1.0).contains(x)
+                        && (0.0..=1.0).contains(y)
+                }) {
+                    return Err("Path points must be normalized coordinates in 0..=1.".into());
+                }
+            } else if !node.points.is_empty() || node.closed {
+                return Err("Only path layers can have path points or closed contours.".into());
+            }
+            if let Some(shader) = &node.shader {
+                if !node.kind.supports_shader() {
+                    return Err("This layer kind does not support shader fills.".into());
+                }
+                if !shader.angle.is_finite()
+                    || !shader.intensity.is_finite()
+                    || !(0.0..=1.0).contains(&shader.intensity)
+                {
+                    return Err(
+                        "Shader angle must be finite and intensity must be in 0..=1.".into(),
+                    );
+                }
+            }
             if node
                 .line_height
                 .is_some_and(|h| !h.is_finite() || !LINE_HEIGHT.contains(&h))
             {
                 return Err("Line height must be between 1 and 4,096.".into());
             }
+            if node.kind == NodeKind::Frame {
+                frame_ids.insert(node.id);
+            }
         }
         if self.next_id == 0 {
             return Err("The next layer identifier is invalid.".into());
+        }
+        if self.next_directive_id == 0 {
+            return Err("The next directive identifier is invalid.".into());
+        }
+        if self.directives.len() > 1_000 {
+            return Err("Document exceeds the 1,000 directive limit.".into());
+        }
+        let mut directive_ids = StdHashSet::new();
+        for directive in &self.directives {
+            if directive.id == 0
+                || directive.id >= self.next_directive_id
+                || !directive_ids.insert(directive.id)
+            {
+                return Err(
+                    "Directive identifiers must be unique and below the next identifier.".into(),
+                );
+            }
+            if ![directive.x, directive.y]
+                .iter()
+                .all(|n| n.is_finite() && n.abs() <= MAX_COORDINATE)
+            {
+                return Err("Directive coordinates are out of range.".into());
+            }
+            if directive.message.is_empty() || directive.message.len() > 4_000 {
+                return Err("Directive message must contain 1 to 4,000 bytes.".into());
+            }
+            if let Some(lid) = directive.layer_id
+                && !ids.contains(&lid)
+            {
+                return Err(format!("Directive references missing layer {lid}."));
+            }
         }
         Ok(())
     }
@@ -831,9 +1430,11 @@ impl Document {
             ]
             .iter()
             .any(|key| fields.get(key).is_some())
-                || fields["nodes"]
-                    .as_array()
-                    .is_some_and(|nodes| nodes.iter().any(|node| node.get("fill_token").is_some())))
+                || fields["nodes"].as_array().is_some_and(|nodes| {
+                    nodes.iter().any(|node| {
+                        node.get("fill_token").is_some() || node.get("stroke_token").is_some()
+                    })
+                }))
         {
             return Err("Version 1 documents cannot contain color token fields.".into());
         }
@@ -865,6 +1466,47 @@ impl Document {
         }
     }
 
+    fn css_background(&self, node: &Node) -> String {
+        let fill = self.css_value(node.fill, node.fill_token);
+        if let Some(shader) = &node.shader {
+            let sec = css_color(shader.secondary);
+            match shader.kind {
+                ShaderKind::LinearGradient | ShaderKind::Grain | ShaderKind::Halftone => {
+                    format!("linear-gradient({}deg,{fill},{sec})", shader.angle)
+                }
+                ShaderKind::RadialGradient | ShaderKind::Mesh => {
+                    format!("radial-gradient(circle,{fill},{sec})")
+                }
+            }
+        } else {
+            fill
+        }
+    }
+
+    fn css_border(&self, node: &Node) -> String {
+        if node.stroke_width > 0.0 && (node.stroke.is_some() || node.stroke_token.is_some()) {
+            let stroke = self.css_value(node.stroke.unwrap_or([0, 0, 0, 255]), node.stroke_token);
+            format!(";border:{}px solid {stroke}", node.stroke_width)
+        } else {
+            String::new()
+        }
+    }
+
+    fn svg_paint(&self, node: &Node) -> String {
+        let mut paint = svg_fill(self.node_fill(node));
+        if let Some(sc) = self.node_stroke(node) {
+            paint.push_str(&format!(
+                " stroke=\"#{:02x}{:02x}{:02x}\" stroke-opacity=\"{:.4}\" stroke-width=\"{}\"",
+                sc[0],
+                sc[1],
+                sc[2],
+                sc[3] as f32 / 255.0,
+                node.stroke_width
+            ));
+        }
+        paint
+    }
+
     pub fn export_html(&self) -> Result<String, String> {
         self.validate()?;
         // Token names are restricted to CSS identifier characters by validation.
@@ -886,16 +1528,37 @@ impl Document {
             self.height,
             self.css_value(self.background, self.background_token)
         );
-        for node in self.nodes.iter().filter(|n| !n.hidden) {
+        for node in self.nodes.iter().filter(|n| !self.is_effectively_hidden(n)) {
             let style = format!(
                 "position:absolute;box-sizing:border-box;overflow:hidden;left:{}px;top:{}px;width:{}px;height:{}px;",
                 node.x, node.y, node.width, node.height
             );
             let fill = self.css_value(node.fill, node.fill_token);
+            let bg = self.css_background(node);
+            let border = self.css_border(node);
             match node.kind {
-                NodeKind::Rectangle => html.push_str(&format!("<div aria-label=\"{}\" style=\"{style}background:{fill};border-radius:{}px\"></div>\n", escape(&node.name), node.radius)),
-                NodeKind::Ellipse => html.push_str(&format!("<div class=\"layer ellipse\" aria-label=\"{}\" style=\"{style}background:{fill};border-radius:50%;\"></div>\n", escape(&node.name))),
-                NodeKind::Triangle => html.push_str(&format!("<div class=\"layer triangle\" aria-label=\"{}\" style=\"{style}background:{fill};clip-path:polygon(50% 0%,100% 100%,0% 100%);\"></div>\n", escape(&node.name))),
+                NodeKind::Frame => html.push_str(&format!("<div class=\"layer frame\" aria-label=\"{}\" style=\"{style}background:{bg};border-radius:{}px{border}\"></div>\n", escape(&node.name), node.radius)),
+                NodeKind::Rectangle => html.push_str(&format!("<div aria-label=\"{}\" style=\"{style}background:{bg};border-radius:{}px{border}\"></div>\n", escape(&node.name), node.radius)),
+                NodeKind::Ellipse => html.push_str(&format!("<div class=\"layer ellipse\" aria-label=\"{}\" style=\"{style}background:{bg};border-radius:50%{border};\"></div>\n", escape(&node.name))),
+                NodeKind::Triangle => html.push_str(&format!("<div class=\"layer triangle\" aria-label=\"{}\" style=\"{style}background:{bg};clip-path:polygon(50% 0%,100% 100%,0% 100%){border};\"></div>\n", escape(&node.name))),
+                NodeKind::Path => {
+                    let d = svg_path_d(node, true);
+                    let stroke_attr = if let Some(sc) = self.node_stroke(node) {
+                        format!(
+                            " stroke=\"{}\" stroke-width=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"",
+                            css_color(sc),
+                            node.stroke_width
+                        )
+                    } else {
+                        String::new()
+                    };
+                    html.push_str(&format!(
+                        "<svg class=\"layer path\" aria-label=\"{}\" style=\"{style}\" viewBox=\"0 0 {} {}\"><path d=\"{d}\" fill=\"{fill}\"{stroke_attr}/></svg>\n",
+                        escape(&node.name),
+                        node.width,
+                        node.height
+                    ));
+                }
                 NodeKind::Text => {
                     let line_height = node.line_height.map_or("1.2".into(), |h| format!("{h}px"));
                     let align = match node.text_align {
@@ -914,7 +1577,7 @@ impl Document {
     /// fonts are resolved by the receiving application.
     pub fn export_svg(&self) -> Result<String, String> {
         self.validate()?;
-        let visible = self.nodes.iter().filter(|n| !n.hidden);
+        let visible = self.nodes.iter().filter(|n| !self.is_effectively_hidden(n));
         if std::iter::once(self.name.as_str())
             .chain(visible.clone().flat_map(|n| [n.name.as_str(), n.text.as_str()]))
             .any(|value| value.chars().any(|c| !matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}')))
@@ -939,14 +1602,14 @@ impl Document {
                 escape(&node.name)
             );
             match node.kind {
-                NodeKind::Rectangle => svg.push_str(&format!(
+                NodeKind::Frame | NodeKind::Rectangle => svg.push_str(&format!(
                     "<rect {label} x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{}\" {}/>\n",
                     node.x,
                     node.y,
                     node.width,
                     node.height,
                     node.radius.min(node.width.min(node.height) / 2.0),
-                    svg_fill(self.node_fill(node))
+                    self.svg_paint(node)
                 )),
                 NodeKind::Ellipse => svg.push_str(&format!(
                     "<ellipse {label} cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\" {}/>\n",
@@ -954,7 +1617,7 @@ impl Document {
                     node.y + node.height / 2.0,
                     node.width / 2.0,
                     node.height / 2.0,
-                    svg_fill(self.node_fill(node))
+                    self.svg_paint(node)
                 )),
                 NodeKind::Triangle => svg.push_str(&format!(
                     "<polygon {label} points=\"{},{} {},{} {},{}\" {}/>\n",
@@ -964,7 +1627,12 @@ impl Document {
                     node.y + node.height,
                     node.x,
                     node.y + node.height,
-                    svg_fill(self.node_fill(node))
+                    self.svg_paint(node)
+                )),
+                NodeKind::Path => svg.push_str(&format!(
+                    "<path {label} d=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\" {}/>\n",
+                    svg_path_d(node, false),
+                    self.svg_paint(node)
                 )),
                 NodeKind::Text => {
                     let anchor = match node.text_align {
@@ -996,6 +1664,22 @@ impl Document {
         svg.push_str("</svg>\n");
         Ok(svg)
     }
+}
+
+fn svg_path_d(node: &Node, relative: bool) -> String {
+    let mut d = String::new();
+    let ox = if relative { 0.0 } else { node.x };
+    let oy = if relative { 0.0 } else { node.y };
+    for (i, &[px, py]) in node.points.iter().enumerate() {
+        let cmd = if i == 0 { "M" } else { " L" };
+        let x = ox + px * node.width;
+        let y = oy + py * node.height;
+        d.push_str(&format!("{cmd} {x} {y}"));
+    }
+    if node.closed {
+        d.push_str(" Z");
+    }
+    d
 }
 
 fn valid_size(n: f32) -> bool {
@@ -1251,7 +1935,12 @@ impl Editor {
     }
 
     pub fn add(&mut self, kind: NodeKind) -> Result<(), String> {
-        self.add_at(kind, 80.0, 80.0, 220.0, 80.0)
+        let (width, height) = if kind == NodeKind::Frame {
+            (320.0, 220.0)
+        } else {
+            (220.0, 80.0)
+        };
+        self.add_at(kind, 80.0, 80.0, width, height)
     }
 
     /// Adds a layer with the given artboard geometry as one history step and selects it.
@@ -1295,6 +1984,15 @@ impl Editor {
         let fill_token = style
             .fill_token
             .filter(|token| text && self.document.token(*token).is_some());
+        let fill = match kind {
+            NodeKind::Text => match fill_token.and_then(|t| self.document.token(t)) {
+                Some(token) => token.value,
+                None => style.fill,
+            },
+            NodeKind::Frame => [244, 242, 236, 255],
+            NodeKind::Path => [255, 107, 43, 0],
+            _ => [124, 155, 214, 255],
+        };
         self.document.nodes.push(Node {
             id,
             name: kind.label().into(),
@@ -1303,12 +2001,8 @@ impl Editor {
             y: clamp_coordinate(y),
             width: width.clamp(1.0, MAX_COORDINATE),
             height: height.clamp(1.0, MAX_COORDINATE),
-            fill: match fill_token.and_then(|t| self.document.token(t)) {
-                Some(token) => token.value,
-                None if text => style.fill,
-                None => [124, 155, 214, 255],
-            },
-            radius: 0.0,
+            fill,
+            radius: if kind == NodeKind::Frame { 12.0 } else { 0.0 },
             text: if text { NEW_TEXT.into() } else { String::new() },
             font_size: if text { style.font_size } else { 28.0 },
             hidden: false,
@@ -1320,6 +2014,18 @@ impl Editor {
             } else {
                 TextAlign::Left
             },
+            parent: None,
+            clip: kind == NodeKind::Frame,
+            stroke: (kind == NodeKind::Path).then_some([255, 107, 43, 255]),
+            stroke_token: None,
+            stroke_width: if kind == NodeKind::Path { 3.0 } else { 0.0 },
+            points: if kind == NodeKind::Path {
+                default_path_points()
+            } else {
+                Vec::new()
+            },
+            closed: false,
+            shader: None,
         });
         self.document.next_id = next;
         self.commit(before)?;
@@ -1327,10 +2033,43 @@ impl Editor {
         Ok(id)
     }
 
+    /// Wraps the arrangeable selection in a new Frame layer as one history step and selects it.
+    pub fn wrap_selection_in_frame(&mut self) -> Result<u64, String> {
+        let ids = self.arrangeable();
+        if ids.is_empty() {
+            return Err("Select at least one unlocked visible layer to wrap in a frame.".into());
+        }
+        let frame_id = self.apply(|doc| doc.wrap_in_frame(&ids, None))?;
+        self.select(Some(frame_id));
+        Ok(frame_id)
+    }
+
     /// Deletes every selected unlocked layer (hidden ones included) as one step.
     pub fn delete(&mut self) -> Result<(), String> {
-        let selection = self.selected.clone();
-        self.transaction(|doc| doc.nodes.retain(|n| !selection.contains(&n.id) || n.locked))?;
+        let mut selection = self.selected.clone();
+        for &id in &self.selection {
+            if self
+                .document
+                .nodes
+                .iter()
+                .any(|n| n.id == id && !n.locked && n.kind == NodeKind::Frame)
+            {
+                selection.extend(self.document.descendants_of(id));
+            }
+        }
+        self.transaction(|doc| {
+            doc.nodes.retain(|n| !selection.contains(&n.id) || n.locked);
+            let remaining: IdSet = doc.nodes.iter().map(|n| n.id).collect();
+            for node in &mut doc.nodes {
+                if let Some(pid) = node.parent
+                    && !remaining.contains(&pid)
+                {
+                    node.parent = None;
+                }
+            }
+            doc.directives
+                .retain(|d| d.layer_id.is_none_or(|lid| remaining.contains(&lid)));
+        })?;
         self.check_selection();
         Ok(())
     }
@@ -1393,7 +2132,14 @@ impl Editor {
 
     /// Moves the arrangeable selection by `dx`, `dy` as one step.
     pub fn nudge(&mut self, dx: f32, dy: f32) -> Result<(), String> {
-        let ids: IdSet = self.arrangeable().into_iter().collect();
+        let mut ids: IdSet = self.arrangeable().into_iter().collect();
+        for id in ids.clone() {
+            for d in self.document.descendants_of(id) {
+                if self.document.nodes.iter().any(|n| n.id == d && !n.locked) {
+                    ids.insert(d);
+                }
+            }
+        }
         let [dx, dy] = self.document.clamp_translation(&ids, [dx, dy]);
         self.transaction(|doc| {
             for node in doc.nodes.iter_mut().filter(|n| ids.contains(&n.id)) {
@@ -1517,7 +2263,7 @@ impl Editor {
     }
 
     fn target_locked(&self, target: ColorTarget) -> bool {
-        matches!(target, ColorTarget::Node(id)
+        matches!(target, ColorTarget::Node(id) | ColorTarget::Stroke(id)
             if self.document.nodes.iter().any(|n| n.id == id && n.locked))
     }
 

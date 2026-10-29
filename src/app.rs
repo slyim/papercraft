@@ -1,6 +1,7 @@
 use crate::document::{
     Align, Axis, ColorTarget, ColorToken, Document, Editor, IdSet, LINE_HEIGHT, MAX_COORDINATE,
-    MAX_TEXT_BYTES, NEW_TEXT, Node, NodeKind, TextAlign, TextStyle, atomic_write,
+    MAX_TEXT_BYTES, NEW_TEXT, Node, NodeKind, ShaderFill, ShaderKind, TextAlign, TextStyle,
+    atomic_write,
 };
 use crate::recents::Recents;
 use crate::render::{color, export_png, font_definitions, paint_document, text_job};
@@ -55,8 +56,11 @@ pub enum View {
 pub enum Tool {
     Select,
     Hand,
+    Frame,
     Rectangle,
+    Pen,
     Text,
+    Shader,
 }
 
 /// A tool rail entry. The rail and the single-key shortcuts both read [`TOOLS`].
@@ -70,7 +74,7 @@ pub struct ToolSpec {
 }
 
 /// Tools in rail order. Only implemented tools are listed.
-pub const TOOLS: [ToolSpec; 4] = [
+pub const TOOLS: [ToolSpec; 7] = [
     ToolSpec {
         tool: Tool::Select,
         glyph: icon::CURSOR,
@@ -86,10 +90,24 @@ pub const TOOLS: [ToolSpec; 4] = [
         group: 0,
     },
     ToolSpec {
+        tool: Tool::Frame,
+        glyph: icon::FRAME_CORNERS,
+        label: "Frame",
+        key: Key::F,
+        group: 1,
+    },
+    ToolSpec {
         tool: Tool::Rectangle,
         glyph: icon::SQUARE,
-        label: "Rectangle",
+        label: "Shape",
         key: Key::R,
+        group: 1,
+    },
+    ToolSpec {
+        tool: Tool::Pen,
+        glyph: icon::PEN_NIB,
+        label: "Pen",
+        key: Key::P,
         group: 1,
     },
     ToolSpec {
@@ -99,16 +117,34 @@ pub const TOOLS: [ToolSpec; 4] = [
         key: Key::T,
         group: 1,
     },
+    ToolSpec {
+        tool: Tool::Shader,
+        glyph: icon::DIAMOND,
+        label: "Shader",
+        key: Key::S,
+        group: 2,
+    },
 ];
 
 impl Tool {
     fn creates(self) -> Option<NodeKind> {
         match self {
+            Tool::Frame => Some(NodeKind::Frame),
             Tool::Rectangle => Some(NodeKind::Rectangle),
+            Tool::Pen => Some(NodeKind::Path),
             Tool::Text => Some(NodeKind::Text),
+            Tool::Shader => Some(NodeKind::Rectangle),
             Tool::Select | Tool::Hand => None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RightTab {
+    #[default]
+    Inspector,
+    Directives,
+    Agent,
 }
 
 struct Drag {
@@ -317,6 +353,11 @@ pub struct PaperCraftApp {
     document_key: u64,
     /// Save is waiting for confirmation to upgrade a version 1 file.
     upgrade_prompt: bool,
+    right_tab: RightTab,
+    directive_draft: String,
+    agent_model: usize,
+    agent_prompt: String,
+    agent_log: Vec<String>,
 }
 
 impl PaperCraftApp {
@@ -363,6 +404,11 @@ impl PaperCraftApp {
             file_version: 1,
             document_key: document_key(),
             upgrade_prompt: false,
+            right_tab: RightTab::Inspector,
+            directive_draft: String::new(),
+            agent_model: 0,
+            agent_prompt: String::new(),
+            agent_log: Vec::new(),
         }
     }
 
@@ -1253,13 +1299,18 @@ impl PaperCraftApp {
             {
                 self.begin_text_edit(id, false);
             }
-            for spec in &TOOLS {
-                if ctx.input(|i| i.key_pressed(spec.key)) {
-                    self.set_tool(spec.tool);
+            if ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::F)) {
+                if !self.editor.arrangeable().is_empty() {
+                    self.flush_properties();
+                    let result = self.editor.wrap_selection_in_frame().map(|_| ());
+                    self.result(result);
                 }
-            }
-            if ctx.input(|i| i.key_pressed(Key::F)) {
-                self.fit = true;
+            } else if !ctx.input(|i| i.modifiers.shift) {
+                for spec in &TOOLS {
+                    if ctx.input(|i| i.key_pressed(spec.key)) {
+                        self.set_tool(spec.tool);
+                    }
+                }
             }
         }
         let step = if ctx.input(|i| i.modifiers.shift) {
@@ -1764,26 +1815,38 @@ impl PaperCraftApp {
                     .rev()
                     .skip(rows.start)
                     .take(rows.len())
-                    .map(|n| (n.id, n.name.clone(), n.kind, n.hidden, n.locked))
+                    .map(|n| (n.id, n.name.clone(), n.kind, n.hidden, n.locked, n.parent))
                     .collect();
-                for (id, name, kind, hidden, locked) in nodes {
+                for (id, name, kind, hidden, locked, parent) in nodes {
                     let (rect, response) =
                         ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
                     let selected = self.editor.is_selected(id);
+                    let display_name = if parent.is_some() {
+                        format!("  ↳ {name}")
+                    } else {
+                        name.clone()
+                    };
                     response.widget_info(|| {
-                        egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, &name)
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::Button,
+                            true,
+                            selected,
+                            &display_name,
+                        )
                     });
                     let glyph = match kind {
+                        NodeKind::Frame => icon::FRAME_CORNERS,
                         NodeKind::Rectangle => icon::SQUARE,
                         NodeKind::Ellipse => icon::CIRCLE,
                         NodeKind::Triangle => icon::TRIANGLE,
+                        NodeKind::Path => icon::PEN_NIB,
                         NodeKind::Text => icon::TEXT_T,
                     };
                     if self.rename_row(ui, id, rect, &response, glyph, selected) {
                         continue;
                     }
                     let hovered = ui.rect_contains_pointer(rect);
-                    Row::new(glyph, &name)
+                    Row::new(glyph, &display_name)
                         .selected(selected)
                         .dim(hidden)
                         .reserve(if hovered || hidden || locked {
@@ -2266,10 +2329,49 @@ impl PaperCraftApp {
             },
         );
         ui::hline(ui);
+        ui.add_space(SPACE_S);
+        let tab_items = [("", "Inspect"), ("", "Directives"), ("", "Agent")];
+        let current_tab = match self.right_tab {
+            RightTab::Inspector => 0,
+            RightTab::Directives => 1,
+            RightTab::Agent => 2,
+        };
+        ui.horizontal(|ui| {
+            ui.add_space(SPACE_S);
+            let seg_width = (width - 2.0 * SPACE_S).max(0.0);
+            let top = ui.cursor().min;
+            if let Some(chosen) =
+                ui::segmented_choice(ui, seg_width, &tab_items, Some(current_tab), true)
+            {
+                self.flush_properties();
+                self.right_tab = match chosen {
+                    0 => RightTab::Inspector,
+                    1 => RightTab::Directives,
+                    _ => RightTab::Agent,
+                };
+            }
+            let cell = seg_width / 3.0;
+            for (i, (_, label)) in tab_items.iter().enumerate() {
+                let slot =
+                    Rect::from_min_size(pos2(top.x + i as f32 * cell, top.y), vec2(cell, ROW));
+                let color = if i == current_tab { TEXT } else { TEXT_DIM };
+                ui.painter().text(
+                    slot.center(),
+                    Align2::CENTER_CENTER,
+                    *label,
+                    ui::font(BODY),
+                    color,
+                );
+            }
+        });
+        ui.add_space(SPACE_S);
+        ui::hline(ui);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                self.inspector(ui);
+            .show(ui, |ui| match self.right_tab {
+                RightTab::Inspector => self.inspector(ui),
+                RightTab::Directives => self.directives_panel(ui),
+                RightTab::Agent => self.agent_panel(ui),
             });
     }
 
@@ -2284,6 +2386,7 @@ impl PaperCraftApp {
         let mut choice = None;
         let mut toggle_hidden = false;
         let mut shape_kind = None;
+        let mut wrap_in_frame = false;
         let tokens = self.editor.document.tokens.clone();
         // TextEdit sizes its text from `margin`, so the frame margin must match it.
         let text_margin = egui::Margin::symmetric(8, 4);
@@ -2386,16 +2489,93 @@ impl PaperCraftApp {
                     });
                     ui::wide_button(ui, "Add flex", &format!("{} A", icon::ARROW_FAT_UP), false)
                         .on_hover_text("Flex layout is not available yet");
-                    ui::check_row(
-                        ui,
-                        &mut false,
-                        "Clip content",
-                        &format!("{} C", icon::OPTION),
-                        false,
-                    )
-                    .on_hover_text("Clipping is not available yet");
+                    if kind != NodeKind::Frame {
+                        ui::check_row(
+                            ui,
+                            &mut false,
+                            "Clip content",
+                            &format!("{} C", icon::OPTION),
+                            false,
+                        )
+                        .on_hover_text("Clipping is available on Frame layers");
+                    }
                 });
-                if kind == NodeKind::Text {
+                if kind == NodeKind::Frame {
+                    inspector_heading(ui, "Frame", true, false);
+                    inspector_body(ui, |ui| {
+                        let r = ui::check_row(
+                            ui,
+                            &mut node.clip,
+                            "Clip content",
+                            &format!("{} C", icon::OPTION),
+                            !locked,
+                        );
+                        finish |= r.changed();
+                        if ui::wide_button(ui, "Wrap selection · ⇧F", "", !locked).clicked() {
+                            wrap_in_frame = true;
+                        }
+                    });
+                } else if kind == NodeKind::Path {
+                    inspector_heading(ui, "Vector Path", true, false);
+                    inspector_body(ui, |ui| {
+                        let r = ui::check_row(ui, &mut node.closed, "Closed path", "", !locked);
+                        finish |= r.changed();
+                        let third = ((ui.available_width() - 2.0 * SPACE_S) / 3.0 / SPACE_XS)
+                            .floor()
+                            * SPACE_XS;
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_sized([third, ROW], egui::Button::new("Wave"))
+                                .clicked()
+                            {
+                                node.points = vec![
+                                    [0.0, 0.65],
+                                    [0.25, 0.2],
+                                    [0.5, 0.75],
+                                    [0.75, 0.25],
+                                    [1.0, 0.5],
+                                ];
+                                node.closed = false;
+                                finish = true;
+                            }
+                            if ui
+                                .add_sized([third, ROW], egui::Button::new("Star"))
+                                .clicked()
+                            {
+                                node.points = vec![
+                                    [0.5, 0.0],
+                                    [0.62, 0.35],
+                                    [0.98, 0.35],
+                                    [0.68, 0.57],
+                                    [0.79, 0.91],
+                                    [0.5, 0.70],
+                                    [0.21, 0.91],
+                                    [0.32, 0.57],
+                                    [0.02, 0.35],
+                                    [0.38, 0.35],
+                                ];
+                                node.closed = true;
+                                finish = true;
+                            }
+                            if ui
+                                .add_sized([third, ROW], egui::Button::new("Arrow"))
+                                .clicked()
+                            {
+                                node.points = vec![
+                                    [0.0, 0.35],
+                                    [0.6, 0.35],
+                                    [0.6, 0.1],
+                                    [1.0, 0.5],
+                                    [0.6, 0.9],
+                                    [0.6, 0.65],
+                                    [0.0, 0.65],
+                                ];
+                                node.closed = true;
+                                finish = true;
+                            }
+                        });
+                    });
+                } else if kind == NodeKind::Text {
                     inspector_heading(ui, "Typography", true, false);
                     inspector_body(ui, |ui| {
                         let r = ui::number_field(
@@ -2604,11 +2784,83 @@ impl PaperCraftApp {
                         ColorTarget::Node(id),
                         &mut choice,
                     );
+                    if kind.supports_shader() {
+                        ui.label(RichText::new("Shader").size(CAPTION).color(TEXT_DIM));
+                        if let Some(next_shader) =
+                            shader_choice_rows(ui, node.shader.as_ref().map(|s| s.kind), !locked)
+                        {
+                            match next_shader {
+                                Some(sk) => match &mut node.shader {
+                                    Some(existing) => existing.kind = sk,
+                                    None => {
+                                        node.shader = Some(ShaderFill {
+                                            kind: sk,
+                                            ..ShaderFill::default()
+                                        });
+                                    }
+                                },
+                                None => node.shader = None,
+                            }
+                            finish = true;
+                        }
+                        if let Some(shader) = &mut node.shader {
+                            let half = ((ui.available_width() - SPACE_S) / 2.0 / SPACE_XS).floor()
+                                * SPACE_XS;
+                            ui.horizontal(|ui| {
+                                let r = ui::number_field(
+                                    ui,
+                                    "Angle",
+                                    &mut shader.angle,
+                                    -360.0..=360.0,
+                                    half,
+                                );
+                                finish |= r.drag_stopped() || r.lost_focus();
+                                let r = ui::number_field(
+                                    ui,
+                                    "Intensity",
+                                    &mut shader.intensity,
+                                    0.0..=1.0,
+                                    half,
+                                );
+                                finish |= r.drag_stopped() || r.lost_focus();
+                            });
+                            finish |= ui::color_field(
+                                ui,
+                                egui::Id::new(("shader_secondary", self.document_key, id)),
+                                &mut shader.secondary,
+                            );
+                        }
+                    }
+                });
+                inspector_heading(ui, "Stroke", true, false);
+                inspector_body(ui, |ui| {
+                    let r = ui::number_field(
+                        ui,
+                        "Width",
+                        &mut node.stroke_width,
+                        0.0..=100.0,
+                        ui.available_width(),
+                    );
+                    if node.stroke_width > 0.0 && node.stroke.is_none() {
+                        node.stroke = Some([35, 40, 48, 255]);
+                    }
+                    finish |= r.drag_stopped() || r.lost_focus();
+                    if node.stroke_width > 0.0 {
+                        let stroke_color = node.stroke.get_or_insert([35, 40, 48, 255]);
+                        finish |= color_property(
+                            ui,
+                            egui::Id::new("node_stroke"),
+                            &tokens,
+                            stroke_color,
+                            node.stroke_token,
+                            ColorTarget::Stroke(id),
+                            &mut choice,
+                        );
+                    }
                 });
             });
             for title in [
                 "Outline",
-                "Border",
                 "Shadow",
                 "Inner shadow",
                 "Filters",
@@ -2720,11 +2972,285 @@ impl PaperCraftApp {
             let result = self.editor.set_shape(id, next_kind);
             self.result(result);
         }
+        if wrap_in_frame {
+            self.flush_properties();
+            let result = self.editor.wrap_selection_in_frame().map(|_| ());
+            self.result(result);
+        }
         if count == 0 {
             return;
         }
         self.arrange_section(ui);
         self.layer_actions(ui);
+    }
+
+    fn directives_panel(&mut self, ui: &mut egui::Ui) {
+        let text_margin = egui::Margin::symmetric(8, 4);
+        let text_frame = egui::Frame::NONE
+            .fill(CONTROL)
+            .corner_radius(ui::RADIUS)
+            .inner_margin(text_margin);
+        inspector_heading(ui, "Agent & Canvas Directives", true, false);
+        let mut pin = false;
+        inspector_body(ui, |ui| {
+            ui.label(
+                RichText::new(
+                    "Directives anchor instructions to layers or coordinates for MCP agents.",
+                )
+                .size(CAPTION)
+                .color(TEXT_DIM),
+            );
+            ui.add(
+                egui::TextEdit::multiline(&mut self.directive_draft)
+                    .id(egui::Id::new(("directive_draft", self.document_key)))
+                    .hint_text(
+                        RichText::new("Describe a change or agent instruction…").color(TEXT_DIM),
+                    )
+                    .frame(text_frame)
+                    .margin(text_margin)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY),
+            );
+            if ui::wide_button(ui, "Pin Directive", "", true).clicked() {
+                pin = true;
+            }
+        });
+        if pin {
+            self.flush_properties();
+            let message = if self.directive_draft.trim().is_empty() {
+                "Review and refine this element".to_string()
+            } else {
+                self.directive_draft.trim().to_string()
+            };
+            let selected_id = self.editor.selected();
+            let (layer_id, x, y) = if let Some(lid) = selected_id
+                && let Some(node) = self.editor.document.nodes.iter().find(|n| n.id == lid)
+            {
+                (
+                    Some(lid),
+                    (node.x + node.width * 0.5).round(),
+                    (node.y + node.height * 0.5).round(),
+                )
+            } else {
+                (
+                    None,
+                    (self.editor.document.width * 0.5).round(),
+                    (self.editor.document.height * 0.5).round(),
+                )
+            };
+            let result = self
+                .editor
+                .apply(|doc| doc.add_directive(layer_id, x, y, &message).map(|_| ()));
+            if result.is_ok() {
+                self.directive_draft.clear();
+            }
+            self.result(result);
+        }
+        let directives = self.editor.document.directives.clone();
+        let mut resolve_op = None;
+        let mut delete_op = None;
+        inspector_heading(
+            ui,
+            &format!("Pinned Directives ({})", directives.len()),
+            true,
+            false,
+        );
+        inspector_body(ui, |ui| {
+            if directives.is_empty() {
+                ui.label(
+                    RichText::new("No directives pinned yet.")
+                        .size(CAPTION)
+                        .color(TEXT_DIM),
+                );
+            }
+            let half = ((ui.available_width() - SPACE_S) / 2.0 / SPACE_XS).floor() * SPACE_XS;
+            for d in &directives {
+                let target_label = d
+                    .layer_id
+                    .and_then(|lid| self.editor.document.nodes.iter().find(|n| n.id == lid))
+                    .map_or_else(|| format!("({:.0}, {:.0})", d.x, d.y), |n| n.name.clone());
+                ui.label(
+                    RichText::new(format!(
+                        "#{} · {}{}",
+                        d.id,
+                        target_label,
+                        if d.resolved { " · Resolved" } else { "" }
+                    ))
+                    .size(BODY)
+                    .color(if d.resolved { TEXT_DIM } else { TEXT }),
+                );
+                ui.label(
+                    RichText::new(&d.message)
+                        .size(CAPTION)
+                        .color(if d.resolved { TEXT_DIM } else { TEXT }),
+                );
+                ui.horizontal(|ui| {
+                    let resolve_label = if d.resolved { "Reopen" } else { "Resolve" };
+                    if ui
+                        .add_sized([half, ROW], egui::Button::new(resolve_label))
+                        .clicked()
+                    {
+                        resolve_op = Some((d.id, !d.resolved));
+                    }
+                    if ui
+                        .add_sized([half, ROW], egui::Button::new("Delete"))
+                        .clicked()
+                    {
+                        delete_op = Some(d.id);
+                    }
+                });
+            }
+        });
+        if let Some((id, resolved)) = resolve_op {
+            self.flush_properties();
+            let r = self.editor.apply(|doc| doc.resolve_directive(id, resolved));
+            self.result(r);
+        }
+        if let Some(id) = delete_op {
+            self.flush_properties();
+            let r = self.editor.apply(|doc| doc.delete_directive(id));
+            self.result(r);
+        }
+    }
+
+    fn agent_panel(&mut self, ui: &mut egui::Ui) {
+        const MODELS: [&str; 4] = [
+            "Gemini 4 Argon",
+            "Claude Opus",
+            "SVG Vector Specialist",
+            "Shader & Theme Artist",
+        ];
+        let text_margin = egui::Margin::symmetric(8, 4);
+        let text_frame = egui::Frame::NONE
+            .fill(CONTROL)
+            .corner_radius(ui::RADIUS)
+            .inner_margin(text_margin);
+        inspector_heading(ui, "ACP Agent Studio", true, false);
+        let mut gen_badge = false;
+        let mut apply_aurora = false;
+        let mut wrap_frame = false;
+        let mut copy_cmd = false;
+        let mut run_prompt = false;
+        inspector_body(ui, |ui| {
+            let status_text = if self.live.is_some() {
+                "● Live MCP Connected"
+            } else {
+                "● Live MCP Ready (Local)"
+            };
+            ui.label(RichText::new(status_text).size(CAPTION).color(ACCENT));
+            for (index, model) in MODELS.iter().enumerate() {
+                let mut active = self.agent_model == index;
+                if ui::check_row(ui, &mut active, model, "", true).clicked() {
+                    self.agent_model = index;
+                }
+            }
+            ui.add(
+                egui::TextEdit::multiline(&mut self.agent_prompt)
+                    .id(egui::Id::new(("agent_prompt", self.document_key)))
+                    .hint_text(RichText::new("Prompt the active ACP agent…").color(TEXT_DIM))
+                    .frame(text_frame)
+                    .margin(text_margin)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY),
+            );
+            if ui::wide_button(ui, "Dispatch Agent Prompt", "", true).clicked() {
+                run_prompt = true;
+            }
+            if ui::wide_button(ui, "Generate Vector Badge (SVG Path)", "", true).clicked() {
+                gen_badge = true;
+            }
+            if ui::wide_button(ui, "Apply Aurora Shader to Selection", "", true).clicked() {
+                apply_aurora = true;
+            }
+            if ui::wide_button(ui, "Wrap Selection in Frame", "", true).clicked() {
+                wrap_frame = true;
+            }
+            if ui::wide_button(ui, "Copy ACP / Live MCP Command", "", true).clicked() {
+                copy_cmd = true;
+            }
+            for entry in self.agent_log.iter().rev().take(4) {
+                ui.label(RichText::new(entry).size(CAPTION).color(TEXT_DIM));
+            }
+        });
+        let model_name = MODELS[self.agent_model.min(MODELS.len() - 1)];
+        if run_prompt {
+            let prompt = self.agent_prompt.trim().to_string();
+            if !prompt.is_empty() {
+                self.agent_log.push(format!("{model_name}: {prompt}"));
+                self.agent_prompt.clear();
+            }
+        }
+        if gen_badge {
+            self.flush_properties();
+            let r = self
+                .editor
+                .add_at(NodeKind::Path, 160.0, 140.0, 160.0, 160.0);
+            if r.is_ok()
+                && let Some(id) = self.editor.selected()
+                && let Some(node) = self.editor.document.nodes.iter_mut().find(|n| n.id == id)
+            {
+                node.name = "Vector Badge".into();
+                node.points = vec![
+                    [0.5, 0.0],
+                    [0.62, 0.35],
+                    [0.98, 0.35],
+                    [0.68, 0.57],
+                    [0.79, 0.91],
+                    [0.5, 0.70],
+                    [0.21, 0.91],
+                    [0.32, 0.57],
+                    [0.02, 0.35],
+                    [0.38, 0.35],
+                ];
+                node.closed = true;
+                self.editor.document.normalize();
+                self.dirty_cache.set(None);
+                self.agent_log
+                    .push(format!("{model_name}: Generated Vector Badge #{id}"));
+            }
+            self.result(r);
+        }
+        if apply_aurora {
+            self.flush_properties();
+            let selected = self.editor.selection().to_vec();
+            let r = self.editor.apply(|doc| {
+                for node in &mut doc.nodes {
+                    if selected.contains(&node.id) && !node.locked && node.kind.supports_shader() {
+                        node.shader = Some(ShaderFill {
+                            kind: ShaderKind::Mesh,
+                            secondary: [96, 239, 255, 255],
+                            angle: 45.0,
+                            intensity: 0.85,
+                        });
+                    }
+                }
+                Ok(())
+            });
+            if r.is_ok() {
+                self.agent_log
+                    .push(format!("{model_name}: Applied Aurora Mesh shader"));
+            }
+            self.result(r);
+        }
+        if wrap_frame {
+            self.flush_properties();
+            let r = self.editor.wrap_selection_in_frame().map(|_| ());
+            if r.is_ok() {
+                self.agent_log
+                    .push(format!("{model_name}: Wrapped selection in Frame"));
+            }
+            self.result(r);
+        }
+        if copy_cmd {
+            if self.live.is_some() {
+                self.copy_live_mcp_command(ui.ctx());
+            } else {
+                ui.ctx().copy_text("papercraft mcp --live".into());
+                self.status = "Live MCP command copied".into();
+            }
+            self.agent_log
+                .push(format!("{model_name}: Copied Live MCP command"));
+        }
     }
 
     /// Align and distribute controls. Disabled controls state the requirement.
@@ -3186,6 +3712,31 @@ impl PaperCraftApp {
                 paint_dimension_pill(&painter, rect, canvas, node.width, node.height);
             }
         }
+        for directive in self
+            .editor
+            .document
+            .directives
+            .iter()
+            .filter(|d| !d.resolved)
+        {
+            let doc_pos = directive
+                .layer_id
+                .and_then(|id| self.editor.document.nodes.iter().find(|n| n.id == id))
+                .map(|n| pos2(n.x + n.width - 8.0, n.y + 8.0))
+                .unwrap_or(pos2(directive.x, directive.y));
+            let center = origin + doc_pos.to_vec2() * self.zoom;
+            if canvas.expand(18.0).contains(center) {
+                painter.circle_filled(center, 9.0, ACCENT);
+                painter.circle_stroke(center, 9.0, Stroke::new(1.5, Color32::WHITE));
+                painter.text(
+                    center,
+                    Align2::CENTER_CENTER,
+                    format!("#{}", directive.id),
+                    ui::font(CAPTION),
+                    Color32::WHITE,
+                );
+            }
+        }
         let to_document = move |p: Pos2| ((p - origin) / zoom).to_pos2();
         if !panning
             && self.pending.is_none()
@@ -3230,10 +3781,34 @@ impl PaperCraftApp {
                 None
             };
             if let Some((kind, at, rect)) = finished {
+                let was_shader_tool = self.tool == Tool::Shader;
+                let parent_frame_id = (kind != NodeKind::Frame)
+                    .then(|| {
+                        self.editor
+                            .document
+                            .nodes
+                            .iter()
+                            .rev()
+                            .find(|n| {
+                                n.kind == NodeKind::Frame
+                                    && !n.hidden
+                                    && !n.locked
+                                    && at.x >= n.x
+                                    && at.x <= n.x + n.width
+                                    && at.y >= n.y
+                                    && at.y <= n.y + n.height
+                            })
+                            .map(|n| n.id)
+                    })
+                    .flatten();
                 self.flush_properties();
                 self.set_tool(Tool::Select);
                 match kind {
-                    NodeKind::Rectangle | NodeKind::Ellipse | NodeKind::Triangle => {
+                    NodeKind::Frame
+                    | NodeKind::Rectangle
+                    | NodeKind::Ellipse
+                    | NodeKind::Triangle
+                    | NodeKind::Path => {
                         let rect = rect.unwrap_or(Rect::from_min_size(at, CLICK_SIZE));
                         let result = self.editor.add_at(
                             kind,
@@ -3242,6 +3817,18 @@ impl PaperCraftApp {
                             rect.width().max(1.0),
                             rect.height().max(1.0),
                         );
+                        if result.is_ok()
+                            && let Some(id) = self.editor.selected()
+                            && let Some(node) =
+                                self.editor.document.nodes.iter_mut().find(|n| n.id == id)
+                        {
+                            if was_shader_tool {
+                                node.shader = Some(ShaderFill::default());
+                            }
+                            if let Some(frame_id) = parent_frame_id {
+                                node.parent = Some(frame_id);
+                            }
+                        }
                         self.result(result);
                     }
                     NodeKind::Text => self.place_text(&painter, at, rect),
@@ -4059,6 +4646,78 @@ fn fill_kinds(ui: &mut egui::Ui) {
         ui.interact(slot(i), egui::Id::new(("fill_kind", i)), Sense::hover())
             .on_hover_text(label);
     }
+}
+
+/// Compact 2-row selector for procedural shader fill kinds that stays strictly within `ui.available_width()`.
+fn shader_choice_rows(
+    ui: &mut egui::Ui,
+    current: Option<ShaderKind>,
+    enabled: bool,
+) -> Option<Option<ShaderKind>> {
+    const ROW_1: [(Option<ShaderKind>, &str); 3] = [
+        (None, "None"),
+        (Some(ShaderKind::LinearGradient), "Linear"),
+        (Some(ShaderKind::RadialGradient), "Radial"),
+    ];
+    const ROW_2: [(Option<ShaderKind>, &str); 3] = [
+        (Some(ShaderKind::Mesh), "Mesh"),
+        (Some(ShaderKind::Grain), "Grain"),
+        (Some(ShaderKind::Halftone), "Halftone"),
+    ];
+    let mut picked = None;
+    for (row_idx, options) in [ROW_1, ROW_2].into_iter().enumerate() {
+        let width = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(vec2(width, ROW), Sense::hover());
+        ui.painter().rect_filled(rect, ui::RADIUS, CONTROL);
+        let cell_w = (rect.width() - 4.0) / 3.0;
+        for (col_idx, (kind, label)) in options.into_iter().enumerate() {
+            let cell = Rect::from_min_size(
+                pos2(
+                    rect.left() + 2.0 + col_idx as f32 * cell_w,
+                    rect.top() + 2.0,
+                ),
+                vec2(cell_w, rect.height() - 4.0),
+            );
+            let active = current == kind;
+            let sense = if enabled {
+                Sense::click()
+            } else {
+                Sense::hover()
+            };
+            let response = ui.interact(
+                cell,
+                egui::Id::new(("shader_choice", row_idx, col_idx)),
+                sense,
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, active, label)
+            });
+            if active {
+                ui.painter().rect_filled(cell, 4.0, Color32::from_gray(74));
+            } else if enabled && response.hovered() {
+                ui.painter()
+                    .rect_filled(cell, 4.0, Color32::from_white_alpha(12));
+            }
+            let text_color = if !enabled {
+                ui::TEXT_FAINT
+            } else if active || response.hovered() {
+                TEXT
+            } else {
+                TEXT_DIM
+            };
+            ui.painter().text(
+                cell.center(),
+                Align2::CENTER_CENTER,
+                label,
+                ui::font(CAPTION),
+                text_color,
+            );
+            if enabled && response.clicked() && !active {
+                picked = Some(kind);
+            }
+        }
+    }
+    picked
 }
 
 /// Collapsible panel heading with an optional trailing icon control

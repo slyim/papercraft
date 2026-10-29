@@ -34,12 +34,24 @@ Shape layers (`kind`: `"rectangle"`, `"ellipse"`, `"triangle"`):
 
 Rollback: clear line height and set alignment to left on every text layer, and switch any ellipse/triangle layers back to rectangle; the next save writes version 1 or 2.
 
+### M2 — Nested Frames, Vector Paths, Strokes, Procedural Shaders & Directives (implemented)
+
+- **Frames & hierarchy (`kind: "frame"`, `parent`, `clip`):**
+  - `kind: "frame"` creates a container layer that defaults to `clip: true`.
+  - Any layer may reference an existing frame via `parent: <u64>`. Moving or deleting a frame moves or deletes its descendants; ancestor frames with `clip: true` clip descendant rendering in the canvas, PNG, HTML and SVG exports.
+- **Vector Paths (`kind: "path"`, `points`, `closed`):**
+  - `points` stores normalized `[x, y]` coordinates in `0.0..=1.0` relative to the layer bounds; `closed` controls whether the path is closed and filled or an open polyline.
+- **Strokes (`stroke`, `stroke_token`, `stroke_width`):**
+  - Frame, shape and path layers support `stroke: [r, g, b, a]`, optional `stroke_token: <u64>`, and `stroke_width: 0..=256`.
+- **Procedural Shaders (`shader`):**
+  - Frame and shape layers support `shader: { "kind": "linear" | "radial" | "mesh" | "grain" | "halftone", "secondary": [r, g, b, a], "angle": -360..=360, "intensity": 0..=1 }`.
+- **Agent Directives (`directives`, `next_directive_id`):**
+  - Top-level `directives` list stores spatial pins (`id`, `layer_id`, `x`, `y`, `message`, `resolved`) rendered as numbered orange badges on the canvas and exposed via CLI inspect and MCP.
+
 ### Planned, not yet part of the format
 
 Recorded so later milestones extend one contract instead of competing:
 
-- **M2 Styling:** per-corner radii, one stroke (color/token, width, solid/dashed, inside/center/outside), drop shadows, layer opacity.
-- **M3 Frames and groups (#7):** layers stay a flat list in paint order (depth-first pre-order) with an optional `parent`; children store parent-relative geometry; frames clip optionally. Validation rejects missing parents, non-container parents, children ordered before their parent, non-contiguous subtrees and therefore cycles. v1–v2 layers have no parent and keep world geometry.
 - **M4 Artboards and pages:** the single artboard becomes the first entry of an artboard list; legacy documents load as one page with one artboard.
 - **M5 Images (#8):** embedded, size-bounded assets referenced by id, so a moved document keeps its images.
 - **M6 Auto layout:** row/column, gap, padding, hug/fill/fixed sizing. A circular sizing rule (a hugging parent with a filling child on the same axis) is rejected at validation rather than resolved to zero.

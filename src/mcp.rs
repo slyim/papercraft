@@ -7,7 +7,8 @@
 
 use crate::cli::{describe, export_bytes, same_file};
 use crate::document::{
-    Align, Axis, ColorTarget, ColorToken, Document, Editor, Node, NodeKind, TextAlign,
+    Align, Axis, ColorTarget, ColorToken, Document, Editor, Node, NodeKind, ShaderFill, ShaderKind,
+    TextAlign,
 };
 
 /// Operation fields that apply only to text layers.
@@ -417,8 +418,8 @@ fn apply_operation(
         .ok_or("Each operation must be an object.")?;
     let kind = req_str(op, "op")?;
     match kind {
-        "create_rectangle" | "create_ellipse" | "create_triangle" | "create_shape"
-        | "create_text" => {
+        "create_frame" | "create_rectangle" | "create_ellipse" | "create_triangle"
+        | "create_shape" | "create_path" | "create_text" => {
             let text = kind == "create_text";
             allow(
                 op,
@@ -426,13 +427,22 @@ fn apply_operation(
                     "op",
                     "name",
                     "shape",
+                    "parent",
+                    "clip",
                     "x",
                     "y",
                     "width",
                     "height",
                     "fill",
                     "fill_token",
+                    "stroke",
+                    "stroke_token",
+                    "stroke_width",
                     "radius",
+                    "points",
+                    "svg_path",
+                    "closed",
+                    "shader",
                     "text",
                     "font_size",
                     "line_height",
@@ -449,25 +459,30 @@ fn apply_operation(
                     TEXT_ONLY.join(", ")
                 ));
             }
-            if text && op.contains_key("shape") {
+            if matches!(kind, "create_text" | "create_frame" | "create_path")
+                && op.contains_key("shape")
+            {
                 return Err("shape applies only to shape layers.".into());
             }
-            let node_kind = if text {
-                NodeKind::Text
-            } else {
-                let default_kind = match kind {
-                    "create_ellipse" => NodeKind::Ellipse,
-                    "create_triangle" => NodeKind::Triangle,
-                    _ => NodeKind::Rectangle,
-                };
-                match opt_str(op, "shape")? {
-                    Some(shape) => parse_shape(shape)?,
-                    None => default_kind,
+            let node_kind = match kind {
+                "create_text" => NodeKind::Text,
+                "create_frame" => NodeKind::Frame,
+                "create_path" => NodeKind::Path,
+                _ => {
+                    let default_kind = match kind {
+                        "create_ellipse" => NodeKind::Ellipse,
+                        "create_triangle" => NodeKind::Triangle,
+                        _ => NodeKind::Rectangle,
+                    };
+                    match opt_str(op, "shape")? {
+                        Some(shape) => parse_shape(shape)?,
+                        None => default_kind,
+                    }
                 }
             };
-            if node_kind != NodeKind::Rectangle && op.contains_key("radius") {
+            if !node_kind.supports_radius() && op.contains_key("radius") {
                 return Err(format!(
-                    "radius applies only to rectangles, not {}.",
+                    "radius applies only to rectangles and frames, not {}.",
                     node_kind.name()
                 ));
             }
@@ -475,27 +490,52 @@ fn apply_operation(
             doc.next_id = id
                 .checked_add(1)
                 .ok_or("Layer identifiers are exhausted.")?;
-            let mut node = Node {
-                id,
-                name: node_kind.label().into(),
-                kind: node_kind,
-                x: 0.0,
-                y: 0.0,
-                width: if text { 220.0 } else { 100.0 },
-                height: if text { 40.0 } else { 100.0 },
-                fill: if text {
-                    [35, 40, 48, 255]
-                } else {
-                    [210, 214, 220, 255]
+            let default_name = node_kind.label().into();
+            let mut node = match node_kind {
+                NodeKind::Frame => Node {
+                    id,
+                    name: default_name,
+                    kind: node_kind,
+                    width: 320.0,
+                    height: 220.0,
+                    fill: [244, 242, 236, 255],
+                    radius: 12.0,
+                    clip: true,
+                    ..Node::default()
                 },
-                radius: 0.0,
-                text: if text { "Text".into() } else { String::new() },
-                font_size: 28.0,
-                hidden: false,
-                locked: false,
-                fill_token: None,
-                line_height: None,
-                text_align: TextAlign::Left,
+                NodeKind::Path => Node {
+                    id,
+                    name: default_name,
+                    kind: node_kind,
+                    width: 100.0,
+                    height: 100.0,
+                    fill: [255, 107, 43, 0],
+                    stroke: Some([255, 107, 43, 255]),
+                    stroke_width: 3.0,
+                    points: crate::document::default_path_points(),
+                    ..Node::default()
+                },
+                NodeKind::Text => Node {
+                    id,
+                    name: default_name,
+                    kind: node_kind,
+                    width: 220.0,
+                    height: 40.0,
+                    fill: [35, 40, 48, 255],
+                    text: "Text".into(),
+                    font_size: 28.0,
+                    ..Node::default()
+                },
+                _ => Node {
+                    id,
+                    name: default_name,
+                    kind: node_kind,
+                    width: 100.0,
+                    height: 100.0,
+                    fill: [210, 214, 220, 255],
+                    font_size: 28.0,
+                    ..Node::default()
+                },
             };
             set_node_fields(doc, &mut node, op)?;
             let index = opt_u64(op, "index")?
@@ -511,13 +551,22 @@ fn apply_operation(
                     "id",
                     "name",
                     "shape",
+                    "parent",
+                    "clip",
                     "x",
                     "y",
                     "width",
                     "height",
                     "fill",
                     "fill_token",
+                    "stroke",
+                    "stroke_token",
+                    "stroke_width",
                     "radius",
+                    "points",
+                    "svg_path",
+                    "closed",
+                    "shader",
                     "text",
                     "font_size",
                     "line_height",
@@ -536,20 +585,23 @@ fn apply_operation(
             let mut node = doc.nodes[position].clone();
             if let Some(shape) = opt_str(op, "shape")? {
                 if !node.kind.is_shape() {
-                    return Err(format!("Layer {id} is text; shape does not apply."));
+                    return Err(format!(
+                        "Layer {id} is {}; shape does not apply.",
+                        node.kind.name()
+                    ));
                 }
                 node.set_shape(parse_shape(shape)?);
             }
-            if node.kind.is_shape() && TEXT_ONLY.iter().any(|k| op.contains_key(*k)) {
+            if node.kind != NodeKind::Text && TEXT_ONLY.iter().any(|k| op.contains_key(*k)) {
                 return Err(format!(
                     "Layer {id} is a {}; {} do not apply.",
                     node.kind.name(),
                     TEXT_ONLY.join(", ")
                 ));
             }
-            if node.kind != NodeKind::Rectangle && op.contains_key("radius") {
+            if !node.kind.supports_radius() && op.contains_key("radius") {
                 return Err(format!(
-                    "Layer {id} is {}; radius applies only to rectangles.",
+                    "Layer {id} is {}; radius applies only to rectangles and frames.",
                     node.kind.name()
                 ));
             }
@@ -720,6 +772,40 @@ fn apply_operation(
             }
             doc.tokens.retain(|t| t.id != id);
         }
+        "wrap_in_frame" => {
+            allow(op, &["op", "ids", "name"])?;
+            let ids = req_ids(op, "ids")?;
+            let name = opt_str(op, "name")?;
+            let frame_id = doc.wrap_in_frame(&ids, name)?;
+            created.push(json!({ "op": "wrap_in_frame", "id": frame_id }));
+            *selection_update = Some(vec![frame_id]);
+        }
+        "create_directive" => {
+            allow(op, &["op", "layer_id", "x", "y", "message"])?;
+            let layer_id = match op.get("layer_id") {
+                None | Some(Value::Null) => None,
+                Some(_) => opt_u64(op, "layer_id")?,
+            };
+            let layer_pos = layer_id
+                .and_then(|id| doc.nodes.iter().find(|n| n.id == id))
+                .map(|n| (n.x, n.y));
+            let x = opt_f32(op, "x")?.unwrap_or_else(|| layer_pos.map_or(40.0, |(lx, _)| lx));
+            let y = opt_f32(op, "y")?.unwrap_or_else(|| layer_pos.map_or(40.0, |(_, ly)| ly));
+            let message = req_str(op, "message")?;
+            let id = doc.add_directive(layer_id, x, y, message)?;
+            created.push(json!({ "op": "create_directive", "id": id }));
+        }
+        "resolve_directive" => {
+            allow(op, &["op", "id", "resolved"])?;
+            let id = req_u64(op, "id")?;
+            let resolved = opt_bool(op, "resolved")?.unwrap_or(true);
+            doc.resolve_directive(id, resolved)?;
+        }
+        "delete_directive" => {
+            allow(op, &["op", "id"])?;
+            let id = req_u64(op, "id")?;
+            doc.delete_directive(id)?;
+        }
         _ => return Err(format!("Unknown op {kind}.")),
     }
     // Keep bound literals in sync for operations later in the same batch.
@@ -748,6 +834,36 @@ fn resolve_token_id(doc: &Document, value: &Value, field: &str) -> Result<u64, S
 fn set_node_fields(doc: &Document, node: &mut Node, op: &Map<String, Value>) -> Result<(), String> {
     if let Some(name) = opt_str(op, "name")? {
         node.name = name.to_owned();
+    }
+    match op.get("parent") {
+        None => {}
+        Some(Value::Null) => node.parent = None,
+        Some(value) => {
+            let parent_id = value
+                .as_u64()
+                .ok_or("parent must be a frame layer id or null.")?;
+            if parent_id == node.id {
+                return Err("A layer cannot be its own parent.".into());
+            }
+            let parent = doc
+                .nodes
+                .iter()
+                .find(|n| n.id == parent_id)
+                .ok_or_else(|| format!("No layer {parent_id}."))?;
+            if !parent.kind.is_frame() {
+                return Err(format!("Layer {parent_id} is not a frame."));
+            }
+            node.parent = Some(parent_id);
+        }
+    }
+    if let Some(clip) = opt_bool(op, "clip")? {
+        if !node.kind.is_frame() {
+            return Err(format!(
+                "clip applies only to frames, not {}.",
+                node.kind.name()
+            ));
+        }
+        node.clip = clip;
     }
     for (key, field) in [
         ("x", &mut node.x),
@@ -810,7 +926,148 @@ fn set_node_fields(doc: &Document, node: &mut Node, op: &Map<String, Value>) -> 
             node.fill_token = Some(id);
         }
     }
+    match op.get("stroke") {
+        None => {}
+        Some(Value::Null) => {
+            node.stroke = None;
+            node.stroke_token = None;
+        }
+        Some(value) => {
+            node.stroke = Some(parse_color(value)?);
+            node.stroke_token = None;
+            if node.stroke_width == 0.0 {
+                node.stroke_width = 1.0;
+            }
+        }
+    }
+    match op.get("stroke_token") {
+        None => {}
+        Some(Value::Null) => node.stroke_token = None,
+        Some(value) => {
+            let id = resolve_token_id(doc, value, "stroke_token")?;
+            let token = doc.token(id).expect("resolved token exists");
+            node.stroke = Some(token.value);
+            node.stroke_token = Some(id);
+            if node.stroke_width == 0.0 {
+                node.stroke_width = 1.0;
+            }
+        }
+    }
+    if let Some(width) = opt_f32(op, "stroke_width")? {
+        if !(0.0..=1000.0).contains(&width) {
+            return Err("stroke_width must be between 0 and 1000.".into());
+        }
+        node.stroke_width = width;
+    }
+    if let Some(d) = opt_str(op, "svg_path")? {
+        if !node.kind.is_path() {
+            return Err(format!(
+                "svg_path applies only to path layers, not {}.",
+                node.kind.name()
+            ));
+        }
+        let (points, closed) = crate::document::parse_svg_path_points(d)?;
+        node.points = points;
+        node.closed = closed;
+    }
+    if let Some(points_val) = op.get("points") {
+        if !node.kind.is_path() {
+            return Err(format!(
+                "points apply only to path layers, not {}.",
+                node.kind.name()
+            ));
+        }
+        node.points = parse_points(points_val)?;
+    }
+    if let Some(closed) = opt_bool(op, "closed")? {
+        if !node.kind.is_path() {
+            return Err(format!(
+                "closed applies only to path layers, not {}.",
+                node.kind.name()
+            ));
+        }
+        node.closed = closed;
+    }
+    match op.get("shader") {
+        None => {}
+        Some(Value::Null) => {
+            if !node.kind.supports_shader() {
+                return Err(format!(
+                    "shader does not apply to {} layers.",
+                    node.kind.name()
+                ));
+            }
+            node.shader = None;
+        }
+        Some(value) => {
+            if !node.kind.supports_shader() {
+                return Err(format!(
+                    "shader does not apply to {} layers.",
+                    node.kind.name()
+                ));
+            }
+            node.shader = Some(parse_shader(value, node.shader.as_ref())?);
+        }
+    }
     Ok(())
+}
+
+fn parse_points(value: &Value) -> Result<Vec<[f32; 2]>, String> {
+    let items = value
+        .as_array()
+        .ok_or("points must be an array of [x, y] pairs.")?;
+    if items.len() < 2 {
+        return Err("points must contain at least 2 [x, y] pairs.".into());
+    }
+    let mut points = Vec::with_capacity(items.len());
+    for item in items {
+        let pair = item
+            .as_array()
+            .filter(|a| a.len() == 2)
+            .ok_or("Each point in points must be an [x, y] pair.")?;
+        let x = pair[0]
+            .as_f64()
+            .map(|n| n as f32)
+            .filter(|n| n.is_finite() && (0.0..=1.0).contains(n))
+            .ok_or("Point coordinates in points must be numbers in 0.0..=1.0.")?;
+        let y = pair[1]
+            .as_f64()
+            .map(|n| n as f32)
+            .filter(|n| n.is_finite() && (0.0..=1.0).contains(n))
+            .ok_or("Point coordinates in points must be numbers in 0.0..=1.0.")?;
+        points.push([x, y]);
+    }
+    Ok(points)
+}
+
+fn parse_shader(value: &Value, existing: Option<&ShaderFill>) -> Result<ShaderFill, String> {
+    let obj = value
+        .as_object()
+        .ok_or("shader must be an object or null.")?;
+    allow(obj, &["kind", "secondary", "angle", "intensity"])?;
+    let mut shader = existing.cloned().unwrap_or_default();
+    if let Some(kind_name) = opt_str(obj, "kind")? {
+        shader.kind = ShaderKind::from_name(kind_name).ok_or_else(|| {
+            format!(
+                "shader.kind must be linear_gradient, radial_gradient, mesh, grain or halftone, not {kind_name}."
+            )
+        })?;
+    } else if existing.is_none() {
+        return Err("shader.kind is required.".into());
+    }
+    if let Some(secondary) = obj.get("secondary") {
+        shader.secondary = parse_color(secondary)?;
+    }
+    if let Some(angle) = opt_f32(obj, "angle")? {
+        shader.angle = angle;
+    }
+    if let Some(intensity) = opt_f32(obj, "intensity")? {
+        if !(0.0..=1.0).contains(&intensity) {
+            return Err("shader.intensity must be between 0.0 and 1.0.".into());
+        }
+        shader.intensity = intensity;
+    }
+    Ok(shader)
 }
 
 fn set_color(
@@ -979,12 +1236,13 @@ fn tools() -> Value {
         json!({ "description": "Token id (integer), token name (string), or null to detach." });
     let mut op_properties = json!({
         "op": { "type": "string", "enum": [
-            "create_rectangle", "create_ellipse", "create_triangle", "create_shape", "create_text",
-            "update_layer", "delete_layers", "move_layer", "select_layers", "align_layers",
-            "distribute_layers", "duplicate_layers", "set_artboard",
-            "create_token", "update_token", "delete_token"
+            "create_frame", "create_rectangle", "create_ellipse", "create_triangle", "create_shape",
+            "create_path", "create_text", "update_layer", "delete_layers", "move_layer",
+            "select_layers", "align_layers", "distribute_layers", "duplicate_layers",
+            "wrap_in_frame", "set_artboard", "create_token", "update_token", "delete_token",
+            "create_directive", "resolve_directive", "delete_directive"
         ] },
-        "id": { "description": "Layer or token id (or token name for update_token/delete_token)." },
+        "id": { "description": "Layer, token or directive id (or token name for update_token/delete_token)." },
         "ids": { "type": "array", "items": { "type": "integer" }, "description": "Layer ids." },
         "name": { "type": "string" },
         "shape": { "type": "string", "enum": ["rectangle", "ellipse", "triangle"] },
@@ -992,9 +1250,9 @@ fn tools() -> Value {
         "y": { "type": "number" },
         "width": { "type": "number" },
         "height": { "type": "number" },
-        "fill": color,
-        "fill_token": token_ref,
-        "radius": { "type": "number", "description": "Corner radius (rectangle layers only)." },
+        "fill": color.clone(),
+        "fill_token": token_ref.clone(),
+        "radius": { "type": "number", "description": "Corner radius (rectangle and frame layers only)." },
         "text": { "type": "string" },
         "font_size": { "type": "number" },
     });
@@ -1009,15 +1267,37 @@ fn tools() -> Value {
                 "hidden": { "type": "boolean" },
                 "locked": { "type": "boolean" },
                 "index": { "type": "integer" },
-                "background": color,
-                "background_token": token_ref,
-                "canvas": color,
-                "canvas_token": token_ref,
-                "value": color,
+                "background": color.clone(),
+                "background_token": token_ref.clone(),
+                "canvas": color.clone(),
+                "canvas_token": token_ref.clone(),
+                "value": color.clone(),
                 "align": { "type": "string", "enum": ["left", "center", "center_x", "horizontal_center", "right", "top", "middle", "center_y", "vertical_center", "bottom"] },
                 "axis": { "type": "string", "enum": ["horizontal", "vertical"] },
                 "offset_x": { "type": "number" },
                 "offset_y": { "type": "number" }
+            })
+            .as_object()
+            .expect("object")
+            .clone(),
+        );
+    op_properties
+        .as_object_mut()
+        .expect("object")
+        .extend(
+            json!({
+                "parent": { "type": ["integer", "null"], "description": "Parent frame layer id, or null for top-level." },
+                "clip": { "type": "boolean", "description": "Clip child layers to frame bounds (frame layers only)." },
+                "stroke": color,
+                "stroke_token": token_ref,
+                "stroke_width": { "type": "number", "minimum": 0, "maximum": 1000 },
+                "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" } }, "description": "Normalized [x, y] path control points in 0..=1 (path layers only)." },
+                "svg_path": { "type": "string", "description": "SVG path data ('M x y L x y ... Z') normalized into path points (path layers only)." },
+                "closed": { "type": "boolean", "description": "Whether the vector path is closed (path layers only)." },
+                "shader": { "type": ["object", "null"], "description": "Procedural shader fill {kind: linear_gradient|radial_gradient|mesh|grain|halftone, secondary?, angle?, intensity?} or null." },
+                "layer_id": { "type": ["integer", "null"], "description": "Optional target layer id for an agent directive." },
+                "message": { "type": "string", "description": "Agent directive note or prompt." },
+                "resolved": { "type": "boolean", "description": "Whether the directive is resolved (default true)." }
             })
             .as_object()
             .expect("object")
@@ -1043,13 +1323,13 @@ fn tools() -> Value {
         },
         {
             "name": "document_inspect",
-            "description": "Describe the artboard, ordered layers (paint order, first is bottom) and color tokens. Colors are resolved #rrggbbaa values.",
+            "description": "Describe the artboard, ordered layers (paint order, first is bottom), color tokens and agent directives. Colors are resolved #rrggbbaa values.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id"],
                 "properties": { "document_id": id } }
         },
         {
             "name": "document_apply",
-            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_rectangle, create_ellipse, create_triangle, create_shape, create_text {name,shape,x,y,width,height,fill,fill_token,radius|text,font_size,line_height,text_align,fit_text,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; select_layers {ids}; align_layers {ids,align}; distribute_layers {ids,axis}; duplicate_layers {ids,offset_x,offset_y}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id|name}. Tokens may be referenced by id or name. A literal fill detaches a token; fill_token null detaches and keeps the color. Unknown fields are errors. Created ids are returned in order.",
+            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_frame, create_rectangle, create_ellipse, create_triangle, create_shape, create_path, create_text {name,shape,parent,clip,x,y,width,height,fill,fill_token,stroke,stroke_token,stroke_width,radius,points,svg_path,closed,shader|text,font_size,line_height,text_align,fit_text,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; select_layers {ids}; align_layers {ids,align}; distribute_layers {ids,axis}; duplicate_layers {ids,offset_x,offset_y}; wrap_in_frame {ids,name?}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id|name}; create_directive {layer_id?,x?,y?,message}; resolve_directive {id,resolved?}; delete_directive {id}. Tokens may be referenced by id or name. A literal fill/stroke detaches a token; fill_token/stroke_token null detaches and keeps the color. Unknown fields are errors. Created ids are returned in order.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id", "operations"],
                 "properties": {
                     "document_id": id,

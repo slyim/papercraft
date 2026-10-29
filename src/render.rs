@@ -5,7 +5,7 @@
 //! resulting triangles in software. Text therefore wraps and shapes exactly as it does
 //! on the canvas, with the bundled egui fonts.
 
-use crate::document::{Document, NodeKind, TextAlign};
+use crate::document::{Document, NodeKind, ShaderFill, ShaderKind, TextAlign};
 use eframe::egui::{
     self, Color32, FontId, LayerId, Painter, Pos2, Rect, TextureId, epaint::Primitive, pos2, vec2,
 };
@@ -109,6 +109,101 @@ pub fn measure_text(node: &crate::document::Node) -> TextMetrics {
     }
 }
 
+fn shader_factor(
+    kind: ShaderKind,
+    u: f32,
+    v: f32,
+    ix: usize,
+    iy: usize,
+    angle: f32,
+    intensity: f32,
+) -> f32 {
+    let rad = angle.to_radians();
+    let intensity = intensity.clamp(0.0, 1.0);
+    match kind {
+        ShaderKind::LinearGradient => {
+            let (sin, cos) = rad.sin_cos();
+            let proj = (u - 0.5) * cos + (v - 0.5) * sin;
+            ((proj + 0.5).clamp(0.0, 1.0) * intensity.max(0.1)).clamp(0.0, 1.0)
+        }
+        ShaderKind::RadialGradient => {
+            let dist = ((u - 0.5).hypot(v - 0.5) * std::f32::consts::SQRT_2).clamp(0.0, 1.0);
+            (dist * intensity.max(0.1)).clamp(0.0, 1.0)
+        }
+        ShaderKind::Mesh => {
+            (((u * std::f32::consts::PI + rad).sin() * (v * std::f32::consts::PI).cos()) * 0.5
+                + 0.5)
+                * intensity
+        }
+        ShaderKind::Grain => {
+            let h = ((ix as u32)
+                .wrapping_mul(374_761_393)
+                .wrapping_add((iy as u32).wrapping_mul(668_265_263))
+                ^ 0x9e37_79b9)
+                .wrapping_mul(1_274_126_177);
+            let noise = (h & 0xffff) as f32 / 65535.0;
+            let (sin, cos) = rad.sin_cos();
+            let base = ((u - 0.5) * cos + (v - 0.5) * sin + 0.5).clamp(0.0, 1.0);
+            (base * (1.0 - intensity * 0.5) + noise * (intensity * 0.5)).clamp(0.0, 1.0)
+        }
+        ShaderKind::Halftone => {
+            (((u * 8.0 * std::f32::consts::TAU).cos() * (v * 8.0 * std::f32::consts::TAU).cos())
+                * 0.5
+                + 0.5)
+                * intensity
+        }
+    }
+}
+
+fn lerp_color(primary: [u8; 4], secondary: [u8; 4], t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| {
+        (f32::from(a) + (f32::from(b) - f32::from(a)) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    color([
+        mix(primary[0], secondary[0]),
+        mix(primary[1], secondary[1]),
+        mix(primary[2], secondary[2]),
+        mix(primary[3], secondary[3]),
+    ])
+}
+
+/// Paints a procedural shader mesh across `rect`.
+pub fn paint_shader_rect(painter: &Painter, rect: Rect, primary: [u8; 4], shader: &ShaderFill) {
+    const GRID: usize = 12;
+    let mut mesh = egui::Mesh::default();
+    for iy in 0..GRID {
+        let v = iy as f32 / (GRID - 1) as f32;
+        for ix in 0..GRID {
+            let u = ix as f32 / (GRID - 1) as f32;
+            let t = shader_factor(shader.kind, u, v, ix, iy, shader.angle, shader.intensity);
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: pos2(
+                    rect.left() + u * rect.width(),
+                    rect.top() + v * rect.height(),
+                ),
+                uv: egui::epaint::WHITE_UV,
+                color: lerp_color(primary, shader.secondary, t),
+            });
+        }
+    }
+    for iy in 0..(GRID - 1) {
+        for ix in 0..(GRID - 1) {
+            let i00 = (iy * GRID + ix) as u32;
+            let i10 = i00 + 1;
+            let i01 = i00 + GRID as u32;
+            let i11 = i01 + 1;
+            mesh.add_triangle(i00, i10, i11);
+            mesh.add_triangle(i00, i11, i01);
+        }
+    }
+    painter
+        .with_clip_rect(painter.clip_rect().intersect(rect))
+        .add(egui::Shape::mesh(mesh));
+}
+
 /// Paints the artboard and its visible layers. `preview` rounds font sizes so small
 /// thumbnails do not rasterize a separate glyph set for every scale. The text of
 /// `editing` is left to the in-place editor.
@@ -124,8 +219,20 @@ pub fn paint_document(
     let artboard = Rect::from_min_size(origin, vec2(document.width, document.height) * zoom);
     let painter = painter.with_clip_rect(clip);
     painter.rect_filled(artboard, 0.0, color(document.background_color()));
-    let content = painter.with_clip_rect(clip.intersect(artboard));
-    for node in document.nodes.iter().filter(|n| !n.hidden) {
+    let base_clip = clip.intersect(artboard);
+    for node in document
+        .nodes
+        .iter()
+        .filter(|n| !document.is_effectively_hidden(n))
+    {
+        let mut node_clip = base_clip;
+        if let Some([cx0, cy0, cx1, cy1]) = document.ancestors_clip_rect(node) {
+            node_clip = node_clip.intersect(Rect::from_min_max(
+                origin + vec2(cx0, cy0) * zoom,
+                origin + vec2(cx1, cy1) * zoom,
+            ));
+        }
+        let content = painter.with_clip_rect(node_clip);
         let rect = Rect::from_min_size(
             origin + vec2(node.x, node.y) * zoom,
             vec2(node.width, node.height) * zoom,
@@ -134,12 +241,25 @@ pub fn paint_document(
             continue;
         }
         match node.kind {
-            NodeKind::Rectangle => {
-                content.rect_filled(
-                    rect,
-                    (node.radius.min(node.width.min(node.height) / 2.0) * zoom).min(255.0) as u8,
-                    color(document.node_fill(node)),
-                );
+            NodeKind::Frame | NodeKind::Rectangle => {
+                let r =
+                    (node.radius.min(node.width.min(node.height) / 2.0) * zoom).min(255.0) as u8;
+                let fill = document.node_fill(node);
+                if let Some(shader) = &node.shader {
+                    paint_shader_rect(&content, rect, fill, shader);
+                } else if fill[3] > 0 {
+                    content.rect_filled(rect, r, color(fill));
+                }
+                if let Some(stroke_col) = document.node_stroke(node)
+                    && node.stroke_width > 0.0
+                {
+                    content.rect_stroke(
+                        rect,
+                        r,
+                        egui::Stroke::new(node.stroke_width * zoom, color(stroke_col)),
+                        egui::StrokeKind::Inside,
+                    );
+                }
             }
             NodeKind::Ellipse => {
                 let rx = rect.width() * 0.5;
@@ -154,14 +274,72 @@ pub fn paint_document(
                             pos2(center.x + rx * cos, center.y + ry * sin)
                         })
                         .collect();
-                    content.add(egui::Shape::convex_polygon(
-                        points,
-                        color(document.node_fill(node)),
-                        egui::Stroke::NONE,
-                    ));
+                    let stroke = match document.node_stroke(node) {
+                        Some(stroke_col) if node.stroke_width > 0.0 => {
+                            egui::Stroke::new(node.stroke_width * zoom, color(stroke_col))
+                        }
+                        _ => egui::Stroke::NONE,
+                    };
+                    let fill = document.node_fill(node);
+                    if let Some(shader) = &node.shader {
+                        let mut mesh = egui::Mesh::default();
+                        let t_center = shader_factor(
+                            shader.kind,
+                            0.5,
+                            0.5,
+                            0,
+                            0,
+                            shader.angle,
+                            shader.intensity,
+                        );
+                        mesh.vertices.push(egui::epaint::Vertex {
+                            pos: center,
+                            uv: egui::epaint::WHITE_UV,
+                            color: lerp_color(fill, shader.secondary, t_center),
+                        });
+                        for (i, &pt) in points.iter().enumerate() {
+                            let u = ((pt.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+                            let v = ((pt.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+                            let t = shader_factor(
+                                shader.kind,
+                                u,
+                                v,
+                                i,
+                                STEPS - i,
+                                shader.angle,
+                                shader.intensity,
+                            );
+                            mesh.vertices.push(egui::epaint::Vertex {
+                                pos: pt,
+                                uv: egui::epaint::WHITE_UV,
+                                color: lerp_color(fill, shader.secondary, t),
+                            });
+                        }
+                        for i in 0..STEPS {
+                            let a = 1 + i as u32;
+                            let b = 1 + ((i + 1) % STEPS) as u32;
+                            mesh.add_triangle(0, a, b);
+                        }
+                        content.add(egui::Shape::mesh(mesh));
+                        if stroke != egui::Stroke::NONE {
+                            content.add(egui::Shape::convex_polygon(
+                                points,
+                                Color32::TRANSPARENT,
+                                stroke,
+                            ));
+                        }
+                    } else {
+                        content.add(egui::Shape::convex_polygon(points, color(fill), stroke));
+                    }
                 }
             }
             NodeKind::Triangle => {
+                let stroke = match document.node_stroke(node) {
+                    Some(stroke_col) if node.stroke_width > 0.0 => {
+                        egui::Stroke::new(node.stroke_width * zoom, color(stroke_col))
+                    }
+                    _ => egui::Stroke::NONE,
+                };
                 content.add(egui::Shape::convex_polygon(
                     vec![
                         pos2(rect.center().x, rect.top()),
@@ -169,8 +347,42 @@ pub fn paint_document(
                         pos2(rect.left(), rect.bottom()),
                     ],
                     color(document.node_fill(node)),
-                    egui::Stroke::NONE,
+                    stroke,
                 ));
+            }
+            NodeKind::Path => {
+                let pts: Vec<Pos2> = node
+                    .points
+                    .iter()
+                    .map(|&[px, py]| {
+                        pos2(
+                            rect.left() + px * rect.width(),
+                            rect.top() + py * rect.height(),
+                        )
+                    })
+                    .collect();
+                let fill = document.node_fill(node);
+                if pts.len() >= 3 && node.closed && fill[3] > 0 {
+                    content.add(egui::Shape::convex_polygon(
+                        pts.clone(),
+                        color(fill),
+                        egui::Stroke::NONE,
+                    ));
+                }
+                if pts.len() >= 2 {
+                    let stroke_col = document.node_stroke(node).unwrap_or(fill);
+                    let sw = if node.stroke_width > 0.0 {
+                        node.stroke_width
+                    } else {
+                        2.0
+                    } * zoom;
+                    let stroke = egui::Stroke::new(sw, color(stroke_col));
+                    if node.closed {
+                        content.add(egui::Shape::closed_line(pts, stroke));
+                    } else {
+                        content.add(egui::Shape::line(pts, stroke));
+                    }
+                }
             }
             NodeKind::Text if editing == Some(node.id) => {}
             NodeKind::Text => {
@@ -192,9 +404,11 @@ pub fn paint_document(
                     rect.width(),
                 );
                 let galley = content.layout_job(job);
-                content
-                    .with_clip_rect(rect.intersect(artboard).intersect(clip))
-                    .galley(text_origin(rect, node.text_align), galley, fill);
+                content.with_clip_rect(rect.intersect(node_clip)).galley(
+                    text_origin(rect, node.text_align),
+                    galley,
+                    fill,
+                );
             }
         }
     }
