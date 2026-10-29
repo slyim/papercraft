@@ -51,7 +51,7 @@ The editor's Export menu offers PNG at 1× and 2×.
 
 ## MCP server
 
-`papercraft mcp` speaks JSON-RPC 2.0 over newline-delimited stdin/stdout (MCP protocol `2025-06-18`): `initialize`, `ping`, `tools/list`, `tools/call`. Notifications receive no response. The server edits files on disk with the permissions of the user who starts it; it does not connect to a running editor window.
+`papercraft mcp` speaks JSON-RPC 2.0 over newline-delimited stdin/stdout (MCP protocol `2025-06-18`): `initialize`, `ping`, `tools/list`, `tools/call`. Notifications receive no response. The server edits files on disk with the permissions of the user who starts it; it uses an isolated headless session. For shared GUI tabs use `papercraft mcp --live`; see [live MCP](live-mcp.md).
 
 Register it with an MCP client, for example Claude Code:
 
@@ -99,4 +99,4 @@ These rules come from failures observed while automating other editors on 29 Oct
 
 ## Not included
 
-Live editing of an open editor tab, multiple artboards, groups/frames, images, strokes/shadows, typography beyond font size, and non-color tokens remain outside this interface because the document model does not have them yet. Each would extend the batch operations when the model gains the feature.
+Multiple artboards, groups/frames, images, strokes/shadows, typography beyond font size, and non-color tokens remain outside this interface because the document model does not have them yet. Each would extend the batch operations when the model gains the feature.

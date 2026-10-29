@@ -15,7 +15,7 @@ Paper comparison uses the retained [workflow evidence](../research/paper/workflo
 | Theme | Named color tokens, bindings, propagation, detach/delete preservation, undo/redo; conditional v1/v2 persistence | No other token types, theme modes or token duplication |
 | Exchange | HTML/SVG/PNG export from the authoritative model; PNG uses canvas text layout and bundled fonts; bounded SVG fixture exchange previously checked in VectorCraft/FigCraft | No PDF export or image/path nodes/import; SVG explicit lines do not reproduce automatic wrapping or font metrics |
 | Layout and styling | Absolute geometry, fill, uniform rectangle radius | No frames/flex, rotation/flip, strokes, per-corner radii, blend/effects or reusable components |
-| Agent interface | `inspect`/`export` commands; local stdio MCP with atomic edit batches, revision guard, render-to-PNG, undo/redo and save state ([agent interface](agent-interface.md)) | No live editing of an open editor tab; batch operations cover only the current rectangle/text/token model |
+| Agent interface | `inspect`/`export` commands; local stdio MCP with atomic edit batches, revision guard, render-to-PNG, undo/redo and save state ([agent interface](agent-interface.md)) | Live GUI tabs and shared history are available in 0.2.0; operations still cover the rectangle/text/token model |
 
 Source anchors: [`Document`/`Node` and exporters](../src/document.rs), [tabs, tools, canvas and inline editing](../src/app.rs), [resize/snapping geometry](../src/snap.rs). Behavioral coverage is in [`tests/tools.rs`](../tests/tools.rs), [`tests/canvas.rs`](../tests/canvas.rs), [`tests/arrangement.rs`](../tests/arrangement.rs) and the tab checks in `src/app.rs`.
 
@@ -36,7 +36,7 @@ Each remaining issue records evidence, entry points, scope/non-goals, dependenci
 
 PNG, CLI and creation snapping can be developed independently, with one integration owner for shared export/UI files. Frame, typography and image work must not independently choose conflicting format versions. Preserve one authoritative `Document`/`Editor`, strict validation, transactional history and atomic output.
 
-Resolved on 29 October 2026: [#4](https://github.com/slyim/papercraft/issues/4) and [#5](https://github.com/slyim/papercraft/issues/5), plus a local MCP server; see [verification](verification.md#agent-interface-cli-png-export-and-local-mcp-29-october-2026). Deferred beyond this queue: licensed-font/fallback work, non-color tokens, flex, editable vectors/import, multiple artboards, PDF and live editing of an open editor tab. Comments, shaders and generation retain the evidence/scope prerequisites in the [tool rail plan](toolbar-plan.md). No cloud or collaboration expansion is authorized by this assessment.
+Resolved on 29 October 2026: [#4](https://github.com/slyim/papercraft/issues/4) and [#5](https://github.com/slyim/papercraft/issues/5), plus a local MCP server; see [verification](verification.md#agent-interface-cli-png-export-and-local-mcp-29-october-2026). Deferred beyond this queue: licensed-font/fallback work, non-color tokens, flex, editable vectors/import, multiple artboards, PDF. Comments, shaders and generation retain the evidence/scope prerequisites in the [tool rail plan](toolbar-plan.md). No cloud or collaboration expansion is authorized by this assessment.
 
 ## Historical baseline and increments — 18 October 2026
 

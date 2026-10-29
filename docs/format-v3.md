@@ -1,6 +1,6 @@
-# Document format version 3 (in progress)
+# Document format version 3
 
-Written 29 October 2026 on branch `feature/design-tools`. Version 3 is the single coordinated format revision for the design-tool milestones requested in [#7](https://github.com/slyim/papercraft/issues/7), [#8](https://github.com/slyim/papercraft/issues/8) and [#9](https://github.com/slyim/papercraft/issues/9): one version owner instead of parallel migrations. Fields are added to version 3 milestone by milestone while the branch is unreleased. A released build freezes it; later additions need version 4.
+Integrated from `feature/design-tools` on 29 October 2026 and frozen for PaperCraft 0.2.0. Only the M1 typography fields below are version 3. The remaining milestone proposals are future work and require version 4 or later.
 
 The [version 1 and 2 rules](document-format.md) remain: strict readers, unknown fields rejected, literals kept synchronized with tokens, and the writer emits the **lowest version that can represent the document**.
 

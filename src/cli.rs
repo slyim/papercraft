@@ -18,6 +18,7 @@ Usage:
   papercraft export FILE --format FORMAT --output PATH [--scale N]
                                         Export html, svg or png (scale 0.1–8, default 1)
   papercraft mcp                        Serve the local MCP protocol on stdin/stdout
+  papercraft mcp --live [SESSION_FILE]   Connect MCP to a running editor
   papercraft --help | --version
 ";
 
@@ -45,7 +46,18 @@ pub fn run(args: &[OsString]) -> Option<i32> {
             Ok(()) => Exit::Ok,
             Err(error) => Exit::Failure(error),
         },
-        "mcp" => Exit::Usage("mcp takes no arguments.".into()),
+        "mcp" if args.get(1).is_some_and(|v| v == "--live") && args.len() <= 3 => {
+            let path = args
+                .get(2)
+                .map(PathBuf::from)
+                .map(Ok)
+                .unwrap_or_else(crate::live::discover);
+            match path.and_then(|p| crate::live::serve(&p)) {
+                Ok(()) => Exit::Ok,
+                Err(error) => Exit::Failure(error),
+            }
+        }
+        "mcp" => Exit::Usage("Use mcp or mcp --live [SESSION_FILE].".into()),
         "--version" | "-V" => {
             println!("papercraft {}", env!("CARGO_PKG_VERSION"));
             Exit::Ok

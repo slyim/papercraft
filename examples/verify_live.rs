@@ -1,0 +1,192 @@
+//! Native-window proof of the real stdio -> IPC -> GUI -> render/save path.
+use eframe::egui;
+use papercraft::{app::PaperCraftApp, document::Document};
+use serde_json::{Value, json};
+use std::{
+    io::{BufRead, BufReader, Write},
+    path::PathBuf,
+    process::{Command, Stdio},
+    sync::mpsc,
+    time::{Duration, Instant},
+};
+
+struct Check {
+    app: PaperCraftApp,
+    result: mpsc::Receiver<()>,
+    output: PathBuf,
+    started: Instant,
+    finished: bool,
+    screenshot: bool,
+}
+
+impl eframe::App for Check {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.app.show(ui);
+        if !self.finished && self.result.try_recv().is_ok() {
+            assert_eq!(self.app.editor.document.nodes.len(), 2);
+            assert_eq!(
+                self.app.editor.document.nodes[1].text,
+                "Live MCP reaches this window"
+            );
+            assert!(self.app.editor.can_undo());
+            self.finished = true;
+        } else if self.finished && !self.screenshot {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+            self.screenshot = true;
+        }
+        let image = ui.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(image) = image {
+            let pixels: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
+            image::save_buffer(
+                &self.output,
+                &pixels,
+                image.width() as u32,
+                image.height() as u32,
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+            println!(
+                "Real stdio/live GUI/rollback/render/save/undo/redo verified: {}",
+                self.output.display()
+            );
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        assert!(
+            self.started.elapsed() < Duration::from_secs(30),
+            "Live native verification timed out"
+        );
+        ui.ctx().request_repaint_after(Duration::from_millis(10));
+    }
+}
+
+fn client(binary: PathBuf, session: PathBuf, folder: PathBuf, send: mpsc::Sender<()>) {
+    let mut child = Command::new(binary)
+        .args(["mcp", "--live"])
+        .arg(session)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    let mut id = 0;
+    let mut rpc = |method: &str, params: Value| {
+        id += 1;
+        writeln!(
+            input,
+            "{}",
+            json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+        )
+        .unwrap();
+        input.flush().unwrap();
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["id"], id);
+        value["result"].clone()
+    };
+    assert_eq!(
+        rpc("initialize", json!({}))["serverInfo"]["name"],
+        "papercraft"
+    );
+    let mut tool =
+        |name: &str, args: Value| rpc("tools/call", json!({"name":name,"arguments":args}));
+    let list = tool("document_list", json!({}));
+    let docs: Value = serde_json::from_str(list["content"][0]["text"].as_str().unwrap()).unwrap();
+    let doc = docs[0]["document_id"].clone();
+    let applied = tool(
+        "document_apply",
+        json!({"document_id":doc,"expected_revision":0,"operations":[
+            {"op":"create_rectangle","x":60,"y":70,"width":780,"height":330,"radius":24,"fill":"#d7f2dd"},
+            {"op":"create_text","x":100,"y":180,"width":700,"height":90,"text":"Live MCP reaches this window","font_size":36,"text_align":"center","fill":"#134b37"}
+        ]}),
+    );
+    assert_eq!(applied["isError"], false);
+    for args in [
+        json!({"document_id":doc,"expected_revision":0,"operations":[{"op":"create_rectangle"}]}),
+        json!({"document_id":doc,"operations":[{"op":"create_rectangle"},{"op":"set_artboard","width":-1}]}),
+    ] {
+        assert_eq!(tool("document_apply", args)["isError"], true);
+    }
+    let inspected = tool("document_inspect", json!({"document_id":doc}));
+    let inspected: Value =
+        serde_json::from_str(inspected["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(inspected["state"]["revision"], 1);
+    assert_eq!(inspected["layers"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        tool("document_render", json!({"document_id":doc}))["content"][0]["mimeType"],
+        "image/png"
+    );
+    let saved = folder.join("live-native.papercraft");
+    assert_eq!(
+        tool("document_save", json!({"document_id":doc,"path":saved}))["isError"],
+        false
+    );
+    assert_eq!(Document::load(&saved).unwrap().nodes.len(), 2);
+    for name in ["document_undo", "document_redo"] {
+        assert_eq!(tool(name, json!({"document_id":doc}))["isError"], false);
+    }
+    drop(tool);
+    drop(rpc);
+    drop(input);
+    assert!(child.wait().unwrap().success());
+    send.send(()).unwrap();
+}
+
+fn main() -> eframe::Result {
+    let folder = std::path::absolute(
+        std::env::args_os()
+            .nth(1)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("target/verification/live")),
+    )
+    .unwrap();
+    std::fs::create_dir_all(&folder).unwrap();
+    let executable = std::env::current_exe().unwrap();
+    let binary = executable
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join(if cfg!(windows) {
+            "papercraft.exe"
+        } else {
+            "papercraft"
+        });
+    assert!(
+        binary.exists(),
+        "Build the papercraft binary before this check"
+    );
+    eframe::run_native(
+        "PaperCraft live verification",
+        eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default().with_inner_size([1380.0, 860.0]),
+            ..Default::default()
+        },
+        Box::new(move |cc| {
+            PaperCraftApp::configure(&cc.egui_ctx);
+            let mut app = PaperCraftApp::from_document(Document::default());
+            app.start_live(&cc.egui_ctx, &folder.join("sessions"))
+                .unwrap();
+            let session = app.live_session_path().unwrap().to_owned();
+            let (send, result) = mpsc::channel();
+            let client_folder = folder.clone();
+            std::thread::spawn(move || client(binary, session, client_folder, send));
+            Ok(Box::new(Check {
+                app,
+                result,
+                output: folder.join("live-native.png"),
+                started: Instant::now(),
+                finished: false,
+                screenshot: false,
+            }))
+        }),
+    )
+}

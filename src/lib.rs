@@ -1,6 +1,7 @@
 pub mod app;
 pub mod cli;
 pub mod document;
+pub mod live;
 pub mod mcp;
 pub mod recents;
 pub mod render;

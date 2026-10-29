@@ -226,6 +226,7 @@ fn document_key() -> u64 {
 struct Tab {
     editor: Editor,
     saved: Document,
+    saved_revision: Option<u64>,
     path: Option<PathBuf>,
     zoom: f32,
     pan: Vec2,
@@ -243,6 +244,7 @@ impl Tab {
         Self {
             file_version: document.version,
             saved: document.clone(),
+            saved_revision: Some(0),
             editor: Editor::new(document),
             path: None,
             zoom: 1.0,
@@ -263,6 +265,8 @@ impl Tab {
 pub struct PaperCraftApp {
     pub editor: Editor,
     saved: Document,
+    saved_revision: Option<u64>,
+    live: Option<crate::live::Host>,
     /// Result of comparing the committed document with `saved`, keyed by the editor
     /// revision it was computed for. Comparing a large document every frame is costly.
     dirty_cache: std::cell::Cell<Option<(u64, bool)>>,
@@ -319,6 +323,8 @@ impl PaperCraftApp {
     pub fn from_document(document: Document) -> Self {
         Self {
             saved: document.clone(),
+            saved_revision: Some(0),
+            live: None,
             dirty_cache: Default::default(),
             editor: Editor::new(document),
             path: None,
@@ -424,11 +430,242 @@ impl PaperCraftApp {
         if let Some(path) = std::env::args_os().nth(1) {
             app.open_path(PathBuf::from(path));
         }
+        match crate::live::directory()
+            .and_then(|dir| crate::live::Host::start(cc.egui_ctx.clone(), &dir))
+        {
+            Ok(host) => app.live = Some(host),
+            Err(error) => app.status = format!("Live MCP unavailable: {error}"),
+        }
         app
     }
 
     pub fn set_list_view(&mut self, list: bool) {
         self.list_view = list;
+    }
+
+    /// Processes live requests only on the GUI thread, including when minimized.
+    pub fn start_live(
+        &mut self,
+        ctx: &egui::Context,
+        directory: &std::path::Path,
+    ) -> Result<(), String> {
+        self.live = Some(crate::live::Host::start(ctx.clone(), directory)?);
+        Ok(())
+    }
+
+    pub fn live_session_path(&self) -> Option<&std::path::Path> {
+        self.live.as_ref().map(crate::live::Host::path)
+    }
+
+    pub fn poll_live(&mut self, ctx: &egui::Context) {
+        for _ in 0..16 {
+            let Some(request) = self.live.as_ref().and_then(crate::live::Host::next) else {
+                break;
+            };
+            if request.cancelled() {
+                continue;
+            }
+            let result = if ctx.input(|i| i.pointer.any_down()) {
+                crate::mcp::handle_request(&request.line, |params| {
+                    crate::mcp::tool_result(params, |_, _| {
+                        Err("Editor busy: finish the current gesture before retrying.".into())
+                    })
+                })
+            } else {
+                self.handle_live_request(&request.line)
+            };
+            let _ = request.reply.send(result);
+            ctx.request_repaint();
+        }
+    }
+
+    /// Shares the same protocol and tool implementation with the headless server.
+    pub fn handle_live_request(&mut self, line: &str) -> Option<serde_json::Value> {
+        crate::mcp::handle_request(line, |params| {
+            crate::mcp::tool_result(params, |name, args| self.live_tool(name, args))
+        })
+    }
+
+    fn live_id(&self, index: usize) -> String {
+        format!(
+            "gui-{}",
+            if index == self.active {
+                self.document_key
+            } else {
+                self.tabs[index].key
+            }
+        )
+    }
+
+    fn live_state(&self, index: usize) -> serde_json::Value {
+        let (editor, saved_revision) = if index == self.active {
+            (&self.editor, self.saved_revision)
+        } else {
+            (&self.tabs[index].editor, self.tabs[index].saved_revision)
+        };
+        serde_json::json!({
+            "document_id": self.live_id(index), "path": self.tab_path(index),
+            "revision": editor.revision(), "saved_revision": saved_revision,
+            "dirty": self.tab_dirty(index), "can_undo": editor.can_undo(),
+            "can_redo": editor.can_redo(), "active": index == self.active,
+        })
+    }
+
+    fn live_tool(
+        &mut self,
+        name: &str,
+        args: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        use crate::mcp::{allow, opt_bool, opt_f32, opt_str, req_str};
+        use serde_json::json;
+        if matches!(name, "document_open" | "document_save" | "document_export")
+            && let Some(path) = opt_str(args, "path")?
+            && !std::path::Path::new(path).is_absolute()
+        {
+            return Err("Live file operations require an absolute path.".into());
+        }
+        let text = |v: serde_json::Value| Ok(vec![json!({"type":"text","text":v.to_string()})]);
+        if name == "document_list" {
+            allow(args, &[])?;
+            return text(json!(
+                (0..self.tabs.len())
+                    .map(|i| self.live_state(i))
+                    .collect::<Vec<_>>()
+            ));
+        }
+        if self.text_edit.is_some()
+            || self.property_before.is_some()
+            || self.renaming.is_some()
+            || self.drag.is_some()
+            || self.creation.is_some()
+            || self.marquee.is_some()
+            || self.pending.is_some()
+            || self.upgrade_prompt
+        {
+            return Err("Editor busy: finish the current edit or dialog before retrying. No live changes were applied.".into());
+        }
+        match name {
+            "document_new" => {
+                allow(args, &["name", "width", "height"])?;
+                let mut document = Document::default();
+                if let Some(name) = opt_str(args, "name")? {
+                    document.name = name.to_owned();
+                }
+                if let Some(width) = opt_f32(args, "width")? {
+                    document.width = width;
+                }
+                if let Some(height) = opt_f32(args, "height")? {
+                    document.height = height;
+                }
+                document.validate()?;
+                self.open_tab(document, None);
+                return text(self.live_state(self.active));
+            }
+            "document_open" => {
+                allow(args, &["path"])?;
+                let path =
+                    std::path::absolute(req_str(args, "path")?).map_err(|e| e.to_string())?;
+                if let Some(index) = (0..self.tabs.len()).find(|&i| {
+                    self.tab_path(i)
+                        .is_some_and(|p| crate::cli::same_file(p, &path))
+                }) {
+                    self.activate_tab(index);
+                } else {
+                    let document = Document::load(&path)?;
+                    self.open_tab(document, Some(path));
+                }
+                return text(self.live_state(self.active));
+            }
+            _ => {}
+        }
+        let id = req_str(args, "document_id")?.to_owned();
+        let index = (0..self.tabs.len())
+            .find(|&i| self.live_id(i) == id)
+            .ok_or("Document is not open in this editor. List documents again.")?;
+        if name == "document_close" {
+            allow(args, &["document_id", "discard"])?;
+            if self.tab_dirty(index) && !opt_bool(args, "discard")?.unwrap_or(false) {
+                return Err(
+                    "The document has unsaved changes; save it or pass discard: true.".into(),
+                );
+            }
+            self.activate_tab(index);
+            self.close_tab();
+            return text(json!({"closed":id}));
+        }
+        if name == "document_save" {
+            let destination = opt_str(args, "path")?
+                .map(PathBuf::from)
+                .or_else(|| self.tab_path(index).map(PathBuf::from));
+            if let Some(path) = &destination {
+                if (0..self.tabs.len()).any(|i| {
+                    i != index
+                        && self
+                            .tab_path(i)
+                            .is_some_and(|p| crate::cli::same_file(p, path))
+                }) {
+                    return Err("The save path belongs to another open tab.".into());
+                }
+                let version = if index == self.active {
+                    self.file_version
+                } else {
+                    self.tabs[index].file_version
+                };
+                if self
+                    .tab_path(index)
+                    .is_some_and(|p| crate::cli::same_file(p, path))
+                    && version < self.tab_document(index).required_version()
+                {
+                    return Err("Saving would upgrade this file. Use a new path or confirm the upgrade in the editor.".into());
+                }
+            }
+        }
+        let result = if index == self.active {
+            if self.editor.document == self.saved {
+                self.saved_revision = Some(self.editor.revision());
+            }
+            let result = crate::mcp::editor_tool(
+                name,
+                args,
+                &id,
+                &mut self.editor,
+                &mut self.path,
+                &mut self.saved_revision,
+            );
+            if result.is_ok() && name == "document_save" {
+                self.set_saved(self.editor.document.clone());
+                self.file_version = self.editor.document.required_version();
+            }
+            self.dirty_cache.set(None);
+            result
+        } else {
+            let tab = &mut self.tabs[index];
+            if tab.editor.document == tab.saved {
+                tab.saved_revision = Some(tab.editor.revision());
+            }
+            let result = crate::mcp::editor_tool(
+                name,
+                args,
+                &id,
+                &mut tab.editor,
+                &mut tab.path,
+                &mut tab.saved_revision,
+            );
+            if result.is_ok() && name == "document_save" {
+                tab.saved = tab.editor.document.clone();
+                tab.file_version = tab.editor.document.required_version();
+            }
+            tab.dirty = tab.editor.document != tab.saved;
+            result
+        };
+        if result.is_ok() {
+            self.cards.invalidate();
+            if matches!(name, "document_apply" | "document_undo" | "document_redo") {
+                self.activate_tab(index);
+                self.status = "Live MCP change applied".into();
+            }
+        }
+        result
     }
 
     pub fn document_open(&self) -> bool {
@@ -499,6 +736,7 @@ impl PaperCraftApp {
         let tab = &mut self.tabs[index];
         std::mem::swap(&mut self.editor, &mut tab.editor);
         std::mem::swap(&mut self.saved, &mut tab.saved);
+        std::mem::swap(&mut self.saved_revision, &mut tab.saved_revision);
         std::mem::swap(&mut self.path, &mut tab.path);
         std::mem::swap(&mut self.zoom, &mut tab.zoom);
         std::mem::swap(&mut self.pan, &mut tab.pan);
@@ -561,6 +799,7 @@ impl PaperCraftApp {
 
     fn set_saved(&mut self, document: Document) {
         self.saved = document;
+        self.saved_revision = Some(self.editor.revision());
         self.dirty_cache.set(None);
     }
 
@@ -640,6 +879,7 @@ impl PaperCraftApp {
         self.upgrade_prompt = false;
         self.set_saved(document.clone());
         self.editor = Editor::new(document);
+        self.saved_revision = Some(0);
         self.path = path;
         self.fit = true;
         self.property_before = None;
@@ -1053,6 +1293,7 @@ impl PaperCraftApp {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.poll_live(ui.ctx());
         let ctx = ui.ctx().clone();
         let finish_gesture_first =
             self.drag.is_some() || self.creation.is_some() || self.marquee.is_some();
@@ -1325,6 +1566,19 @@ impl PaperCraftApp {
     }
 
     fn file_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if let Some(host) = &self.live
+            && ui.button("Copy live MCP command").clicked()
+        {
+            let executable =
+                std::env::current_exe().unwrap_or_else(|_| PathBuf::from("papercraft"));
+            ctx.copy_text(format!(
+                "\"{}\" mcp --live \"{}\"",
+                executable.display(),
+                host.path().display()
+            ));
+            self.status = "Live MCP command copied".into();
+            ui.close();
+        }
         ui.set_min_width(220.0);
         let command = if cfg!(target_os = "macos") {
             "⌘"
@@ -3731,6 +3985,7 @@ fn rail_separator(ui: &mut egui::Ui) {
 
 impl eframe::App for PaperCraftApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_live(ctx);
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close {
             self.flush_properties();
             if self.first_dirty_tab().is_some() {
@@ -3753,6 +4008,29 @@ impl eframe::App for PaperCraftApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_requests_cannot_interrupt_a_local_draft() {
+        let mut app = PaperCraftApp::from_document(Document::example());
+        let before = app.editor.document.clone();
+        app.property_before = Some(before.clone());
+        app.editor.document.name = "Local draft".into();
+        let draft = app.editor.document.clone();
+        let revision = app.editor.revision();
+        let request = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"document_new","arguments":{}}});
+        let response = app.handle_live_request(&request.to_string()).unwrap();
+        assert_eq!(response["result"]["isError"], true);
+        assert!(
+            response["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Editor busy")
+        );
+        assert_eq!(app.editor.document, draft);
+        assert_eq!(app.editor.revision(), revision);
+        assert_eq!(app.property_before, Some(before));
+        assert_eq!(app.tab_count(), 1);
+    }
 
     #[test]
     fn tab_switches_preserve_dirty_state_and_document_local_text_styles() {

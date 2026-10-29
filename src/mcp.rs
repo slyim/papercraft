@@ -20,7 +20,7 @@ use std::{
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 /// Largest accepted request line.
-const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 /// Largest number of operations in one batch.
 const MAX_OPERATIONS: usize = 10_000;
 
@@ -94,61 +94,11 @@ fn error_response(id: Value, code: i64, message: &str) -> Value {
 impl Server {
     /// Handles one JSON-RPC message; notifications produce no response.
     pub fn handle_line(&mut self, line: &str) -> Option<Value> {
-        let request: Value = match serde_json::from_str(line) {
-            Ok(value) => value,
-            Err(e) => {
-                return Some(error_response(
-                    Value::Null,
-                    -32700,
-                    &format!("Parse error: {e}"),
-                ));
-            }
-        };
-        let id = request.get("id").cloned();
-        let method = request.get("method").and_then(Value::as_str);
-        let params = request.get("params").cloned().unwrap_or(Value::Null);
-        let Some(method) = method else {
-            return Some(error_response(
-                id.unwrap_or(Value::Null),
-                -32600,
-                "Missing method.",
-            ));
-        };
-        let result = match method {
-            "initialize" => Ok(json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": "papercraft", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": INSTRUCTIONS,
-            })),
-            "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tools() })),
-            "tools/call" => Ok(self.call(&params)),
-            _ if method.starts_with("notifications/") => return None,
-            _ => Err((-32601, format!("Unknown method {method}."))),
-        };
-        // Notifications (no id) get no response.
-        let id = id?;
-        Some(match result {
-            Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-            Err((code, message)) => error_response(id, code, &message),
-        })
+        handle_request(line, |params| self.call(params))
     }
 
     fn call(&mut self, params: &Value) -> Value {
-        let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-        let empty = Map::new();
-        let args = params
-            .get("arguments")
-            .and_then(Value::as_object)
-            .unwrap_or(&empty);
-        match self.tool(name, args) {
-            Ok(content) => json!({ "content": content, "isError": false }),
-            Err(message) => json!({
-                "content": [{ "type": "text", "text": message }],
-                "isError": true,
-            }),
-        }
+        tool_result(params, |name, args| self.tool(name, args))
     }
 
     fn tool(&mut self, name: &str, args: &Map<String, Value>) -> Result<Vec<Value>, String> {
@@ -351,6 +301,99 @@ impl Server {
             .ok_or_else(|| format!("No open document {id}; use document_open or document_new."))?;
         Ok((id, session))
     }
+}
+
+pub(crate) fn handle_request(line: &str, mut call: impl FnMut(&Value) -> Value) -> Option<Value> {
+    let request: Value = match serde_json::from_str(line) {
+        Ok(value) => value,
+        Err(e) => {
+            return Some(error_response(
+                Value::Null,
+                -32700,
+                &format!("Parse error: {e}"),
+            ));
+        }
+    };
+    let id = request.get("id").cloned();
+    let method = request.get("method").and_then(Value::as_str);
+    let params = request.get("params").cloned().unwrap_or(Value::Null);
+    let Some(method) = method else {
+        return Some(error_response(
+            id.unwrap_or(Value::Null),
+            -32600,
+            "Missing method.",
+        ));
+    };
+    let result = match method {
+        "initialize" => Ok(json!({
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "papercraft", "version": env!("CARGO_PKG_VERSION") },
+            "instructions": INSTRUCTIONS,
+        })),
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({ "tools": tools() })),
+        "tools/call" => Ok(call(&params)),
+        _ if method.starts_with("notifications/") => return None,
+        _ => Err((-32601, format!("Unknown method {method}."))),
+    };
+    // Notifications (no id) get no response.
+    let id = id?;
+    Some(match result {
+        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Err((code, message)) => error_response(id, code, &message),
+    })
+}
+
+pub(crate) fn tool_result(
+    params: &Value,
+    mut call: impl FnMut(&str, &Map<String, Value>) -> Result<Vec<Value>, String>,
+) -> Value {
+    let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    let empty = Map::new();
+    let args = params
+        .get("arguments")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
+    match call(name, args) {
+        Ok(content) => json!({ "content": content, "isError": false }),
+        Err(message) => json!({
+            "content": [{ "type": "text", "text": message }],
+            "isError": true,
+        }),
+    }
+}
+
+/// Temporarily lends the GUI's authoritative editor to the existing tool handler.
+/// The editor, including selection and both history stacks, is always returned.
+pub(crate) fn editor_tool(
+    name: &str,
+    args: &Map<String, Value>,
+    id: &str,
+    editor: &mut Editor,
+    path: &mut Option<PathBuf>,
+    saved_revision: &mut Option<u64>,
+) -> Result<Vec<Value>, String> {
+    let file_version = editor.document.required_version();
+    let mut server = Server::default();
+    server.sessions.insert(
+        id.to_owned(),
+        Session {
+            editor: std::mem::replace(editor, Editor::new(Document::default())),
+            path: path.clone(),
+            saved_revision: *saved_revision,
+            file_version,
+        },
+    );
+    let result = server.tool(name, args);
+    let session = server
+        .sessions
+        .remove(id)
+        .expect("document lifecycle is handled by GUI");
+    *editor = session.editor;
+    *path = session.path;
+    *saved_revision = session.saved_revision;
+    result
 }
 
 /// Applies one batch operation directly to `doc`. Validation of the whole document
@@ -731,7 +774,7 @@ fn parse_color(value: &Value) -> Result<[u8; 4], String> {
 }
 
 /// Rejects fields outside `allowed`, so misspelled keys are not silently ignored.
-fn allow(fields: &Map<String, Value>, allowed: &[&str]) -> Result<(), String> {
+pub(crate) fn allow(fields: &Map<String, Value>, allowed: &[&str]) -> Result<(), String> {
     match fields.keys().find(|k| !allowed.contains(&k.as_str())) {
         Some(key) => Err(format!(
             "Unknown field {key}; expected one of: {}.",
@@ -741,16 +784,19 @@ fn allow(fields: &Map<String, Value>, allowed: &[&str]) -> Result<(), String> {
     }
 }
 
-fn req_str<'a>(fields: &'a Map<String, Value>, key: &str) -> Result<&'a str, String> {
+pub(crate) fn req_str<'a>(fields: &'a Map<String, Value>, key: &str) -> Result<&'a str, String> {
     opt_str(fields, key)?.ok_or_else(|| format!("{key} is required."))
 }
-fn opt_str<'a>(fields: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>, String> {
+pub(crate) fn opt_str<'a>(
+    fields: &'a Map<String, Value>,
+    key: &str,
+) -> Result<Option<&'a str>, String> {
     fields
         .get(key)
         .map(|v| v.as_str().ok_or_else(|| format!("{key} must be a string.")))
         .transpose()
 }
-fn opt_f32(fields: &Map<String, Value>, key: &str) -> Result<Option<f32>, String> {
+pub(crate) fn opt_f32(fields: &Map<String, Value>, key: &str) -> Result<Option<f32>, String> {
     fields
         .get(key)
         .map(|v| {
@@ -773,7 +819,7 @@ fn opt_u64(fields: &Map<String, Value>, key: &str) -> Result<Option<u64>, String
 fn req_u64(fields: &Map<String, Value>, key: &str) -> Result<u64, String> {
     opt_u64(fields, key)?.ok_or_else(|| format!("{key} is required."))
 }
-fn opt_bool(fields: &Map<String, Value>, key: &str) -> Result<Option<bool>, String> {
+pub(crate) fn opt_bool(fields: &Map<String, Value>, key: &str) -> Result<Option<bool>, String> {
     fields
         .get(key)
         .map(|v| {

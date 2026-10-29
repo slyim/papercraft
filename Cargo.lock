@@ -2220,11 +2220,12 @@ dependencies = [
 
 [[package]]
 name = "papercraft"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "craft-quit",
  "eframe",
  "egui-phosphor",
+ "getrandom 0.4.3",
  "image",
  "png",
  "rfd",

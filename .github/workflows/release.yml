@@ -2,6 +2,11 @@ name: Build release downloads
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a new preview release after all native jobs pass
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -92,6 +97,17 @@ jobs:
           for scenario in theme text marquee resize snapping long-text text-token text-tabs quit; do
             cargo run --locked --example verify_native -- target/verification/release "$scenario" 960x640
           done
+      - name: Verify live MCP in a native window
+        if: runner.os != 'Windows'
+        run: |
+          if [ '${{ runner.os }}' = 'Linux' ]; then
+            xvfb-run -a -s "-screen 0 1600x1000x24" bash -e -c '
+              openbox &
+              LIBGL_ALWAYS_SOFTWARE=1 cargo run --locked --example verify_live -- target/verification/live
+            '
+          else
+            cargo run --locked --example verify_live -- target/verification/live
+          fi
       - name: Package and verify installers and archives
         run: python packaging/package.py '${{ matrix.platform }}' '${{ matrix.target }}'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -101,3 +117,33 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+
+  publish:
+    name: Publish verified preview
+    if: inputs.publish
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Verify payloads and publish a new release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          if [ -n "$(git ls-remote --tags origin "refs/tags/v$version")" ]; then
+            echo "Tag v$version already exists; refusing replacement"
+            exit 1
+          fi
+          gh run download '${{ github.run_id }}' --dir artifacts
+          python3 packaging/prepare_release.py artifacts release-assets "$version"
+          gh release create "v$version" release-assets/* --target '${{ github.sha }}' \
+            --title "PaperCraft v$version preview" --prerelease \
+            --notes-file "docs/release-notes-v$version.md"

@@ -488,3 +488,20 @@ Branch `feature/design-tools`. Host and toolchain as in the previous entry. Cont
 ### Not verified
 
 - Physical typing in a centered or right-aligned layer. The shared layout does not keep trailing whitespace (as static painting never did), so a space typed at the end of a centered or right-aligned row may not visibly move the caret until the next character. The upgrade prompt's new wording in a native save is also unchecked.
+
+
+## Live MCP and 0.2.0 integration (29 October 2026)
+
+Integrated `feature/design-tools` source `c64d610` (M1 typography) with main's PNG/CLI regressions. Conflicts preserved both sets of tests and their verification records. Version 3 is frozen for this release; planned frames/images/layout work is not implemented.
+
+- Windows GNU Rust 1.99.1: `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked` pass: **109 tests (14 unit, 95 integration), zero failed/ignored; zero doctests**. Final gates retained the explicit writable TEMP/TMP root and disabled incremental cache hard-linking as in the prior entry.
+- Shared live tests cover manual/model and MCP edits through the same history; rollback including redo state; tab targeting; save collisions; refusal to silently upgrade an existing GUI file; draft/gesture protection; authentication before queueing; session cleanup; single/multiple-instance discovery; and refusal to fall back to headless state.
+- `cargo run --locked --example verify_native -- target/verification/live-release typography 1600x1000`: exit 0, model lifecycle and native typography postconditions pass.
+- `cargo run --locked --example verify_live -- target/verification/live-release`: exit 0. A separate real stdio MCP process reaches the native GUI event loop, creates two visible layers, rejects stale/invalid batches, renders, saves/reloads, and undoes/redoes. Opened `live-native.png`: the editor shows the green rectangle and centered 'Live MCP reaches this window' text. This check also runs on the four Linux/macOS release targets.
+- A separate normal GUI process also accepted initialize/new/apply/render/save over the live proxy and exited the proxy cleanly; its example document and PNG were created in a throwaway directory. The external desktop inventory did not expose this sandbox-created GUI window, so visible rendering proof uses the native harness screenshot rather than a computer-use click claim.
+- `packaging/prepare_release.py`: synthetic manifests for all five platforms produced exactly 12 verified payloads and 14 assets; a deliberately tampered payload was rejected with `Checksum mismatch`. Real release artifacts are verified again before publication.
+- Initial loopback transport tests failed with Windows socket `os error 10013`; the implementation now uses private authenticated local IPC files and needs no network listener. A synthetic packaging attempt using the sandbox's default temp directory failed with `Access is denied`; the explicit writable temp root passed. No tests or lints were skipped or weakened.
+
+Branch audit: GitHub had only main. The sole additional local branch had one typography commit and 77 tracked files matching its index; that work is preserved in the integrated source. Its worktree was still attached when Git refused direct branch deletion. Local cleanup must not remove uncommitted/untracked files; the unrelated root handoff remains excluded.
+
+Limits: native display scaling still crops the left of the artboard on this host. Physical typing/IME, screen readers, third-party MCP-client setup and release-subsystem console attachment are not proven by these runs. GitHub CI/release results must be checked on the exact published source; they are not inferred from GNU-host tests.
