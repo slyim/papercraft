@@ -1,0 +1,9 @@
+# Keep generated output, third-party assets and raw research out of the code graph.
+graphify-out/
+target/
+node_modules/
+research/
+.agents/
+assets/
+licenses/
+package-lock.json

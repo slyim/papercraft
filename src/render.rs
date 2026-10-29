@@ -234,33 +234,56 @@ pub fn paint_document(
                 origin + vec2(cx1, cy1) * zoom,
             ));
         }
-        let content = painter.with_clip_rect(node_clip);
+        // Bound centered-stroke joins to the reported world envelope, including
+        // when only the part outside the authored box enters the viewport/crop.
+        let bounds = crate::geometry::bounds(document, node);
+        let paint_bounds = Rect::from_min_max(
+            origin + vec2(bounds[0], bounds[1]) * zoom,
+            origin + vec2(bounds[2], bounds[3]) * zoom,
+        );
+        let content = painter.with_clip_rect(node_clip.intersect(paint_bounds.expand(1.0)));
         let rect = Rect::from_min_size(
             origin + vec2(node.x, node.y) * zoom,
             vec2(node.width, node.height) * zoom,
         );
-        if !rect.intersects(content.clip_rect()) {
+        if !paint_bounds.intersects(content.clip_rect()) {
             continue;
         }
         match node.kind {
             NodeKind::Frame | NodeKind::Rectangle => {
-                let r =
-                    (node.radius.min(node.width.min(node.height) / 2.0) * zoom).min(255.0) as u8;
                 let fill = document.node_fill(node);
+                let points = || {
+                    crate::geometry::contour(node)
+                        .into_iter()
+                        .map(|p| origin + p.to_vec2() * zoom)
+                        .collect()
+                };
                 if let Some(shader) = &node.shader {
                     paint_shader_rect(&content, rect, fill, shader);
                 } else if fill[3] > 0 {
-                    content.rect_filled(rect, r, color(fill));
+                    if node.radius == 0.0 {
+                        content.rect_filled(rect, 0.0, color(fill));
+                    } else {
+                        content.add(egui::Shape::convex_polygon(
+                            points(),
+                            color(fill),
+                            egui::Stroke::NONE,
+                        ));
+                    }
                 }
                 if let Some(stroke_col) = document.node_stroke(node)
                     && node.stroke_width > 0.0
                 {
-                    content.rect_stroke(
-                        rect,
-                        r,
-                        egui::Stroke::new(node.stroke_width * zoom, color(stroke_col)),
-                        egui::StrokeKind::Inside,
-                    );
+                    content.add(egui::epaint::PathShape {
+                        points: points(),
+                        closed: true,
+                        fill: Color32::TRANSPARENT,
+                        stroke: egui::epaint::PathStroke::new(
+                            node.stroke_width * zoom,
+                            color(stroke_col),
+                        )
+                        .with_kind(egui::StrokeKind::Inside),
+                    });
                 }
             }
             NodeKind::Ellipse => {
@@ -269,12 +292,9 @@ pub fn paint_document(
                 if rx > 0.0 && ry > 0.0 {
                     let center = rect.center();
                     const STEPS: usize = 64;
-                    let points: Vec<Pos2> = (0..STEPS)
-                        .map(|i| {
-                            let angle = (i as f32 / STEPS as f32) * std::f32::consts::TAU;
-                            let (sin, cos) = angle.sin_cos();
-                            pos2(center.x + rx * cos, center.y + ry * sin)
-                        })
+                    let points: Vec<Pos2> = crate::geometry::contour(node)
+                        .into_iter()
+                        .map(|p| origin + p.to_vec2() * zoom)
                         .collect();
                     let stroke = match document.node_stroke(node) {
                         Some(stroke_col) if node.stroke_width > 0.0 => {
@@ -343,25 +363,18 @@ pub fn paint_document(
                     _ => egui::Stroke::NONE,
                 };
                 content.add(egui::Shape::convex_polygon(
-                    vec![
-                        pos2(rect.center().x, rect.top()),
-                        pos2(rect.right(), rect.bottom()),
-                        pos2(rect.left(), rect.bottom()),
-                    ],
+                    crate::geometry::contour(node)
+                        .into_iter()
+                        .map(|p| origin + p.to_vec2() * zoom)
+                        .collect(),
                     color(document.node_fill(node)),
                     stroke,
                 ));
             }
             NodeKind::Path => {
-                let pts: Vec<Pos2> = node
-                    .points
-                    .iter()
-                    .map(|&[px, py]| {
-                        pos2(
-                            rect.left() + px * rect.width(),
-                            rect.top() + py * rect.height(),
-                        )
-                    })
+                let pts: Vec<Pos2> = crate::geometry::contour(node)
+                    .into_iter()
+                    .map(|p| origin + p.to_vec2() * zoom)
                     .collect();
                 let fill = document.node_fill(node);
                 if pts.len() >= 3 && node.closed && fill[3] > 0 {
@@ -372,12 +385,8 @@ pub fn paint_document(
                     ));
                 }
                 if pts.len() >= 2 {
-                    let stroke_col = document.node_stroke(node).unwrap_or(fill);
-                    let sw = if node.stroke_width > 0.0 {
-                        node.stroke_width
-                    } else {
-                        2.0
-                    } * zoom;
+                    let (stroke_col, width) = crate::geometry::path_stroke(document, node);
+                    let sw = width * zoom;
                     let stroke = egui::Stroke::new(sw, color(stroke_col));
                     if node.closed {
                         content.add(egui::Shape::closed_line(pts, stroke));

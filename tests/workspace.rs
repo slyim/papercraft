@@ -625,6 +625,138 @@ fn old_schemas_reject_explicit_new_defaults_and_unsupported_exports_preserve_des
 }
 
 #[test]
+fn shape_geometry_matches_gui_headless_and_live_through_save_render_and_failure() {
+    let mut doc = Document {
+        nodes: vec![
+            Node {
+                id: 1,
+                x: -60.0,
+                y: 40.0,
+                radius: 40.0,
+                ..Node::default()
+            },
+            Node {
+                id: 2,
+                kind: NodeKind::Ellipse,
+                x: 100.0,
+                y: 40.0,
+                ..Node::default()
+            },
+            Node {
+                id: 3,
+                kind: NodeKind::Triangle,
+                x: 260.0,
+                y: 40.0,
+                ..Node::default()
+            },
+            Node {
+                id: 4,
+                kind: NodeKind::Path,
+                x: 60.0,
+                y: 220.0,
+                width: 160.0,
+                height: 80.0,
+                points: vec![[0.0, 0.0], [1.0, 1.0]],
+                stroke: Some([20, 40, 80, 255]),
+                stroke_width: 8.0,
+                fill: [0; 4],
+                ..Node::default()
+            },
+        ],
+        next_id: 5,
+        ..Document::default()
+    };
+    doc.normalize();
+    doc.validate().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("shapes.papercraft");
+    doc.save(&source).unwrap();
+    let bytes = std::fs::read(&source).unwrap();
+    let crop = [-80.0, 0.0, 400.0, 340.0];
+    let expected_png = papercraft::render::export_png_region(&doc, crop, 1.0).unwrap();
+    let (ctx, mut gui, b) = setup(doc.clone());
+    let p = b.min + vec2(102.0, 42.0) * (b.width() / 960.0);
+    frame(
+        &ctx,
+        &mut gui,
+        vec![Event::PointerMoved(p), button(p, true)],
+    );
+    frame(&ctx, &mut gui, vec![button(p, false)]);
+    assert!(
+        gui.editor.selection().is_empty(),
+        "GUI ellipse empty corner"
+    );
+    for mut client in [
+        Client::Headless(Server::default()),
+        Client::Live(Box::new(PaperCraftApp::from_document(Document::default()))),
+    ] {
+        let (_, opened, _) = client.call("document_open", json!({"path":source}));
+        let id = opened["document_id"].clone();
+        let (_, inspected, _) = client.call("document_inspect", json!({"document_id":id}));
+        assert_eq!(
+            inspected["capabilities"]["canvas_interactions"]["creation_snapping"],
+            true
+        );
+        assert_eq!(
+            inspected["layers"],
+            papercraft::cli::describe(&gui.editor.document)["layers"]
+        );
+        for format in ["png", "svg", "html"] {
+            let path = dir.path().join(format!("shapes.{format}"));
+            let mut args = json!({"document_id":id,"format":format,"path":path});
+            if format == "png" {
+                args["region"] = json!({"x":-80,"y":0,"width":480,"height":340});
+            }
+            let (error, result, _) = client.call("document_export", args);
+            assert!(!error, "{result}");
+            let data = std::fs::read(path).unwrap();
+            let expected = match format {
+                "png" => expected_png.clone(),
+                "svg" => doc.export_svg().unwrap().into_bytes(),
+                _ => doc.export_html().unwrap().into_bytes(),
+            };
+            assert_eq!(data, expected);
+        }
+        let saved = dir.path().join("roundtrip.crumbs");
+        let (error, result, _) =
+            client.call("document_save", json!({"document_id":id,"path":saved}));
+        assert!(!error, "{result}");
+        let reopened = Document::load(&saved).unwrap();
+        assert_eq!(reopened, doc);
+        for point in [
+            [-58.0, 42.0],
+            [102.0, 42.0],
+            [262.0, 42.0],
+            [150.0, 90.0],
+            [140.0, 260.0],
+        ] {
+            assert_eq!(
+                reopened.hit_test(point),
+                gui.editor.document.hit_test(point)
+            );
+        }
+        client.call(
+            "document_apply",
+            json!({"document_id":id,"operations":[{"op":"update_layer","id":2,"x":110}]}),
+        );
+        client.call("document_undo", json!({"document_id":id}));
+        let (_, before, _) = client.call("document_inspect", json!({"document_id":id}));
+        assert_eq!(before["state"]["can_redo"], true);
+        assert!(client.call("document_apply",json!({"document_id":id,"operations":[{"op":"update_layer","id":2,"shape":"triangle"},{"op":"create_path","svg_path":"M 0 0 Q 1 1 2 2"}]})).0);
+        assert_eq!(
+            client.call("document_inspect", json!({"document_id":id})).1,
+            before
+        );
+        client.call("document_redo", json!({"document_id":id}));
+        assert_eq!(
+            client.call("document_inspect", json!({"document_id":id})).1["layers"][1]["x"],
+            110.0
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+    }
+}
+
+#[test]
 fn mcp_protects_other_open_sources_and_rejects_curve_approximation() {
     for mut client in [
         Client::Headless(Server::default()),

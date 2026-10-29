@@ -197,7 +197,16 @@ pub fn describe(document: &Document) -> Value {
         "content_bounds": document.content_bounds(),
         "capabilities": {
             "workspace": "off-artboard absolute world geometry",
-            "selection": "clipped bounding boxes; not shape/stroke-aware",
+            "selection": "shape-aware rectangles/rounded rectangles, ellipses, triangles and straight path/stroke geometry; text layout boxes",
+            "selection_rules": {
+                "fill": "resolved alpha > 0; transparent shapes have no interior hit; rectangular shader footprint is partial",
+                "stroke": "inside rectangles/Frames; centered elsewhere; existing path fallback; geometric distance, not antialias/miter accuracy",
+                "pointer_stroke_tolerance_screen_points": crate::snap::SNAP_DISTANCE,
+                "marquee": "intersect or touch supported fill/stroke geometry; no pointer tolerance; ancestor rectangular clips, hiding and locking apply",
+                "closed_path_fill": "convex only; concave/degenerate/self-intersecting contours select segments only",
+                "precision": "bounded native contours, not glyph/curve/pixel accuracy"
+            },
+            "canvas_interactions": {"creation_snapping":true,"snap_bypass":"Command or Ctrl","navigation":"fit content/visible selection/artboard; pointer-anchored zoom; press-owned pan; tab-local transient view"},
             "png": {"regions":true,"frame_crop":true,"max_side":render::MAX_PNG_SIDE,"max_pixels":render::MAX_PNG_PIXELS},
             "html_svg": {"bounds":"artboard only","ancestor_clipping":false,"shaders":false,"text":"explicit SVG lines; fonts and wrapping differ"},
             "vectors": "partial normalized straight polylines; closed fills are convex-only, stroke parity incomplete; Path preset is not authored Pen, no curve or point editing",

@@ -4,7 +4,7 @@
 
 Version 3 has an existing release collision. PaperCraft **v0.2.0** (`0e3e7737191e185068c580e1d5fded863ee782e4`) accepts only the M1 typography fields. **v0.3.0** (`53f99a6734473a9ca8a6933b5fb69de291dc1172`) also writes the M2 toolkit fields and shape kinds below as version 3. The earlier frozen-M1 claim did not match the later shipped serializer. A v0.2.0 reader rejects those toolkit files; a shared version number does not imply compatibility.
 
-Current readers preserve the actual v0.3.0 superset. **No more persisted fields or changed coordinate semantics may be added to v3.** New native schema work requires v4 or later with explicit migration/rollback. The workspace increment adds no native fields/version. See the [current roadmap and release fixture provenance](editor-completion-plan.md#format-reconciliation-before-new-fields).
+Current readers preserve the actual v0.3.0 superset. **No more persisted fields or changed coordinate semantics may be added to v3.** New native schema work requires v4 or later with explicit migration/rollback. Workspace slices 1a/1b add no native fields/version. Shape/stroke selection, marquee, creation snapping and transient navigation do not rewrite authored geometry or parent links on load; world-radius contour painting fixes the old screen-radius cap without changing stored radii. See the [current roadmap and release fixture provenance](editor-completion-plan.md#format-reconciliation-before-new-fields).
 
 The [version 1 and 2 rules](document-format.md) remain: strict readers, unknown fields rejected, literals kept synchronized with tokens, and the writer emits the **lowest version that can represent the document**.
 

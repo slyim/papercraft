@@ -12,6 +12,8 @@ Mode: Operate. The user's explicit Paper reference fixes the surface structure: 
 - Support normal document shortcuts and native file dialogs. Confirm unsaved work before replacing a document or closing the app.
 - Export opens HTML/SVG choices, with the SVG text-line/font limitation stated beside the choices. Export uses current document state and does not mark the source saved.
 - Retain the original single-artboard editor shell. The artboard is now the background/default export region within a world workspace, not a clip on authoring. Existing top-level frames compose screens without adding a competing artboard model. Fit content/selection/artboard is available through the zoom menu and Shift+1/2/0. This does not assert Paper layout or export fidelity.
+- Canvas hover/click/double-click share one shape/straight-stroke lookup. Zero-alpha shape fills are click-through; strokes gain 5 screen points of picking tolerance, never across an ancestor clip. Text remains layout-box selection. Marquee intersects actual supported fill/stroke geometry without pointer tolerance, inheriting ancestor clips/hiding/locking. Transparent unpainted layers remain accessible in the layer list.
+- Creation uses the existing edge/center magnet with live Shift (equal sides), Alt (centered), and Command/Ctrl bypass. A drag keeps its press anchor; constrained snapping chooses the nearest compatible edge. Click placement snaps its origin. Guides and preview use final bounded/rounded geometry. Pan ownership lasts through release; navigation cannot change coordinates while a geometry press is held.
 - Presets and local notes are labeled as such. The Agent dock exposes external live MCP, not a fictitious provider/ACP runner.
 
 ## Layout scale

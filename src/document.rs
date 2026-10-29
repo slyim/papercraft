@@ -1022,7 +1022,7 @@ impl Document {
         if self.is_effectively_hidden(node) {
             return None;
         }
-        let mut bounds = node.bounds();
+        let mut bounds = crate::geometry::bounds(self, node);
         if let Some(clip) = self.ancestors_clip_rect(node) {
             bounds = [
                 bounds[0].max(clip[0]),
@@ -1041,19 +1041,57 @@ impl Document {
             .reduce(union_bounds)
     }
 
-    /// Bounding-box selection in paint order. Shape/stroke-aware hits are a later
-    /// slice; all canvas hit consumers share this explicit contract.
+    /// Topmost semantic geometry at a world point, without extra stroke tolerance.
     pub fn hit_test(&self, point: [f32; 2]) -> Option<u64> {
+        self.hit_test_with_tolerance(point, 0.0)
+    }
+
+    /// Shared hover/click/double-click lookup. Only strokes gain `tolerance` world
+    /// units of extra reach; ancestor clips remain strict. Text uses its layout box.
+    pub fn hit_test_with_tolerance(&self, point: [f32; 2], tolerance: f32) -> Option<u64> {
+        if !point.iter().all(|v| v.is_finite()) || !tolerance.is_finite() || tolerance < 0.0 {
+            return None;
+        }
+        let area = [point[0], point[1], point[0], point[1]];
         self.nodes
             .iter()
             .rev()
-            .find(|node| {
-                !self.is_effectively_locked(node)
-                    && self.visible_bounds(node).is_some_and(|b| {
-                        point[0] >= b[0] && point[0] <= b[2] && point[1] >= b[1] && point[1] <= b[3]
-                    })
-            })
-            .map(|node| node.id)
+            .find(|n| self.selection_intersects(n, area, tolerance))
+            .map(|n| n.id)
+    }
+
+    /// Intersect-or-touch marquee lookup in paint order, with no pointer tolerance.
+    pub fn marquee_hits(&self, area: [f32; 4]) -> Vec<u64> {
+        if !area.iter().all(|v| v.is_finite()) || area[0] > area[2] || area[1] > area[3] {
+            return Vec::new();
+        }
+        self.nodes
+            .iter()
+            .filter(|n| self.selection_intersects(n, area, 0.0))
+            .map(|n| n.id)
+            .collect()
+    }
+
+    fn selection_intersects(&self, node: &Node, mut area: [f32; 4], tolerance: f32) -> bool {
+        if self.is_effectively_hidden(node) || self.is_effectively_locked(node) {
+            return false;
+        }
+        // Clip the query BEFORE geometry testing, not just the geometry's AABB.
+        if let Some(clip) = self.ancestors_clip_rect(node) {
+            if clip[0] >= clip[2] || clip[1] >= clip[3] {
+                return false;
+            }
+            area = [
+                area[0].max(clip[0]),
+                area[1].max(clip[1]),
+                area[2].min(clip[2]),
+                area[3].min(clip[3]),
+            ];
+            if area[0] > area[2] || area[1] > area[3] {
+                return false;
+            }
+        }
+        crate::geometry::intersects(self, node, crate::geometry::rect(area), tolerance)
     }
 
     /// Returns all node IDs whose `parent` chain includes `frame_id`.
@@ -1887,7 +1925,7 @@ fn node_rect(node: &Node) -> [f32; 4] {
     node.bounds()
 }
 
-fn union_bounds(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+pub(crate) fn union_bounds(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [
         a[0].min(b[0]),
         a[1].min(b[1]),

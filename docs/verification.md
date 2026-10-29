@@ -2,7 +2,7 @@
 
 18 October 2026. Host: Apple Silicon macOS. Rust 1.99.1; eframe/egui 0.36.2; egui-phosphor 0.14.0; REA 6.7.0.
 
-Entries below retain the capability and verification state at each earlier change. **Release downloads v0.1.2** records the current packaging checks; earlier entries describe their own revisions and platforms. Earlier statements that SVG, tokens or other-platform builds were deferred describe the earlier code.
+Entries below retain historical capability, packaging and verification state at each earlier change. The [editor completion roadmap](editor-completion-plan.md#verification-record--1b) is the single current roadmap and records the verified workspace 1a/1b increments, commands, failures, artifact hashes and remaining checks. Earlier statements that SVG, tokens or other-platform builds were deferred describe the earlier code.
 
 ## Passed
 

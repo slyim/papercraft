@@ -7,3 +7,4 @@ research/private/
 .DS_Store
 *.log
 __pycache__/
+graphify-out/

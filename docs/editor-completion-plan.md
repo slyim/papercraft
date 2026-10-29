@@ -1,6 +1,6 @@
 # Editor completion roadmap
 
-Current source baseline: `53f99a6734473a9ca8a6933b5fb69de291dc1172` (v0.3.0).
+Current increment baseline: `97e833e51e6d2056eeb7691f17fd5cfcfb008d03` (verified 1a). The source-backed inventory below was recorded at `53f99a6734473a9ca8a6933b5fb69de291dc1172` (v0.3.0); completed 1a/1b contracts and proof follow it.
 This is the current roadmap; older gap assessments, toolbar plans and release notes are historical, not completion evidence. Product decisions in the implementation request govern scope. All new behavior below is a PaperCraft decision, not a new Paper parity claim. No Paper or FigCraft code/assets are adopted by this increment.
 
 ## 0 — Source-backed baseline
@@ -31,7 +31,7 @@ Initial Git worktree: clean. `cargo test --locked`: **118 tests passed** on macO
 |---|---|
 | 0 — complete for this increment | Baseline above; retained release serializer fixture, tightened legacy field-presence checks and explicit upgrade preservation. |
 | 1a — verified bounded increment | World workspace, recoverable fit navigation, isolated/cancellable move/resize previews, off-artboard primitive creation/selection, agent region/frame PNG and batch-local references. Contract and proof below. Full canvas/selection is not complete. |
-| 1b — next | Finish shape/stroke-aware selection, nesting/clip-aware marquee, creation snapping and remaining navigation edge cases. Do not label full canvas/selection complete at 1a. |
+| 1b — verified bounded increment | Shape/straight-stroke-aware selection, nesting/clip-aware marquee, creation snapping and remaining navigation edges. Contract and proof below. Stop here; this is not full editor completion. |
 | 2 | Layer tree/deep selection, groups, wrap/unwrap/reparent, inherited hide/lock for every editing path; explicit move/resize/scale rules and world-preserving hierarchy/migration. |
 | 3 | Finish shape/stroke/corner/transform and text family/weight/spacing/sizing/fallback/overflow contracts with bounded export support. |
 | 4 | Authored straight paths, then point editing, then Bézier handles; concave tessellation, curve/bounds/stroke/fill hit testing and strict SVG semantics. |
@@ -67,9 +67,22 @@ No native file schema change. v1/v2/v3 release fixture read/save/reopen and unkn
 
 Required checks: regression first for off-artboard creation/painting, isolated drafts/cancel/redo, fit/anchored zoom and live/headless bounded rendering; batch-local ref/failure/state tests; save/reopen and destination preservation; extend `verify_native` with offboard creation and cancellation, inspect actual captures/exports. Run `cargo fmt --check`, `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`. Record actual commands/results and unperformed checks below. Stop after 1a; no vector/hierarchy completion claim.
 
-## Verification record
+## 1b contract (written before behavior changes)
 
-**Result: baseline reconciliation and bounded slice 1a implemented and verified; stop here.** No schema/version/dependency change, proprietary code/assets, release publication or installed-app replacement. Stage 1b and stages 2–9 remain open.
+Baseline: `97e833e51e6d2056eeb7691f17fd5cfcfb008d03`, clean worktree; 129 tests pass again (`/tmp/papercraft-1b-baseline.log`). All rules are PaperCraft decisions, not newly observed Paper behavior.
+
+- **Semantic lookup:** topmost eligible painted geometry wins, in existing flat paint order. Rectangle/rounded-rectangle/Frame interiors, ellipses, triangles and stored straight path segments replace bounding-box-only hits. Zero-alpha resolved fill has no selectable interior; nonzero alpha does, regardless of composited occlusion. Text retains its layout box (not glyph hits). Transparent/strokeless layers remain accessible in the layer list. Existing path fallback stroke (fill color, authored width or 2 units) is preserved. Closed convex paths have interiors; concave/degenerate/self-intersecting contours retain straight-segment selection only, with no concave tessellation or fill-accuracy claim.
+- **Strokes:** rectangle/Frame strokes remain inside; other shapes/path strokes remain centered. Picking uses geometric distance to the contour/segments plus **5 screen points** beyond painted width, independent of zoom. This is not pixel/antialias/miter/glyph/curve accuracy. `Document::hit_test` uses zero extra world tolerance; the GUI passes `5 / zoom` through one shared lookup for hover, click and double-click. Nonfinite points/tolerances reject lookup. Pointer tolerance never leaks across ancestor clips.
+- **Marquee:** intersect-or-touch supported fill/stroke geometry, with **no pointer tolerance**; no selection for an empty corner/interior hole or a clipped-away segment. Intersect the query with every rectangular ancestor clip before testing geometry; inherit hiding and locking at every ancestor, including nested/off-artboard children. Existing Shift-at-press addition, live updates, paint-order results, cancellation restoration and no-history behavior remain. Ancestor selection does not suppress descendant results; deep-selection/tree semantics remain stage 2. Bounds are conservative world envelopes, not exact silhouette/glyph measurements.
+- **Creation snapping:** reuse `Snapper` and its artboard/visible-clipped-layer edge/center targets, including locked targets but excluding hidden/clipped-away targets. Drag snaps the moving endpoint/edges within 5 screen points; click snaps placement origin. The press anchor stays fixed; Alt preserves its center and Shift preserves equal sides (one nearest compatible axis wins under constraint). Modifiers/toggle/bypass are live, guides reflect final geometry only, release coordinates are included, and bounded rounding/clamping stays authoritative. Command **or Ctrl** bypasses creation/move/resize snapping. Creation is still an isolated preview, one undo on release; cancellation/failure preserves revisions/history/redo. Text click keeps auto-sizing; no new authoring tool.
+- **Navigation:** fit content/selection/artboard, empty fallback/recovery, pointer-anchored pinch and command-scroll at zoom limits, wheel/hand/Space/middle pan and tab-local view state must leave document/history untouched. A press owns its gesture through release: no wheel/fit/zoom drift before drag threshold or during a geometry gesture, no conversion from a pan to creation/selection when Space is released, no geometry from middle-button input. Cancellation/focus loss/tab switch consumes the held press. Fit selection uses the visible clipped selection envelope; handles keep authored bounds. Navigation remains transient, zoom 0.001–4, fit ceiling 2 and 64-point margins where possible.
+- **Preservation and limits:** no dependency/schema/version changes. Strict v1/v2 readers, frozen released v3 superset, lowest-version writes, explicit upgrade consent, atomic destinations, absolute child geometry, draft isolation, shared Editor history/live busy handling and cross-document protection remain. PNG/canvas share supported geometry and ancestor clips; default bounded HTML/SVG support is tested, unsupported shader/clipped exports reject before writing. No hierarchy/local transforms, authored Pen/Bézier, concave-fill tessellation, layout/images/components/pages/embedded execution.
+
+**Proof/stop gate:** failing regressions before behavior edits, then focused and complete Rust gates; GUI/headless/live agreement, cancellation/failure/redo, one-step undo/save/reopen, nested clips/locks, supported exports and resource limits. Extend `verify_native` (and live proof where useful) with shape/marquee, snapped creation and navigation; inspect actual native captures and PNGs. Record commands/results/hashes and unperformed checks below. Native focus/input failures must be diagnosed, never hidden by fabricated focus or physical-input filtering. Stop at verified 1b; no stage 2, release, push or tag.
+
+## Verification record — 1a (historical completed gate)
+
+**Historical result: baseline reconciliation and bounded slice 1a implemented and verified.** No schema/version/dependency change, proprietary code/assets, release publication or installed-app replacement. Stage 1b was still open at this gate; its completed proof is recorded below. Stages 2–9 remain open.
 
 ### Implementation and preservation
 
@@ -120,4 +133,72 @@ Additional `verify_native ... text 1380x860` runs had intermittent placement/foc
 
 Not performed: human/manual gesture and OS focus/minimize permutations, accessibility/screen-reader certification, Windows/Linux runtime checks, v0.2.0 executable runtime verification, external HTML/SVG consumer typography, deep nesting performance, crash/power-loss filesystem fault injection or exhaustive render combinations. Focus-loss/background cancellation has deterministic regression proof, not all-platform manual certification.
 
-Next bounded contract: **1b selection accuracy and remaining canvas edges**, followed by stage 2 hierarchy semantics. Do not start local-coordinate migration, full Pen, layout/assets/components/pages or an embedded runner under a canvas completion claim.
+At the 1a gate, the next bounded contract was **1b selection accuracy and remaining canvas edges**. The record below completes that bounded increment. Stage 2 hierarchy semantics remains later work; do not start it under a canvas completion claim.
+
+## Verification record — 1b
+
+**Result: bounded slice 1b implemented and verified on macOS arm64; stop.** Working-tree changes based on `97e833e`, ready for review; no commit, push, tag, release, dependency/schema change or installed-app replacement was performed. There is no claim of full editor completion, Paper parity, glyph/curve accuracy or completed hierarchy/vector editing.
+
+### Implementation and preservation
+
+- `src/geometry.rs`, `src/document.rs`: one semantic point/marquee path for supported shape interiors and straight strokes, token-resolved transparency, native path fallback, strict ancestor clips and inherited hiding/locking. Queries are clipped before geometry tests; zero-area ancestor intersections select nothing. Closed convex paths support fill selection; concave/degenerate/self-intersecting contours select segments only. Duplicate vertices are normalized only in a working contour, never in released/persisted data. Authored bounds remain unchanged; visible/content envelopes include actual path extents and centered strokes and remain conservative (not silhouette/alpha bounds).
+- `src/render.rs`: shares bounded contours and fallback stroke rules with selection. Rounded geometry uses world radii instead of truncated/capped u8 screen radii; ellipse remains a 64-segment approximation. Culling includes centered-stroke extents; sharp joins are bounded to the envelope plus antialias fringe. No new tessellator, dependency or concave-fill implementation. Shader appearance remains partial (including rectangular rectangle/Frame shader footprints).
+- `src/app.rs`, `src/snap.rs`: hover/click/double-click pass the same 5-screen-point stroke tolerance; marquee has none. Existing snap targets now serve creation with guides, fixed anchors, live Shift/Alt/toggle and Command-or-Ctrl bypass, bounded rounding/clamping, release-position inclusion and one history step. Early presses freeze view navigation. Hand/Space/middle pan owns its press through release, ignores pre-press displacement, includes release displacement and cannot turn into geometry when Space is released. Fit selection uses clipped visible envelopes without changing authored resize handles. View state stays tab-local/transient.
+- `src/cli.rs`, `PRODUCT.md`, `DESIGN.md`, `docs/{agent-interface,format-v3}.md`: capability and precision boundaries match implementation. GUI/headless/live share Document/Editor geometry, rendering, history and validation. Frozen v3/absolute child coordinates, strict legacy readers, lowest-version writing, upgrade consent, atomic destinations, cancellation/redo, live busy handling and protected sources retain regression proof.
+
+### Commands and results
+
+All logs below are retained under `target/verification/selection1b/logs/` as well as their original `/tmp/papercraft-1b-*.log` paths.
+
+| Evidence | Command / actual result |
+|---|---|
+| PC-SEL-01 | `cargo test --locked --test selection`: **eight intended behavioral failures before product changes** (`...-red.log`). Follow-up regressions exposed repeated closed vertices and pre-press pan displacement (`...-edges-red.log`) and zero-area ancestor hits (`...-zero-clip-red.log`) before their fixes. |
+| PC-SEL-02 | `cargo fmt --check`, `cargo test --locked`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo build --locked --bins --examples`, `cargo build --locked --release --bins --examples`, `git diff --check`: **all pass**. **145 tests passed, zero failed/ignored** (129 baseline + 15 selection/navigation/creation regressions + one GUI/headless/live geometry lifecycle regression). Logs `...-{fmt,test,clippy,build,release,diffcheck}.log`. |
+| PC-SEL-03 | `target/debug/examples/verify_native target/verification/selection1b/<scenario> <scenario> 1380x860`: `selection-1b`, `marquee-1b`, `creation-1b`, `navigation-1b` pass, including a final-source rerun (`...-native-<scenario>-final.log`). At `960x680`, `selection-1b`, `creation-1b`, `text` and `cancel` also pass (`...-native-<scenario>-small.log`). Actual native captures were opened and inspected. Creation checks one-step undo/redo and save/reopen; clipped shape scenarios assert HTML/SVG rejection with PNG recovery. |
+| PC-SEL-04 | `target/debug/examples/verify_live target/verification/selection1b/live`: real stdio → authenticated IPC → GUI, atomic failure/revision handling, shared undo/redo, save/reopen, rounded-button semantic hits and bounded PNG crops pass (`...-native-live-final.log`). Native capture and both frame PNGs were opened and inspected. |
+| PC-SEL-05 | `cargo run --locked --release --example bench`: completed; flat-document headless egui+tessellation measurements below (`...-bench.log`). |
+
+Regression coverage includes empty rounded/ellipse/triangle corners, resolved alpha (including nonzero alpha 1), hollow strokes/closed paths, path closure/duplicates/unsupported concave fill selection, screen-space tolerance across zooms, shared hover/click/double-click text fallback, zero-tolerance marquee touch/intersection, nested/offboard clips/locks/hiding, clipped-away segments/zero-area clips, Shift/Alt and Command/Ctrl creation, hidden/locked snap targets, live modifier/release changes, preview-only creation/cancellation/failure/redo, coherent undo/save/reopen, press-owned pan, fit fallback/clipped selection/tab restoration and pointer anchoring at zoom limits. GUI/headless/live export bytes agree for the same supported composition. Existing source/other-open-document protection, atomic failed exports, upgrade/legacy version/resource-budget suites also pass.
+
+### Native focus/input diagnosis (not hidden failures)
+
+Initial native launches timed out with `native_focused=false`, `script_started=false`, `script_frame=0`; another run received then lost actual native focus during the script. Those runs are **failed**, not interaction proof. A System Events activation at 0.5 seconds initially found no process; a timed failed run lasted 0.715 seconds. The former 240-frame timeout could expire very quickly while unfocused. The verification harness now waits at most 10 seconds of wall time with 16-ms repaint requests, still requires actual OS focus, and still fails on focus loss during scripted input. macOS confirmation runs used an actual native activation, not a forged input flag:
+
+```sh
+target/debug/examples/verify_native "$folder" "$scenario" "$size" > "$log" 2>&1 & pid=$!
+sleep 0.3
+osascript -e "tell application \"System Events\" to set frontmost of first process whose unix id is $pid to true"
+wait "$pid"
+```
+
+The OS focus-stealing cause is not established; no product text defect or physical-input cause is inferred from these focus failures. The harness logs native focus events and physical-key events without removing/filtering them. One earlier successful selection run logged physical SuperLeft events **after** its capture/completion; final native checks and the small text check passed their strict postconditions. No native focus, text contents or successful screenshot was fabricated. Diagnostic failure/retry/focus logs are retained alongside successful logs. A zoom-limit regression initially identified a white toolbar icon as the tiny artboard; its capture helper was corrected to identify the canvas clip. That was a test-observer error, not a product zoom failure (`...-zoom-red.log`).
+
+### Inspected artifacts and provenance
+
+Paths in this table are relative to ignored `target/verification/selection1b/`. `SOURCES.sha256` covers application/test/example Rust, compatibility fixtures and Cargo manifests; SHA-256 **`1b35e2b381ea982458e5013c9d60bd43907d03b010ae64f039f0c8ab4a88ba40`**. Full output/log hashes are in `SHA256SUMS`; compiled verification/release binary hashes are in `BUILDS.sha256`. Generated evidence is not a shipped asset or release.
+
+| Evidence / artifact | SHA-256 |
+|---|---|
+| PC-SEL-03 `selection-1b/papercraft-selection-1b-1380x860.png` | `6b6ede85e7d62308f1831519558763b93dbe64c290907d237359d3c11dd6ff10` |
+| PC-SEL-03 `marquee-1b/papercraft-marquee-1b-1380x860.png` | `473673752ce204831c136325c81f22480ecbb6e05d893d2a5b462072122dd6a7` |
+| PC-SEL-03 `creation-1b/papercraft-creation-1b-1380x860.png` | `83481a858fd21f8339e3792b0b9501b51c8b3582a3e48d9a4702cc00002b07b7` |
+| PC-SEL-03 `navigation-1b/papercraft-navigation-1b-1380x860.png` | `7605074b6d695f918adceaba308a5dd74c6a2a535245dbe9dcd1bafad210265f` |
+| PC-SEL-03 `selection-1b/interaction.png` | `abbca7dd5c81c11a5a0ad4b6f5c708ffa06c5fbd52759fe8cef541ef51ec2bc1` |
+| PC-SEL-03 `creation-1b/interaction.png` | `03e33336cacd72cf17476f8066f0692f295752889ddbf32b1d20ce9a740af99d` |
+| PC-SEL-03 `text-small/papercraft-text-960x680.png` | `ff527882011746ac8840f9de02927b34ee6add676e78fe2baf3ecbb4b2cbe957` |
+| PC-SEL-04 `live/live-native.png` | `3fd7ee51e5e977fc1e862afa2f7ae323dc734a7538463faaf1da6317ff65436a` |
+| PC-SEL-04 `live/workspace.png` | `32f707cb5e65d45202d55c1f10a876db8a95c84d9ef65f5d5b03edae307fd229` |
+
+Captures show the original shell, off-artboard rounded geometry, selected ellipse, nested clipped path, snapped creation and zoomed navigation. Creation capture follows its undo/redo round trip (selection IDs are not restored by redo, an existing history behavior). Region PNGs show transparent off-artboard background and clipped strokes. `creation-1b/interaction.{html,svg}` were read and preserve snapped geometry/default artboard bounds. Vector export files were not browser-rendered or externally imported; no new browser/import/font fidelity claim.
+
+### Measured bounds and remaining limits
+
+| Flat layers | Idle median ms | Selected idle median ms | Drag median ms | Undo ms |
+|---:|---:|---:|---:|---:|
+| 1,000 | 0.51 | 0.57 | 0.66 | 0.015 |
+| 5,000 | 2.33 | 2.72 | 5.13 | 0.097 |
+| 10,000 | 4.24 | 5.93 | 8.18 | 0.191 |
+
+These numbers are higher than the earlier unpaired 1a run; world-radius contours retain geometry at small zooms instead of dropping radii, with more tessellation work. This is **not** a performance-improvement claim or a paired benchmark. GPU upload, native latency, deep hierarchy and full-workflow memory were not measured. Existing layer/path/byte and PNG allocation budgets remain; no new unbounded resource or dependency was introduced.
+
+Not performed: Linux/Windows runtime/native captures, exhaustive human/physical-input/OS-focus/minimize permutations, native Shift/Alt creation combinations (covered deterministically), IME/accessibility/screen-reader certification, external HTML/SVG rendering/import, old v0.2.0 executable runtime tests, deep-nesting stress or crash/power-loss injection. Limits retained: text-box not glyph picking; bounded ellipse/rounded contours and round-distance segment picking, not curve/antialias/miter accuracy; convex-only closed path fills; partial shader/stroke/vector exports; rectangular, not rounded, ancestor clips; flat paint order and incomplete descendant mutation/hierarchy semantics. Stages 2–9 remain open and were not started.

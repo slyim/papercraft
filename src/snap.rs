@@ -163,6 +163,62 @@ impl Snapper {
         nearest(if vertical { &self.x } else { &self.y }, value, threshold)
     }
 
+    /// Snap a placement origin to target lines.
+    pub fn snap_point(&self, point: [f32; 2], threshold: f32) -> [f32; 2] {
+        [
+            self.snap_edge(point[0], true, threshold)
+                .unwrap_or(point[0]),
+            self.snap_edge(point[1], false, threshold)
+                .unwrap_or(point[1]),
+        ]
+    }
+
+    /// Snap a drawing endpoint while retaining its press anchor. Centered drawing
+    /// can snap either mirrored edge; equal sides use the closest compatible axis.
+    pub fn snap_creation(
+        &self,
+        start: [f32; 2],
+        current: [f32; 2],
+        square: bool,
+        centered: bool,
+        threshold: f32,
+    ) -> [f32; 2] {
+        let mut delta = [current[0] - start[0], current[1] - start[1]];
+        if square {
+            let side = delta[0].abs().max(delta[1].abs());
+            delta = delta.map(|d| side.copysign(d));
+        }
+        let candidates: [Option<f32>; 2] = std::array::from_fn(|axis| {
+            [1.0, -1.0]
+                .into_iter()
+                .take(if centered { 2 } else { 1 })
+                .filter_map(|sign| {
+                    let edge = start[axis] + sign * delta[axis];
+                    let target = self.snap_edge(edge, axis == 0, threshold)?;
+                    let replacement = (target - start[axis]) * sign;
+                    // A snap cannot flip the drawing direction across its anchor.
+                    (replacement * delta[axis] >= 0.0).then_some(replacement)
+                })
+                .min_by(|a, b| (a - delta[axis]).abs().total_cmp(&(b - delta[axis]).abs()))
+        });
+        if square {
+            if let Some((axis, value)) = candidates
+                .into_iter()
+                .enumerate()
+                .filter_map(|(axis, c)| Some((axis, c?)))
+                .min_by(|(a, x), (b, y)| (x - delta[*a]).abs().total_cmp(&(y - delta[*b]).abs()))
+            {
+                delta = delta.map(|d| value.abs().copysign(d));
+                debug_assert!(axis < 2);
+            }
+        } else {
+            for axis in 0..2 {
+                delta[axis] = candidates[axis].unwrap_or(delta[axis]);
+            }
+        }
+        [start[0] + delta[0], start[1] + delta[1]]
+    }
+
     /// Guides for every edge or center of `frame` that lies on a target.
     pub fn guides(&self, frame: Frame) -> Vec<Guide> {
         let mut guides = Vec::new();

@@ -237,6 +237,31 @@ struct Creation {
     kind: NodeKind,
     start: Pos2,
     current: Pos2,
+    snapper: Snapper,
+    screen_scale: f32,
+}
+
+impl Creation {
+    fn rect(&self, modifiers: Modifiers, snapping: bool) -> Rect {
+        let endpoint = if snapping {
+            let [x, y] = self.snapper.snap_creation(
+                [self.start.x, self.start.y],
+                [self.current.x, self.current.y],
+                modifiers.shift,
+                modifiers.alt,
+                SNAP_DISTANCE / self.screen_scale,
+            );
+            pos2(x, y)
+        } else {
+            self.current
+        };
+        bounded_creation_rect(creation_rect(
+            self.start,
+            endpoint,
+            modifiers.shift,
+            modifiers.alt,
+        ))
+    }
 }
 
 /// A text layer edited in place on the canvas.
@@ -263,6 +288,20 @@ pub fn creation_rect(start: Pos2, current: Pos2, square: bool, centered: bool) -
     } else {
         Rect::from_two_pos(start, start + delta)
     }
+}
+
+/// Keep preview, guides and the existing rounded/clamped creation transaction in agreement.
+fn bounded_creation_rect(rect: Rect) -> Rect {
+    Rect::from_min_size(
+        pos2(
+            rect.min.x.round().clamp(-MAX_COORDINATE, MAX_COORDINATE),
+            rect.min.y.round().clamp(-MAX_COORDINATE, MAX_COORDINATE),
+        ),
+        vec2(
+            rect.width().round().clamp(1.0, MAX_COORDINATE),
+            rect.height().round().clamp(1.0, MAX_COORDINATE),
+        ),
+    )
 }
 
 /// An open document that is not the active tab. The active tab's state lives in the
@@ -332,10 +371,12 @@ pub struct PaperCraftApp {
     ignore_canvas_pointer: bool,
     /// Last observed input state, including a press before the drag threshold.
     pointer_down: bool,
+    /// Pan ownership lasts through release, even if Space is released first.
+    pan_button: Option<egui::PointerButton>,
     text_edit: Option<TextEditing>,
     /// Style of the text layer most recently selected; new text layers use it.
     text_style: TextStyle,
-    /// Moving and resizing snap to layer and artboard edges and centers.
+    /// Creation, moving and resizing snap to layer and artboard edges and centers.
     pub snapping: bool,
     /// Shift was held when the primary button was last pressed on the canvas.
     press_shift: bool,
@@ -396,6 +437,7 @@ impl PaperCraftApp {
             creation: None,
             ignore_canvas_pointer: false,
             pointer_down: false,
+            pan_button: None,
             text_edit: None,
             text_style: TextStyle::default(),
             snapping: true,
@@ -611,6 +653,7 @@ impl PaperCraftApp {
             || self.drag.is_some()
             || self.creation.is_some()
             || self.marquee.is_some()
+            || self.pan_button.is_some()
             || self.pointer_down
             || self.pending.is_some()
             || self.upgrade_prompt
@@ -1351,7 +1394,7 @@ impl PaperCraftApp {
             if ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::Num1)) {
                 self.fit = Some(FitTarget::Content);
             } else if ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::Num2)) {
-                if self.editor.selection_bounds().is_some() {
+                if self.fit_selection_bounds().is_some() {
                     self.fit = Some(FitTarget::Selection);
                 } else {
                     self.status =
@@ -1412,7 +1455,10 @@ impl PaperCraftApp {
     /// Runs before live requests in both visible UI and background logic frames.
     fn process_canvas_input(&mut self, ctx: &egui::Context) {
         self.pointer_down = ctx.input(|i| i.pointer.any_down());
-        let gesture = self.drag.is_some() || self.creation.is_some() || self.marquee.is_some();
+        let gesture = self.drag.is_some()
+            || self.creation.is_some()
+            || self.marquee.is_some()
+            || self.pan_button.is_some();
         if gesture || self.pointer_down {
             let lost_focus = ctx.input(|i| {
                 !i.focused
@@ -1552,7 +1598,7 @@ impl PaperCraftApp {
                             ),
                             ("Drag a handle", "Resize; several layers scale together"),
                             ("Shift + corner drag", "Resize keeping proportions"),
-                            ("⌘ / Ctrl + drag", "Move or resize without snapping"),
+                            ("⌘ / Ctrl + drag", "Create, move or resize without snapping"),
                             ("⌘ / Ctrl + A", "Select visible, unlocked layers"),
                             ("Arrow keys", "Move selection (Shift: 10 px)"),
                             ("⌥ / Alt + A, H, D", "Align left, horizontal centers, right"),
@@ -2412,7 +2458,7 @@ impl PaperCraftApp {
                         self.fit = Some(FitTarget::Content);
                     }
                     if item(ui, "Fit selection", "Shift+2") {
-                        if self.editor.selection_bounds().is_some() {
+                        if self.fit_selection_bounds().is_some() {
                             self.fit = Some(FitTarget::Selection);
                         } else {
                             self.status = "Select a visible, unlocked layer to fit.".into();
@@ -3547,13 +3593,37 @@ impl PaperCraftApp {
     }
 
     fn cancel_canvas_gesture(&mut self) {
-        self.ignore_canvas_pointer |=
-            self.drag.is_some() || self.creation.is_some() || self.marquee.is_some();
+        self.ignore_canvas_pointer |= self.drag.is_some()
+            || self.creation.is_some()
+            || self.marquee.is_some()
+            || self.pan_button.is_some();
+        self.pan_button = None;
         self.drag = None;
         self.creation = None;
         if let Some(marquee) = self.marquee.take() {
             self.editor.set_selection(marquee.before);
         }
+    }
+
+    fn fit_selection_bounds(&self) -> Option<Frame> {
+        let document = &self.editor.document;
+        document
+            .nodes
+            .iter()
+            .filter(|n| self.editor.is_selected(n.id) && !document.is_effectively_locked(n))
+            .filter_map(|n| document.visible_bounds(n))
+            .reduce(crate::document::union_bounds)
+    }
+
+    fn creation_snapper(&self) -> Snapper {
+        let document = &self.editor.document;
+        Snapper::new(
+            document.artboard_bounds(),
+            document
+                .nodes
+                .iter()
+                .filter_map(|n| document.visible_bounds(n)),
+        )
     }
 
     fn start_drag(&mut self, start: Pos2, nodes: IdSet, handle: Option<Handle>, frame: Frame) {
@@ -3643,7 +3713,7 @@ impl PaperCraftApp {
             let bounds = match target {
                 FitTarget::Artboard => Some(self.editor.document.artboard_bounds()),
                 FitTarget::Content => self.editor.document.content_bounds(),
-                FitTarget::Selection => self.editor.selection_bounds(),
+                FitTarget::Selection => self.fit_selection_bounds(),
             }
             .unwrap_or(self.editor.document.artboard_bounds());
             let extent = vec2(bounds[2] - bounds[0], bounds[3] - bounds[1]);
@@ -3658,7 +3728,10 @@ impl PaperCraftApp {
             || self.creation.is_some()
             || self.marquee.is_some()
             || self.ignore_canvas_pointer;
-        if response.hovered() && !geometry_gesture {
+        if response.hovered()
+            && !geometry_gesture
+            && !ui.input(|i| i.pointer.any_down() || i.pointer.any_released())
+        {
             let (scroll, zoom_delta, pointer, modifiers) = ui.input(|i| {
                 (
                     i.smooth_scroll_delta,
@@ -3686,12 +3759,29 @@ impl PaperCraftApp {
                 self.pan += scroll;
             }
         }
-        let panning = !geometry_gesture
-            && (self.tool == Tool::Hand
-                || ui.input(|i| {
-                    i.key_down(Key::Space) || i.pointer.button_down(egui::PointerButton::Middle)
-                }));
-        if response.dragged() && panning {
+        if !geometry_gesture && self.pan_button.is_none() {
+            self.pan_button = ui.input(|i| {
+                let inside = i.pointer.press_origin().is_some_and(|p| canvas.contains(p));
+                if inside && i.pointer.button_pressed(egui::PointerButton::Middle) {
+                    Some(egui::PointerButton::Middle)
+                } else if inside
+                    && i.pointer.primary_pressed()
+                    && (self.tool == Tool::Hand || i.key_down(Key::Space))
+                {
+                    Some(egui::PointerButton::Primary)
+                } else {
+                    None
+                }
+            });
+        }
+        let panning = self.pan_button.is_some()
+            || (!geometry_gesture
+                && !ui.input(|i| i.pointer.any_down() || i.pointer.any_released())
+                && (self.tool == Tool::Hand || ui.input(|i| i.key_down(Key::Space))));
+        if self
+            .pan_button
+            .is_some_and(|button| !ui.input(|i| i.pointer.button_pressed(button)))
+        {
             self.pan += ui.input(|i| i.pointer.delta());
         }
         if response.hovered() {
@@ -3767,7 +3857,7 @@ impl PaperCraftApp {
         {
             let point = ((pointer - origin) / self.zoom).to_pos2();
             if let Some(hovered) = displayed
-                .hit_test([point.x, point.y])
+                .hit_test_with_tolerance([point.x, point.y], SNAP_DISTANCE / self.zoom)
                 .and_then(|id| displayed.nodes.iter().find(|n| n.id == id))
                 .filter(|n| !self.editor.is_selected(n.id))
             {
@@ -3886,7 +3976,7 @@ impl PaperCraftApp {
             && let Some(kind) = self.tool.creates()
         {
             let pointer = response.interact_pointer_pos();
-            if response.drag_started()
+            if response.drag_started_by(egui::PointerButton::Primary)
                 && let Some(press) = ui.input(|i| i.pointer.press_origin())
             {
                 if canvas.contains(press) {
@@ -3895,6 +3985,8 @@ impl PaperCraftApp {
                         kind,
                         start: to_document(press),
                         current: to_document(press),
+                        snapper: self.creation_snapper(),
+                        screen_scale: self.zoom,
                     });
                 } else {
                     self.status = "Start inside the canvas to add a layer.".into();
@@ -3904,11 +3996,19 @@ impl PaperCraftApp {
                 creation.current = to_document(pointer);
             }
             let modifiers = ui.input(|i| i.modifiers);
+            let snapping = self.snapping && !modifiers.command && !modifiers.ctrl;
             // A click, or a drag too small to see, places a layer at the pointer.
             let finished = if response.clicked() {
                 pointer.and_then(|p| {
                     if canvas.contains(p) {
-                        Some((kind, to_document(p), None))
+                        let mut at = to_document(p);
+                        if snapping {
+                            let [x, y] = self
+                                .creation_snapper()
+                                .snap_point([at.x, at.y], SNAP_DISTANCE / self.zoom);
+                            at = pos2(x, y);
+                        }
+                        Some((kind, at, None))
                     } else {
                         self.status = "Click inside the canvas to add a layer.".into();
                         None
@@ -3916,7 +4016,7 @@ impl PaperCraftApp {
                 })
             } else if response.drag_stopped() {
                 self.creation.take().map(|c| {
-                    let rect = creation_rect(c.start, c.current, modifiers.shift, modifiers.alt);
+                    let rect = c.rect(modifiers, snapping);
                     let tiny = rect.width() * self.zoom < 4.0 && rect.height() * self.zoom < 4.0;
                     (c.kind, c.start, (!tiny).then_some(rect))
                 })
@@ -3973,12 +4073,20 @@ impl PaperCraftApp {
                 }
             }
             if let Some(creation) = &self.creation {
-                let rect = creation_rect(
-                    creation.start,
-                    creation.current,
-                    modifiers.shift,
-                    modifiers.alt,
-                );
+                let rect = creation.rect(modifiers, snapping);
+                if snapping {
+                    paint_guides(
+                        &painter,
+                        &creation.snapper.guides([
+                            rect.left(),
+                            rect.top(),
+                            rect.right(),
+                            rect.bottom(),
+                        ]),
+                        origin,
+                        self.zoom,
+                    );
+                }
                 let preview = Rect::from_min_max(
                     origin + rect.min.to_vec2() * self.zoom,
                     origin + rect.max.to_vec2() * self.zoom,
@@ -3993,16 +4101,16 @@ impl PaperCraftApp {
             if ui.input(|i| i.pointer.primary_pressed()) {
                 self.press_shift = ui.input(|i| i.modifiers.shift);
             }
-            let extend = if response.drag_started() {
+            let extend = if response.drag_started_by(egui::PointerButton::Primary) {
                 self.press_shift
             } else {
                 ui.input(|i| i.modifiers.shift)
             };
-            if (response.clicked() || response.drag_started())
+            if (response.clicked() || response.drag_started_by(egui::PointerButton::Primary))
                 && let Some(pointer) = pointer
             {
                 self.flush_properties();
-                let hit_point = if response.drag_started() {
+                let hit_point = if response.drag_started_by(egui::PointerButton::Primary) {
                     ui.input(|i| i.pointer.press_origin()).unwrap_or(pointer)
                 } else {
                     pointer
@@ -4016,17 +4124,19 @@ impl PaperCraftApp {
                         });
                 let hit = || {
                     let point = to_document(hit_point);
-                    self.editor.document.hit_test([point.x, point.y])
+                    self.editor
+                        .document
+                        .hit_test_with_tolerance([point.x, point.y], SNAP_DISTANCE / self.zoom)
                 };
                 if let Some((handle, frame, ids)) = handle {
                     // A click on a handle keeps the selection.
-                    if response.drag_started() {
+                    if response.drag_started_by(egui::PointerButton::Primary) {
                         let ids = ids.clone();
                         self.start_drag(hit_point, ids, Some(handle), frame);
                     }
                 } else {
                     match hit() {
-                        Some(id) if response.drag_started() => {
+                        Some(id) if response.drag_started_by(egui::PointerButton::Primary) => {
                             // Dragging a selected layer moves the whole selection.
                             if !self.editor.is_selected(id) {
                                 if extend {
@@ -4042,7 +4152,7 @@ impl PaperCraftApp {
                         }
                         Some(id) if extend => self.editor.toggle_selection(id),
                         Some(id) => self.editor.select(Some(id)),
-                        None if response.drag_started() => {
+                        None if response.drag_started_by(egui::PointerButton::Primary) => {
                             // Dragging on empty canvas selects with a marquee.
                             let base = if extend {
                                 self.editor.selection().to_vec()
@@ -4071,7 +4181,7 @@ impl PaperCraftApp {
                 let hit = self
                     .editor
                     .document
-                    .hit_test([point.x, point.y])
+                    .hit_test_with_tolerance([point.x, point.y], SNAP_DISTANCE / self.zoom)
                     .and_then(|id| self.editor.document.nodes.iter().find(|n| n.id == id));
                 if let Some(id) = hit.filter(|n| n.kind == NodeKind::Text).map(|n| n.id) {
                     self.begin_text_edit(id, false);
@@ -4080,7 +4190,8 @@ impl PaperCraftApp {
             if (response.dragged() || response.drag_stopped())
                 && let Some(pointer) = pointer
             {
-                let snapping = self.snapping && !ui.input(|i| i.modifiers.command);
+                let snapping =
+                    self.snapping && !ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
                 let keep_aspect = ui.input(|i| i.modifiers.shift);
                 if let Some(mut drag) = self.drag.take() {
                     let guides = self.apply_drag(&mut drag, pointer, snapping, keep_aspect);
@@ -4091,21 +4202,7 @@ impl PaperCraftApp {
                     marquee.current = to_document(pointer);
                     let area = Rect::from_two_pos(marquee.start, marquee.current);
                     let area = [area.min.x, area.min.y, area.max.x, area.max.y];
-                    let inside: Vec<u64> = self
-                        .editor
-                        .document
-                        .nodes
-                        .iter()
-                        .filter(|n| {
-                            !self.editor.document.is_effectively_locked(n)
-                                && self
-                                    .editor
-                                    .document
-                                    .visible_bounds(n)
-                                    .is_some_and(|b| snap::intersects(b, area))
-                        })
-                        .map(|n| n.id)
-                        .collect();
+                    let inside = self.editor.document.marquee_hits(area);
                     let ids = marquee.base.iter().copied().chain(inside);
                     self.editor.set_selection(ids);
                 }
@@ -4120,6 +4217,12 @@ impl PaperCraftApp {
             }
         }
         self.text_overlay(ui, origin);
+        if self
+            .pan_button
+            .is_some_and(|button| !ui.input(|i| i.pointer.button_down(button)))
+        {
+            self.pan_button = None;
+        }
         if response.drag_stopped() {
             self.creation = None;
             self.marquee = None;

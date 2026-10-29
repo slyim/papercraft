@@ -35,12 +35,17 @@ const SCENARIOS: &[&str] = &[
     "typography",
     "offboard",
     "cancel",
+    "selection-1b",
+    "marquee-1b",
+    "creation-1b",
+    "navigation-1b",
 ];
 
 struct NativeCheck {
     app: PaperCraftApp,
     output: PathBuf,
     frames: usize,
+    started: std::time::Instant,
     hover: Option<egui::Pos2>,
     scenario: String,
     initial_document: Document,
@@ -65,6 +70,21 @@ impl eframe::App for NativeCheck {
         // flag or focus the app's private text widget from the harness.
         if self.frames == 0 || (self.frames == 4 && !raw_input.focused) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        for event in &raw_input.events {
+            if matches!(
+                event,
+                egui::Event::WindowFocused(_)
+                    | egui::Event::Key {
+                        physical_key: Some(_),
+                        ..
+                    }
+            ) {
+                eprintln!(
+                    "Native focus/unscripted key at frame {}: {event:?}",
+                    self.script_frame
+                );
+            }
         }
         if self.frames < STARTUP_FRAMES {
             return;
@@ -123,6 +143,14 @@ impl eframe::App for NativeCheck {
         }
         self.app.show(ui);
         self.frames += 1;
+        if (self.scenario == "selection-1b" && self.script_frame == 2)
+            || (self.scenario == "marquee-1b" && self.script_frame == 3)
+        {
+            assert!(
+                self.app.editor.selection().is_empty(),
+                "Empty shape corner/clipped segment must not select a bounding box"
+            );
+        }
         // The click's release frame cannot focus a newly created TextEdit.
         // Inspect the placeholder only after two subsequent idle input frames.
         if self.script_frame == 10 && is_text_scenario(&self.scenario) {
@@ -214,14 +242,45 @@ impl eframe::App for NativeCheck {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         assert!(
-            self.frames < 240,
-            "Native scenario timed out waiting for window focus, input, or screenshot"
+            self.started.elapsed() < std::time::Duration::from_secs(10),
+            "Native scenario timed out: native_focused={}, script_started={}, script_frame={}, screenshot_requested={}",
+            ui.input(|i| i.focused),
+            self.script_started,
+            self.script_frame,
+            self.screenshot_requested
         );
-        ui.ctx().request_repaint();
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(16));
     }
 }
 
 impl NativeCheck {
+    fn save_1b_artifacts(&self) {
+        let folder = self.output.parent().unwrap();
+        let doc = &self.app.editor.document;
+        let path = folder.join("interaction.papercraft");
+        doc.save(&path).unwrap();
+        assert_eq!(Document::load(&path).unwrap(), *doc);
+        atomic_write(
+            &folder.join("interaction.png"),
+            &papercraft::render::export_png_region(doc, [-80.0, 0.0, 700.0, 500.0], 1.0).unwrap(),
+        )
+        .unwrap();
+        for (format, result) in [("html", doc.export_html()), ("svg", doc.export_svg())] {
+            match result {
+                Ok(text) => atomic_write(
+                    &folder.join(format!("interaction.{format}")),
+                    text.as_bytes(),
+                )
+                .unwrap(),
+                Err(message) => {
+                    assert!(message.contains("ancestor clipping"));
+                    println!("Expected {format} rejection: {message}");
+                }
+            }
+        }
+    }
+
     fn verify_scenario(&mut self, ctx: &egui::Context) {
         match self.scenario.as_str() {
             "offboard" => {
@@ -258,6 +317,28 @@ impl NativeCheck {
                 assert!(self.app.editor.document.nodes.is_empty());
                 self.app.editor.redo();
                 assert_eq!(self.app.editor.document, doc);
+            }
+            "selection-1b" | "marquee-1b" | "navigation-1b" => {
+                let ids: &[u64] = match self.scenario.as_str() {
+                    "selection-1b" => &[2],
+                    "marquee-1b" => &[8],
+                    _ => &[],
+                };
+                assert_eq!(self.app.editor.selection(), ids);
+                assert_eq!(self.app.editor.document, self.initial_document);
+                assert_eq!(self.app.editor.revision(), self.initial_revision);
+                assert!(!self.app.editor.can_undo());
+                self.save_1b_artifacts();
+            }
+            "creation-1b" => {
+                let n = self.app.editor.document.nodes.last().unwrap();
+                assert_eq!([n.x, n.y, n.width, n.height], [40.0, 30.0, 160.0, 90.0]);
+                let after = self.app.editor.document.clone();
+                self.app.editor.undo();
+                assert_eq!(self.app.editor.document, self.initial_document);
+                self.app.editor.redo();
+                assert_eq!(self.app.editor.document, after);
+                self.save_1b_artifacts();
             }
             "cancel" => {
                 assert_eq!(self.app.editor.document, self.initial_document);
@@ -550,7 +631,19 @@ fn main() -> eframe::Result {
     .unwrap();
     println!("Model create/edit/undo/redo/save/reopen/HTML+SVG export verified.");
     let themed = token_workflow(&directory);
-    let document = if scenario == "offboard" {
+    let document = if matches!(
+        scenario.as_str(),
+        "selection-1b" | "marquee-1b" | "navigation-1b"
+    ) {
+        selection_1b_document()
+    } else if scenario == "creation-1b" {
+        let mut editor = Editor::new(Document::default());
+        editor
+            .add_at(NodeKind::Rectangle, 200.0, 120.0, 100.0, 100.0)
+            .unwrap();
+        editor.document.nodes[0].locked = true;
+        editor.document
+    } else if scenario == "offboard" {
         Document::default()
     } else if matches!(
         scenario.as_str(),
@@ -596,16 +689,22 @@ fn main() -> eframe::Result {
         Document::load(&directory.join("starter.papercraft")).unwrap(),
         document
     );
-    atomic_write(
-        &directory.join("starter.html"),
-        document.export_html().unwrap().as_bytes(),
-    )
-    .expect("Cannot export starter HTML");
-    atomic_write(
-        &directory.join("starter.svg"),
-        document.export_svg().unwrap().as_bytes(),
-    )
-    .expect("Cannot export starter SVG");
+    for (format, result) in [
+        ("html", document.export_html()),
+        ("svg", document.export_svg()),
+    ] {
+        match result {
+            Ok(text) => atomic_write(
+                &directory.join(format!("starter.{format}")),
+                text.as_bytes(),
+            )
+            .expect("Cannot export starter"),
+            Err(message) if scenario.ends_with("-1b") => {
+                assert!(message.contains("ancestor clipping"))
+            }
+            Err(message) => panic!("Cannot export starter: {message}"),
+        }
+    }
     let output = if scenario == "editor" && args.len() < 3 {
         directory.join("papercraft-desktop.png")
     } else {
@@ -728,6 +827,7 @@ fn main() -> eframe::Result {
                 app,
                 output,
                 frames: 0,
+                started: std::time::Instant::now(),
                 hover,
                 scenario,
                 initial_document: document,
@@ -742,6 +842,101 @@ fn main() -> eframe::Result {
             }))
         }),
     )
+}
+
+fn selection_1b_document() -> Document {
+    let mut doc = Document {
+        nodes: vec![
+            Node {
+                id: 1,
+                x: -50.0,
+                y: 100.0,
+                radius: 40.0,
+                fill: [80, 140, 200, 255],
+                ..Node::default()
+            },
+            Node {
+                id: 2,
+                kind: NodeKind::Ellipse,
+                x: 120.0,
+                y: 100.0,
+                fill: [130, 100, 185, 255],
+                ..Node::default()
+            },
+            Node {
+                id: 3,
+                kind: NodeKind::Triangle,
+                x: 300.0,
+                y: 100.0,
+                fill: [230, 130, 70, 255],
+                ..Node::default()
+            },
+            Node {
+                id: 4,
+                x: 480.0,
+                y: 100.0,
+                fill: [0; 4],
+                stroke: Some([50, 140, 100, 255]),
+                stroke_width: 6.0,
+                ..Node::default()
+            },
+            Node {
+                id: 5,
+                kind: NodeKind::Path,
+                x: 140.0,
+                y: 300.0,
+                width: 220.0,
+                height: 140.0,
+                points: vec![[0.0, 0.0], [1.0, 1.0]],
+                fill: [0; 4],
+                stroke: Some([60, 110, 170, 255]),
+                stroke_width: 6.0,
+                ..Node::default()
+            },
+            Node {
+                id: 6,
+                kind: NodeKind::Frame,
+                x: -60.0,
+                y: 280.0,
+                width: 90.0,
+                height: 200.0,
+                clip: true,
+                fill: [0; 4],
+                ..Node::default()
+            },
+            Node {
+                id: 7,
+                kind: NodeKind::Frame,
+                parent: Some(6),
+                x: -60.0,
+                y: 280.0,
+                width: 70.0,
+                height: 200.0,
+                clip: true,
+                fill: [0; 4],
+                ..Node::default()
+            },
+            Node {
+                id: 8,
+                kind: NodeKind::Path,
+                parent: Some(7),
+                x: -60.0,
+                y: 280.0,
+                width: 200.0,
+                height: 200.0,
+                points: vec![[0.0, 0.0], [1.0, 1.0]],
+                fill: [0; 4],
+                stroke: Some([200, 80, 90, 255]),
+                stroke_width: 6.0,
+                ..Node::default()
+            },
+        ],
+        next_id: 9,
+        ..Document::default()
+    };
+    doc.normalize();
+    doc.validate().unwrap();
+    doc
 }
 
 fn print_usage() {
@@ -764,7 +959,7 @@ fn artboard_point(size: [f32; 2], document: &Document, x: f32, y: f32) -> egui::
     );
     let zoom = ((canvas.width() - 2.0 * papercraft::ui::SPACE_3XL) / document.width)
         .min((canvas.height() - 2.0 * papercraft::ui::SPACE_3XL) / document.height)
-        .clamp(0.05, 2.0);
+        .clamp(0.001, 2.0);
     let board = egui::vec2(document.width, document.height) * zoom;
     canvas.center() - board / 2.0 + egui::vec2(x, y) * zoom
 }
@@ -786,6 +981,83 @@ fn script(scenario: &str, size: [f32; 2], document: &Document) -> Vec<Vec<egui::
         modifiers: egui::Modifiers::NONE,
     };
     match scenario {
+        "selection-1b" => {
+            let corner = at(122.0, 102.0);
+            let center = at(170.0, 150.0);
+            let mut frames = vec![
+                vec![egui::Event::PointerMoved(corner), button(corner, true)],
+                vec![button(corner, false)],
+            ];
+            frames.extend(vec![vec![]; 20]);
+            frames.extend([
+                vec![egui::Event::PointerMoved(center), button(center, true)],
+                vec![button(center, false)],
+            ]);
+            frames
+        }
+        "marquee-1b" => {
+            let (a, b) = (at(-55.0, 380.0), at(0.0, 430.0));
+            let (c, d) = (at(-65.0, 270.0), at(-40.0, 310.0));
+            let mut frames = vec![
+                vec![egui::Event::PointerMoved(a), button(a, true)],
+                vec![egui::Event::PointerMoved(b)],
+                vec![button(b, false)],
+            ];
+            frames.extend(vec![vec![]; 20]);
+            frames.extend([
+                vec![egui::Event::PointerMoved(c), button(c, true)],
+                vec![egui::Event::PointerMoved(d)],
+                vec![button(d, false)],
+            ]);
+            frames
+        }
+        "creation-1b" => {
+            let (a, b) = (at(40.0, 30.0), at(197.0, 117.0));
+            vec![
+                vec![key(egui::Key::R, true)],
+                vec![key(egui::Key::R, false)],
+                vec![egui::Event::PointerMoved(a), button(a, true)],
+                vec![egui::Event::PointerMoved(at(180.0, 110.0))],
+                vec![egui::Event::PointerMoved(b), button(b, false)],
+            ]
+        }
+        "navigation-1b" => {
+            let a = at(100.0, 100.0);
+            let b = a + egui::vec2(60.0, 30.0);
+            let mut frames = vec![
+                vec![key(egui::Key::R, true)],
+                vec![key(egui::Key::R, false)],
+                vec![key(egui::Key::Space, true)],
+                vec![egui::Event::PointerMoved(a), button(a, true)],
+                vec![egui::Event::PointerMoved(a + egui::vec2(30.0, 15.0))],
+                vec![key(egui::Key::Space, false)],
+                vec![egui::Event::PointerMoved(b), button(b, false)],
+            ];
+            frames.push(vec![key(egui::Key::Escape, true)]);
+            frames.push(vec![key(egui::Key::Escape, false)]);
+            frames.push(vec![
+                egui::Event::ModifiersChanged(egui::Modifiers::SHIFT),
+                egui::Event::Key {
+                    key: egui::Key::Num0,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::SHIFT,
+                },
+            ]);
+            frames.push(vec![egui::Event::Key {
+                key: egui::Key::Num0,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: egui::Modifiers::SHIFT,
+            }]);
+            frames.push(vec![
+                egui::Event::PointerMoved(at(350.0, 250.0)),
+                egui::Event::Zoom(1.5),
+            ]);
+            frames
+        }
         "offboard" => {
             let focus = at(20.0, 20.0);
             let (start, end) = (at(-60.0, 100.0), at(-20.0, 160.0));

@@ -46,6 +46,12 @@ impl eframe::App for Check {
             assert_eq!(self.app.editor.document.nodes[1].text, "Your workspace");
             assert_eq!(self.app.editor.document.nodes[6].text, "Project settings");
             assert!(self.app.editor.can_undo());
+            assert_eq!(
+                self.app.editor.document.hit_test([-335.0, 375.0]),
+                Some(1),
+                "rounded button's empty corner passes through to frame"
+            );
+            assert_eq!(self.app.editor.document.hit_test([-200.0, 418.0]), Some(4));
             self.finished = true;
         } else if self.finished && self.fitted && !self.screenshot {
             ui.ctx()
@@ -146,6 +152,14 @@ fn client(binary: PathBuf, session: PathBuf, folder: PathBuf, send: mpsc::Sender
     let inspected: Value =
         serde_json::from_str(inspected["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(inspected["state"]["revision"], 1);
+    assert_eq!(
+        inspected["capabilities"]["canvas_interactions"]["creation_snapping"],
+        true
+    );
+    assert_eq!(
+        inspected["capabilities"]["selection_rules"]["pointer_stroke_tolerance_screen_points"],
+        5.0
+    );
     assert_eq!(inspected["layers"].as_array().unwrap().len(), 10);
     assert_eq!(
         inspected["content_bounds"],
@@ -172,7 +186,14 @@ fn client(binary: PathBuf, session: PathBuf, folder: PathBuf, send: mpsc::Sender
         tool("document_save", json!({"document_id":doc,"path":saved}))["isError"],
         false
     );
-    assert_eq!(Document::load(&saved).unwrap().nodes.len(), 10);
+    let reopened = Document::load(&saved).unwrap();
+    assert_eq!(reopened.nodes.len(), 10);
+    assert_eq!(reopened.hit_test([-335.0, 375.0]), Some(1));
+    assert_eq!(reopened.hit_test([-200.0, 418.0]), Some(4));
+    assert_eq!(
+        reopened.marquee_hits([-336.0, 374.0, -334.0, 376.0]),
+        vec![1]
+    );
     for name in ["document_undo", "document_redo"] {
         assert_eq!(tool(name, json!({"document_id":doc}))["isError"], false);
     }
