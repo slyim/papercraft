@@ -1,6 +1,6 @@
 [package]
 name = "papercraft"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "A local design canvas built in Rust and egui."
 repository = "https://github.com/slyim/papercraft"

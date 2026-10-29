@@ -6,19 +6,19 @@ An original, local design editor built entirely in Rust with egui/eframe and Pho
 
 ## Download
 
-The [PaperCraft v0.2.0 prerelease](https://github.com/slyim/papercraft/releases/tag/v0.2.0) includes platform installers and portable downloads. Rust and Node.js are not required.
+The [PaperCraft v0.3.0 prerelease](https://github.com/slyim/papercraft/releases/tag/v0.3.0) includes platform installers and portable downloads. Rust and Node.js are not required.
 
 | Platform | Downloads |
 |---|---|
-| Linux x86_64 | [Debian package](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-linux-x86_64.deb) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-linux-x86_64.tar.gz) |
-| Linux ARM64 | [Debian package](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-linux-arm64.deb) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-linux-arm64.tar.gz) |
-| Mac Apple Silicon | [DMG](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-macos-arm64.dmg) · [ZIP](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-macos-arm64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-macos-arm64.tar.gz) |
-| Mac Intel | [DMG](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-macos-x86_64.dmg) · [ZIP](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-macos-x86_64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-macos-x86_64.tar.gz) |
-| Windows x86_64 | [Setup installer](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-windows-x86_64-setup.exe) · [portable ZIP](https://github.com/slyim/papercraft/releases/download/v0.2.0/papercraft-0.2.0-windows-x86_64.zip) |
+| Linux x86_64 | [Debian package](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-linux-x86_64.deb) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-linux-x86_64.tar.gz) |
+| Linux ARM64 | [Debian package](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-linux-arm64.deb) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-linux-arm64.tar.gz) |
+| Mac Apple Silicon | [DMG](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-macos-arm64.dmg) · [ZIP](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-macos-arm64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-macos-arm64.tar.gz) |
+| Mac Intel | [DMG](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-macos-x86_64.dmg) · [ZIP](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-macos-x86_64.zip) · [tar.gz](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-macos-x86_64.tar.gz) |
+| Windows x86_64 | [Setup installer](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-windows-x86_64-setup.exe) · [portable ZIP](https://github.com/slyim/papercraft/releases/download/v0.3.0/papercraft-0.3.0-windows-x86_64.zip) |
 
-On macOS, open the DMG and drag `PaperCraft.app` to Applications. On Windows, run the per-user setup installer; administrator rights are unnecessary. On Debian/Ubuntu, install the matching package with `sudo apt install ./papercraft-0.2.0-linux-x86_64.deb` (use `arm64` on ARM). Portable archives remain available: extract and run the included app/executable. Linux requires glibc 2.35 or later, libxkbcommon-x11, a desktop session and OpenGL/EGL drivers; file dialogs use a desktop portal. macOS apps are ad-hoc signed and not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt. Windows builds and installers are unsigned.
+On macOS, open the DMG and drag `PaperCraft.app` to Applications. On Windows, run the per-user setup installer; administrator rights are unnecessary. On Debian/Ubuntu, install the matching package with `sudo apt install ./papercraft-0.3.0-linux-x86_64.deb` (use `arm64` on ARM). Portable archives remain available: extract and run the included app/executable. Linux requires glibc 2.35 or later, libxkbcommon-x11, a desktop session and OpenGL/EGL drivers; file dialogs use a desktop portal. macOS apps are ad-hoc signed and not notarized; macOS may require approval in System Settings → Privacy & Security after the first launch attempt. Windows builds and installers are unsigned.
 
-[SHA-256 checksums](https://github.com/slyim/papercraft/releases/download/v0.2.0/SHA256SUMS.txt) cover every installer and archive. This remains an early preview; native file-dialog and physical-input checks are incomplete. The [release workflow](docs/releasing.md) records build targets and packaging checks.
+[SHA-256 checksums](https://github.com/slyim/papercraft/releases/download/v0.3.0/SHA256SUMS.txt) cover every installer and archive. This remains an early preview; native file-dialog and physical-input checks are incomplete. The [release workflow](docs/releasing.md) records build targets and packaging checks.
 
 ## Run the editor
 
