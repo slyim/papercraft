@@ -22,7 +22,7 @@ pub const TEXT: Color32 = gray(236);
 pub const TEXT_DIM: Color32 = gray(161);
 pub const TEXT_FAINT: Color32 = gray(112);
 /// Selection outlines on the canvas and focus.
-pub const ACCENT: Color32 = Color32::from_rgb(134, 178, 255);
+pub const ACCENT: Color32 = Color32::from_rgb(255, 107, 43);
 
 // Layout scale. Every inset, gap and control size in the shell sits on a 4-point grid
 // and is normally one of these steps; 1-point hairlines are the only exception.

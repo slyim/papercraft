@@ -28,15 +28,16 @@ papercraft --help | --version
   "version": 2,
   "name": "…",
   "artboard": { "width": 960, "height": 640, "background": "#f8f7f3ff", "background_token": null,
-                "canvas": "#282828ff", "canvas_token": null },
+                "background_token_name": null, "canvas": "#282828ff", "canvas_token": null,
+                "canvas_token_name": null },
   "tokens": [{ "id": 1, "name": "ink", "value": "#291d35ff" }],
   "layers": [{ "index": 0, "id": 1, "name": "Surface", "kind": "rectangle", "x": 56, "y": 56,
                "width": 848, "height": 528, "fill": "#e2e9dcff", "fill_token": null,
-               "hidden": false, "locked": false, "radius": 20 }]
+               "fill_token_name": null, "hidden": false, "locked": false, "radius": 20 }]
 }
 ```
 
-Layers are in paint order (index 0 is the bottom). Colors are resolved `#rrggbbaa` values; `*_token` fields name bound token identifiers. Text layers carry `text` and `font_size` instead of `radius`. Keys are sorted, so repeated inspection of the same file is byte-identical. `version` is the lowest format version that represents the document.
+Layers are in paint order (index 0 is the bottom). `kind` is `"rectangle"`, `"ellipse"`, `"triangle"` or `"text"`. Colors are resolved `#rrggbbaa` values; `*_token` fields name bound token identifiers and `*_token_name` fields report the resolved token name. Rectangle layers carry `radius`; text layers carry `text`, `font_size`, `line_height`, `text_align`, `measured_width`, `measured_height`, `line_count` and `clipped` (whether the laid-out text exceeds `width` or `height`). Keys are sorted, so repeated inspection of the same file is byte-identical. `version` is the lowest format version that represents the document.
 
 ## PNG export
 
@@ -51,7 +52,7 @@ The editor's Export menu offers PNG at 1× and 2×.
 
 ## MCP server
 
-`papercraft mcp` speaks JSON-RPC 2.0 over newline-delimited stdin/stdout (MCP protocol `2025-06-18`): `initialize`, `ping`, `tools/list`, `tools/call`. Notifications receive no response. The server edits files on disk with the permissions of the user who starts it; it uses an isolated headless session. For shared GUI tabs use `papercraft mcp --live`; see [live MCP](live-mcp.md).
+`papercraft mcp` speaks JSON-RPC 2.0 over newline-delimited stdin/stdout (MCP protocol `2025-06-18`): `initialize`, `ping`, `tools/list`, `tools/call`. Notifications receive no response. When a PaperCraft editor window is open, `papercraft mcp` connects to its live session automatically; otherwise (or with `papercraft mcp --headless`) it serves an isolated headless session. Use `papercraft mcp --live` to require a live editor; see [live MCP](live-mcp.md).
 
 Register it with an MCP client, for example Claude Code:
 
@@ -74,19 +75,21 @@ claude mcp add papercraft -- /path/to/papercraft mcp
 | `document_save` | Validate and write atomically to the document's file or `path` |
 | `document_close` | Refuses unsaved changes unless `discard: true` |
 
-`document_save` also reports the written `version`, and `upgraded_from` when it raised the format version of the document's own file. Every successful result includes `state`: `document_id`, `path`, `revision`, `saved_revision`, `dirty`, `can_undo`, `can_redo`. `dirty` is `revision != saved_revision`, so undoing back to the saved state reports a clean document.
+`document_save` also reports the written `version`, and `upgraded_from` when it raised the format version of the document's own file. Every successful result includes `state`: `document_id`, `path`, `revision`, `saved_revision`, `dirty`, `can_undo`, `can_redo`, `selected_ids`. `dirty` is `revision != saved_revision`, so undoing back to the saved state reports a clean document.
 
 ### Batch operations
 
 `document_apply` takes `operations` (1–10,000) and optional `expected_revision`. Operations:
 
-- `create_rectangle`, `create_text`: `name`, `x`, `y`, `width`, `height`, `fill`, `fill_token`, `hidden`, `locked`, `index`; rectangles also `radius`, text also `text`, `font_size`, `line_height` (1–4096 or `null` for the font's spacing) and `text_align` (`left`, `center`, `right`).
-- `update_layer`: `id` plus any field above valid for its kind.
-- `delete_layers` `{ids}`, `move_layer` `{id, index}`.
+- `create_rectangle`, `create_ellipse`, `create_triangle`, `create_shape` (`shape`: `"rectangle"` | `"ellipse"` | `"triangle"`), `create_text`: `name`, `x`, `y`, `width`, `height`, `fill`, `fill_token`, `hidden`, `locked`, `index`; rectangles also `radius`; text also `text`, `font_size`, `line_height` (1–4096 or `null` for the font's spacing), `text_align` (`left`, `center`, `right`) and `fit_text` (`true` auto-sizes `height` to `ceil(measured_height)`).
+- `update_layer`: `id` plus any field above valid for its kind (and `shape` to swap a shape layer between `"rectangle"`, `"ellipse"` and `"triangle"`).
+- `delete_layers` `{ids}`, `move_layer` `{id, index}`, `select_layers` `{ids}` (empty array clears selection).
+- `align_layers` `{ids, align}` (`left`, `center`/`center_x`, `right`, `top`, `middle`/`center_y`, `bottom`) and `distribute_layers` `{ids, axis}` (`horizontal`, `vertical`).
+- `duplicate_layers` `{ids, offset_x?, offset_y?}` (defaults to +20, +20; selects the duplicates and reports their ids in `created`).
 - `set_artboard`: `name`, `width`, `height`, `background`, `background_token`, `canvas`, `canvas_token`.
-- `create_token` `{name, value}`, `update_token` `{id, name?, value?}`, `delete_token` `{id}` (bound properties keep the token's color).
+- `create_token` `{name, value}`, `update_token` `{id, name?, value?}`, `delete_token` `{id|name}` (bound properties keep the token's color).
 
-Colors are `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"` or `[r, g, b, a]`. A literal `fill` detaches a bound token; `fill_token: null` detaches and keeps the current color.
+Colors are `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"` or `[r, g, b, a]`. Token references (`fill_token`, `background_token`, `canvas_token`, `update_token.id`, `delete_token.id`) accept either a numeric token ID or a token name string (including tokens created earlier in the same batch). A literal `fill` detaches a bound token; `fill_token: null` detaches and keeps the current color.
 
 Rules:
 

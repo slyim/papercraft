@@ -58,7 +58,39 @@ fn is_one(value: &u64) -> bool {
 #[serde(rename_all = "snake_case")]
 pub enum NodeKind {
     Rectangle,
+    Ellipse,
+    Triangle,
     Text,
+}
+
+impl NodeKind {
+    pub fn is_shape(self) -> bool {
+        matches!(self, Self::Rectangle | Self::Ellipse | Self::Triangle)
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rectangle => "rectangle",
+            Self::Ellipse => "ellipse",
+            Self::Triangle => "triangle",
+            Self::Text => "text",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rectangle => "Rectangle",
+            Self::Ellipse => "Ellipse",
+            Self::Triangle => "Triangle",
+            Self::Text => "Text",
+        }
+    }
+    pub fn from_shape_name(s: &str) -> Option<Self> {
+        match s {
+            "rectangle" => Some(Self::Rectangle),
+            "ellipse" => Some(Self::Ellipse),
+            "triangle" => Some(Self::Triangle),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -124,9 +156,20 @@ impl TextAlign {
 pub const LINE_HEIGHT: std::ops::RangeInclusive<f32> = 1.0..=4096.0;
 
 impl Node {
-    /// Whether the layer uses a version 3 field.
+    /// Whether the layer uses a version 3 field or node kind.
     pub fn uses_v3(&self) -> bool {
-        self.line_height.is_some() || !self.text_align.is_left()
+        self.line_height.is_some()
+            || !self.text_align.is_left()
+            || matches!(self.kind, NodeKind::Ellipse | NodeKind::Triangle)
+    }
+
+    /// Changes the geometry of a shape layer. Only rectangles keep a corner radius.
+    pub fn set_shape(&mut self, kind: NodeKind) {
+        debug_assert!(self.kind.is_shape() && kind.is_shape());
+        self.kind = kind;
+        if kind != NodeKind::Rectangle {
+            self.radius = 0.0;
+        }
     }
 }
 
@@ -399,6 +442,169 @@ impl Document {
         self.tokens.iter().find(|t| t.id == id)
     }
 
+    /// Token whose name matches `name` case-insensitively, ignoring surrounding spaces.
+    pub fn token_by_name(&self, name: &str) -> Option<&ColorToken> {
+        let name = name.trim();
+        self.tokens
+            .iter()
+            .find(|t| t.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Aligns the visible, unlocked layers among `ids`. Two or more align to their shared
+    /// bounds; a single layer aligns to the artboard.
+    pub fn align_nodes(&mut self, ids: &[u64], align: Align) -> Result<(), String> {
+        for &id in ids {
+            if !self.nodes.iter().any(|n| n.id == id) {
+                return Err(format!("No layer {id}."));
+            }
+        }
+        let target_ids: IdSet = ids.iter().copied().collect();
+        let arrangeable: IdSet = self
+            .nodes
+            .iter()
+            .filter(|n| target_ids.contains(&n.id) && !n.hidden && !n.locked)
+            .map(|n| n.id)
+            .collect();
+        if arrangeable.is_empty() {
+            return Err("No unlocked visible layers to align.".into());
+        }
+        let reference = if arrangeable.len() == 1 {
+            [0.0, 0.0, self.width, self.height]
+        } else {
+            self.nodes
+                .iter()
+                .filter(|n| arrangeable.contains(&n.id))
+                .map(node_rect)
+                .reduce(|a, b| {
+                    [
+                        a[0].min(b[0]),
+                        a[1].min(b[1]),
+                        a[2].max(b[2]),
+                        a[3].max(b[3]),
+                    ]
+                })
+                .expect("two or more arrangeable layers")
+        };
+        for node in self
+            .nodes
+            .iter_mut()
+            .filter(|n| arrangeable.contains(&n.id))
+        {
+            match align {
+                Align::Left => node.x = reference[0],
+                Align::CenterX => node.x = (reference[0] + reference[2] - node.width) / 2.0,
+                Align::Right => node.x = reference[2] - node.width,
+                Align::Top => node.y = reference[1],
+                Align::CenterY => node.y = (reference[1] + reference[3] - node.height) / 2.0,
+                Align::Bottom => node.y = reference[3] - node.height,
+            }
+        }
+        Ok(())
+    }
+
+    /// Gives three or more visible, unlocked layers among `ids` equal gaps along `axis`.
+    /// The first and last layer along the axis stay in place.
+    pub fn distribute_nodes(&mut self, ids: &[u64], axis: Axis) -> Result<(), String> {
+        for &id in ids {
+            if !self.nodes.iter().any(|n| n.id == id) {
+                return Err(format!("No layer {id}."));
+            }
+        }
+        let target_ids: IdSet = ids.iter().copied().collect();
+        let arrangeable: IdSet = self
+            .nodes
+            .iter()
+            .filter(|n| target_ids.contains(&n.id) && !n.hidden && !n.locked)
+            .map(|n| n.id)
+            .collect();
+        if arrangeable.len() < 3 {
+            return Err("Distribute requires at least 3 unlocked visible layers.".into());
+        }
+        let horizontal = axis == Axis::Horizontal;
+        let extent = |n: &Node| {
+            if horizontal {
+                (n.x, n.width)
+            } else {
+                (n.y, n.height)
+            }
+        };
+        let mut items: Vec<(usize, f32, f32)> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| arrangeable.contains(&n.id))
+            .map(|(index, n)| {
+                let (start, size) = extent(n);
+                (index, start, size)
+            })
+            .collect();
+        items.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        let first = items[0].1;
+        let last = items.last().expect("three or more items");
+        let span = last.1 + last.2 - first;
+        let sizes: f32 = items.iter().map(|item| item.2).sum();
+        let gap = (span - sizes) / (items.len() - 1) as f32;
+        let mut position = first;
+        let count = items.len();
+        for (order, (index, _, size)) in items.into_iter().enumerate() {
+            let node = &mut self.nodes[index];
+            // The last layer keeps its position exactly.
+            if order + 1 < count {
+                if horizontal {
+                    node.x = position;
+                } else {
+                    node.y = position;
+                }
+            }
+            position += size + gap;
+        }
+        Ok(())
+    }
+
+    /// Copies the layers among `ids` above the existing layers, in paint order, offset by
+    /// `dx`, `dy`, and returns the new identifiers.
+    pub fn duplicate_nodes(&mut self, ids: &[u64], dx: f32, dy: f32) -> Result<Vec<u64>, String> {
+        if !dx.is_finite() || !dy.is_finite() {
+            return Err("Offset must be finite.".into());
+        }
+        for &id in ids {
+            if !self.nodes.iter().any(|n| n.id == id) {
+                return Err(format!("No layer {id}."));
+            }
+        }
+        let target_ids: IdSet = ids.iter().copied().collect();
+        let originals: Vec<Node> = self
+            .nodes
+            .iter()
+            .filter(|n| target_ids.contains(&n.id))
+            .cloned()
+            .collect();
+        if originals.is_empty() {
+            return Err("ids must not be empty.".into());
+        }
+        let next = self
+            .next_id
+            .checked_add(originals.len() as u64)
+            .ok_or("Layer identifiers are exhausted.")?;
+        let first = self.next_id;
+        let mut copies = Vec::with_capacity(originals.len());
+        for (offset, mut node) in originals.into_iter().enumerate() {
+            node.id = first + offset as u64;
+            node.x = (node.x + dx).clamp(-MAX_COORDINATE, MAX_COORDINATE);
+            node.y = (node.y + dy).clamp(-MAX_COORDINATE, MAX_COORDINATE);
+            let mut name_end = node.name.len().min(251);
+            while !node.name.is_char_boundary(name_end) {
+                name_end -= 1;
+            }
+            node.name.truncate(name_end);
+            node.name.push_str(" copy");
+            copies.push(node.id);
+            self.nodes.push(node);
+        }
+        self.next_id = next;
+        Ok(copies)
+    }
+
     /// Effective color of a literal and its optional binding. A missing token falls back
     /// to the literal; validation prevents saving such a reference.
     fn resolve(&self, literal: [u8; 4], binding: Option<u64>) -> [u8; 4] {
@@ -519,7 +725,8 @@ impl Document {
         }
         if self.version < 3 && self.nodes.iter().any(Node::uses_v3) {
             return Err(
-                "Version 1 and 2 documents cannot contain line height or text alignment.".into(),
+                "Version 1 and 2 documents cannot contain line height, text alignment, ellipses or triangles."
+                    .into(),
             );
         }
         if self.tokens.len() > MAX_TOKENS {
@@ -571,8 +778,16 @@ impl Document {
             {
                 return Err("Layer geometry contains an invalid or out-of-range number.".into());
             }
-            if node.kind != NodeKind::Text && node.uses_v3() {
-                return Err("Only text layers have line height and text alignment.".into());
+            if node.kind.is_shape() {
+                if !node.text.is_empty() {
+                    return Err("Shape layers cannot contain text.".into());
+                }
+                if node.line_height.is_some() || !node.text_align.is_left() {
+                    return Err("Only text layers have line height and text alignment.".into());
+                }
+                if node.kind != NodeKind::Rectangle && node.radius != 0.0 {
+                    return Err("Only rectangles have a corner radius.".into());
+                }
             }
             if node
                 .line_height
@@ -673,12 +888,14 @@ impl Document {
         );
         for node in self.nodes.iter().filter(|n| !n.hidden) {
             let style = format!(
-                "position:absolute;box-sizing:border-box;left:{}px;top:{}px;width:{}px;height:{}px;overflow:hidden;",
+                "position:absolute;box-sizing:border-box;overflow:hidden;left:{}px;top:{}px;width:{}px;height:{}px;",
                 node.x, node.y, node.width, node.height
             );
             let fill = self.css_value(node.fill, node.fill_token);
             match node.kind {
                 NodeKind::Rectangle => html.push_str(&format!("<div aria-label=\"{}\" style=\"{style}background:{fill};border-radius:{}px\"></div>\n", escape(&node.name), node.radius)),
+                NodeKind::Ellipse => html.push_str(&format!("<div class=\"layer ellipse\" aria-label=\"{}\" style=\"{style}background:{fill};border-radius:50%;\"></div>\n", escape(&node.name))),
+                NodeKind::Triangle => html.push_str(&format!("<div class=\"layer triangle\" aria-label=\"{}\" style=\"{style}background:{fill};clip-path:polygon(50% 0%,100% 100%,0% 100%);\"></div>\n", escape(&node.name))),
                 NodeKind::Text => {
                     let line_height = node.line_height.map_or("1.2".into(), |h| format!("{h}px"));
                     let align = match node.text_align {
@@ -729,6 +946,24 @@ impl Document {
                     node.width,
                     node.height,
                     node.radius.min(node.width.min(node.height) / 2.0),
+                    svg_fill(self.node_fill(node))
+                )),
+                NodeKind::Ellipse => svg.push_str(&format!(
+                    "<ellipse {label} cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\" {}/>\n",
+                    node.x + node.width / 2.0,
+                    node.y + node.height / 2.0,
+                    node.width / 2.0,
+                    node.height / 2.0,
+                    svg_fill(self.node_fill(node))
+                )),
+                NodeKind::Triangle => svg.push_str(&format!(
+                    "<polygon {label} points=\"{},{} {},{} {},{}\" {}/>\n",
+                    node.x + node.width / 2.0,
+                    node.y,
+                    node.x + node.width,
+                    node.y + node.height,
+                    node.x,
+                    node.y + node.height,
                     svg_fill(self.node_fill(node))
                 )),
                 NodeKind::Text => {
@@ -1062,11 +1297,7 @@ impl Editor {
             .filter(|token| text && self.document.token(*token).is_some());
         self.document.nodes.push(Node {
             id,
-            name: match kind {
-                NodeKind::Rectangle => "Rectangle",
-                NodeKind::Text => "Text",
-            }
-            .into(),
+            name: kind.label().into(),
             kind,
             x: clamp_coordinate(x),
             y: clamp_coordinate(y),
@@ -1107,42 +1338,39 @@ impl Editor {
     /// Duplicates every selected unlocked layer above the current layers, in their
     /// existing order, offset by 20 units, and selects the copies. One history step.
     pub fn duplicate(&mut self) -> Result<(), String> {
-        let originals: Vec<Node> = self
+        let ids: Vec<u64> = self
             .document
             .nodes
             .iter()
             .filter(|n| self.is_selected(n.id) && !n.locked)
-            .cloned()
+            .map(|n| n.id)
             .collect();
-        if originals.is_empty() {
+        if ids.is_empty() {
             return Ok(());
         }
-        let next = self
-            .document
-            .next_id
-            .checked_add(originals.len() as u64)
-            .ok_or("Layer identifiers are exhausted.")?;
-        let first = self.document.next_id;
-        let copies = self.transaction(|doc| {
-            let mut copies = Vec::new();
-            for (offset, mut node) in originals.into_iter().enumerate() {
-                node.id = first + offset as u64;
-                node.x = (node.x + 20.0).min(MAX_COORDINATE);
-                node.y = (node.y + 20.0).min(MAX_COORDINATE);
-                let mut name_end = node.name.len().min(251);
-                while !node.name.is_char_boundary(name_end) {
-                    name_end -= 1;
-                }
-                node.name.truncate(name_end);
-                node.name.push_str(" copy");
-                copies.push(node.id);
-                doc.nodes.push(node);
-            }
-            doc.next_id = next;
-            copies
-        })?;
+        let copies = self.apply(|doc| doc.duplicate_nodes(&ids, 20.0, 20.0))?;
         self.set_selection(copies);
         Ok(())
+    }
+
+    /// Changes shape layer `id` to `kind` as one history step. Leaving the rectangle
+    /// kind clears the corner radius.
+    pub fn set_shape(&mut self, id: u64, kind: NodeKind) -> Result<(), String> {
+        self.apply(|doc| {
+            let node = doc
+                .nodes
+                .iter_mut()
+                .find(|n| n.id == id)
+                .ok_or_else(|| format!("No layer {id}."))?;
+            if !node.kind.is_shape() || !kind.is_shape() {
+                return Err("Only shape layers can change shape.".into());
+            }
+            if node.locked {
+                return Err("Unlock the layer to change its shape.".into());
+            }
+            node.set_shape(kind);
+            Ok(())
+        })
     }
 
     /// Moves the single selected unlocked layer one step in paint order.
@@ -1205,77 +1433,22 @@ impl Editor {
     /// Aligns the arrangeable selection. Two or more layers align to their shared
     /// bounds; a single layer aligns to the artboard. One step.
     pub fn align(&mut self, align: Align) -> Result<(), String> {
-        let ids: IdSet = self.arrangeable().into_iter().collect();
-        let reference = match ids.len() {
-            0 => return Ok(()),
-            1 => [0.0, 0.0, self.document.width, self.document.height],
-            _ => self
-                .selection_bounds()
-                .expect("non-empty selection has bounds"),
-        };
-        self.transaction(|doc| {
-            for node in doc.nodes.iter_mut().filter(|n| ids.contains(&n.id)) {
-                match align {
-                    Align::Left => node.x = reference[0],
-                    Align::CenterX => node.x = (reference[0] + reference[2] - node.width) / 2.0,
-                    Align::Right => node.x = reference[2] - node.width,
-                    Align::Top => node.y = reference[1],
-                    Align::CenterY => node.y = (reference[1] + reference[3] - node.height) / 2.0,
-                    Align::Bottom => node.y = reference[3] - node.height,
-                }
-            }
-        })
+        let ids = self.arrangeable();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.apply(|doc| doc.align_nodes(&ids, align))
     }
 
     /// Gives three or more arrangeable layers equal gaps along `axis`. Layers are ordered
     /// by their leading edge (paint order breaks ties); the first and last stay in place.
     /// Overlapping layers can produce negative gaps. One step.
     pub fn distribute(&mut self, axis: Axis) -> Result<(), String> {
-        let ids: IdSet = self.arrangeable().into_iter().collect();
+        let ids = self.arrangeable();
         if ids.len() < 3 {
             return Ok(());
         }
-        let horizontal = axis == Axis::Horizontal;
-        let extent = |n: &Node| {
-            if horizontal {
-                (n.x, n.width)
-            } else {
-                (n.y, n.height)
-            }
-        };
-        let mut items: Vec<(usize, f32, f32)> = self
-            .document
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(_, n)| ids.contains(&n.id))
-            .map(|(index, n)| {
-                let (start, size) = extent(n);
-                (index, start, size)
-            })
-            .collect();
-        items.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-        let first = items[0].1;
-        let last = items.last().expect("three or more items");
-        let span = last.1 + last.2 - first;
-        let sizes: f32 = items.iter().map(|item| item.2).sum();
-        let gap = (span - sizes) / (items.len() - 1) as f32;
-        self.transaction(|doc| {
-            let mut position = first;
-            let count = items.len();
-            for (order, (index, _, size)) in items.into_iter().enumerate() {
-                let node = &mut doc.nodes[index];
-                // The last layer keeps its position exactly.
-                if order + 1 < count {
-                    if horizontal {
-                        node.x = position;
-                    } else {
-                        node.y = position;
-                    }
-                }
-                position += size + gap;
-            }
-        })
+        self.apply(|doc| doc.distribute_nodes(&ids, axis))
     }
 
     // Color tokens. Each operation is one history step.

@@ -390,7 +390,7 @@ impl PaperCraftApp {
             v.extreme_bg_color = Color32::from_rgb(30, 30, 30);
             v.faint_bg_color = Color32::from_rgb(46, 46, 46);
             v.override_text_color = None;
-            v.selection.bg_fill = Color32::from_rgb(54, 77, 113);
+            v.selection.bg_fill = Color32::from_rgb(92, 48, 30);
             v.selection.stroke = Stroke::new(1.0, ACCENT);
             v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
             v.widgets.noninteractive.fg_stroke.color = TEXT;
@@ -430,10 +430,15 @@ impl PaperCraftApp {
         if let Some(path) = std::env::args_os().nth(1) {
             app.open_path(PathBuf::from(path));
         }
-        match crate::live::directory()
-            .and_then(|dir| crate::live::Host::start(cc.egui_ctx.clone(), &dir))
-        {
-            Ok(host) => app.live = Some(host),
+        match crate::live::Host::start_default(cc.egui_ctx.clone()) {
+            Ok(host) => {
+                app.live = Some(host);
+                if app.status == "Starter document · local and editable" {
+                    app.status = "Starter document · Live MCP ready".into();
+                } else if app.status == "Document opened" {
+                    app.status = "Document opened · Live MCP ready".into();
+                }
+            }
             Err(error) => app.status = format!("Live MCP unavailable: {error}"),
         }
         app
@@ -1358,9 +1363,10 @@ impl PaperCraftApp {
                 ui.set_max_width(400.0);
                 ui.label(RichText::new("Save this file in the new format?").size(16.0));
                 let message = if self.editor.document.required_version() >= 3 {
-                    "Line height and text alignment need document format version 3. Earlier \
-                     builds, including the published v0.1.3, cannot open it. Saving as a new \
-                     file keeps the original unchanged."
+                    "Line height, text alignment, ellipses and triangles need document \
+                     format version 3. Builds before v0.2.0 cannot open it, and v0.2.0 \
+                     cannot open ellipses or triangles. Saving as a new file keeps the \
+                     original unchanged."
                 } else {
                     "Color tokens need document format version 2. Earlier builds, including \
                      the published v0.1.1, cannot open it. Saving as a new file keeps \
@@ -1565,10 +1571,8 @@ impl PaperCraftApp {
             });
     }
 
-    fn file_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        if let Some(host) = &self.live
-            && ui.button("Copy live MCP command").clicked()
-        {
+    pub(super) fn copy_live_mcp_command(&mut self, ctx: &egui::Context) {
+        if let Some(host) = &self.live {
             let executable =
                 std::env::current_exe().unwrap_or_else(|_| PathBuf::from("papercraft"));
             ctx.copy_text(format!(
@@ -1577,6 +1581,12 @@ impl PaperCraftApp {
                 host.path().display()
             ));
             self.status = "Live MCP command copied".into();
+        }
+    }
+
+    fn file_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if self.live.is_some() && ui.button("Copy live MCP command").clicked() {
+            self.copy_live_mcp_command(ctx);
             ui.close();
         }
         ui.set_min_width(220.0);
@@ -1763,10 +1773,11 @@ impl PaperCraftApp {
                     response.widget_info(|| {
                         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, &name)
                     });
-                    let glyph = if kind == NodeKind::Text {
-                        icon::TEXT_AA
-                    } else {
-                        icon::SQUARE
+                    let glyph = match kind {
+                        NodeKind::Rectangle => icon::SQUARE,
+                        NodeKind::Ellipse => icon::CIRCLE,
+                        NodeKind::Triangle => icon::TRIANGLE,
+                        NodeKind::Text => icon::TEXT_T,
                     };
                     if self.rename_row(ui, id, rect, &response, glyph, selected) {
                         continue;
@@ -2272,6 +2283,7 @@ impl PaperCraftApp {
         let mut finish = false;
         let mut choice = None;
         let mut toggle_hidden = false;
+        let mut shape_kind = None;
         let tokens = self.editor.document.tokens.clone();
         // TextEdit sizes its text from `margin`, so the frame margin must match it.
         let text_margin = egui::Margin::symmetric(8, 4);
@@ -2454,37 +2466,62 @@ impl PaperCraftApp {
                             .on_hover_text("Text content")
                             .lost_focus();
                     });
-                } else {
-                    let heading = inspector_heading(ui, "Radius", true, false);
-                    ui::icon_button_at(
-                        ui,
-                        heading_slot(heading.rect, 0),
-                        egui::Id::new("radius_corners"),
-                        icon::FRAME_CORNERS,
-                        16.0,
-                        false,
-                        false,
-                        "Independent corners are not available yet",
-                    );
+                } else if kind.is_shape() {
+                    inspector_heading(ui, "Shape", true, false);
                     inspector_body(ui, |ui| {
-                        let third = ((ui.available_width() - 2.0 * SPACE_S) / 3.0 / SPACE_XS)
-                            .floor()
-                            * SPACE_XS;
-                        let max = (node.width.min(node.height) / 2.0).floor().max(0.0);
-                        ui.horizontal(|ui| {
-                            let r = ui::slider(
-                                ui,
-                                &mut node.radius,
-                                max,
-                                third * 2.0 + 8.0,
-                                "Corner radius",
-                            );
-                            finish |= r.drag_stopped() || r.clicked();
-                            let r =
-                                ui::number_field(ui, "", &mut node.radius, 0.0..=100_000.0, third);
-                            finish |= r.drag_stopped() || r.lost_focus();
-                        });
+                        let shapes = [
+                            (NodeKind::Rectangle, icon::SQUARE, "Rectangle"),
+                            (NodeKind::Ellipse, icon::CIRCLE, "Ellipse"),
+                            (NodeKind::Triangle, icon::TRIANGLE, "Triangle"),
+                        ];
+                        let items = shapes.map(|(_, glyph, label)| (glyph, label));
+                        let current = shapes.iter().position(|(k, _, _)| *k == kind);
+                        if let Some(chosen) =
+                            ui::segmented_choice(ui, ui.available_width(), &items, current, !locked)
+                        {
+                            let next = shapes[chosen].0;
+                            if next != kind {
+                                shape_kind = Some((id, next));
+                            }
+                        }
                     });
+                    if kind == NodeKind::Rectangle {
+                        let heading = inspector_heading(ui, "Radius", true, false);
+                        ui::icon_button_at(
+                            ui,
+                            heading_slot(heading.rect, 0),
+                            egui::Id::new("radius_corners"),
+                            icon::FRAME_CORNERS,
+                            16.0,
+                            false,
+                            false,
+                            "Independent corners are not available yet",
+                        );
+                        inspector_body(ui, |ui| {
+                            let third = ((ui.available_width() - 2.0 * SPACE_S) / 3.0 / SPACE_XS)
+                                .floor()
+                                * SPACE_XS;
+                            let max = (node.width.min(node.height) / 2.0).floor().max(0.0);
+                            ui.horizontal(|ui| {
+                                let r = ui::slider(
+                                    ui,
+                                    &mut node.radius,
+                                    max,
+                                    third * 2.0 + 8.0,
+                                    "Corner radius",
+                                );
+                                finish |= r.drag_stopped() || r.clicked();
+                                let r = ui::number_field(
+                                    ui,
+                                    "",
+                                    &mut node.radius,
+                                    0.0..=100_000.0,
+                                    third,
+                                );
+                                finish |= r.drag_stopped() || r.lost_focus();
+                            });
+                        });
+                    }
                 }
             });
             // Visibility stays available on locked layers, as in the layer list.
@@ -2676,6 +2713,11 @@ impl PaperCraftApp {
         if toggle_hidden {
             self.flush_properties();
             let result = self.editor.toggle_hidden();
+            self.result(result);
+        }
+        if let Some((id, next_kind)) = shape_kind {
+            self.flush_properties();
+            let result = self.editor.set_shape(id, next_kind);
             self.result(result);
         }
         if count == 0 {
@@ -3025,6 +3067,56 @@ impl PaperCraftApp {
                 vec2(n.width, n.height) * self.zoom,
             )
         };
+        let ppp = ui.ctx().pixels_per_point();
+        let snap = |v: f32| (v * ppp).round() / ppp;
+        let zoom = self.zoom;
+        let to_screen = move |frame: Frame| {
+            Rect::from_min_max(
+                origin + vec2(frame[0], frame[1]) * zoom,
+                origin + vec2(frame[2], frame[3]) * zoom,
+            )
+        };
+        let target = self.resize_target();
+        // Hover previews what a click would select, so it is hidden while the pointer is
+        // on a resize handle, during gestures and while text is edited in place.
+        if response.hovered()
+            && !panning
+            && self.tool == Tool::Select
+            && self.drag.is_none()
+            && self.marquee.is_none()
+            && self.text_edit.is_none()
+            && let Some(pointer) = ui.input(|i| i.pointer.hover_pos())
+            && artboard.contains(pointer)
+            && !target
+                .as_ref()
+                .is_some_and(|(frame, _)| handle_at(to_screen(*frame), pointer).is_some())
+        {
+            let point = ((pointer - origin) / self.zoom).to_pos2();
+            if let Some(hovered) = self
+                .editor
+                .document
+                .nodes
+                .iter()
+                .rev()
+                .find(|n| {
+                    !n.hidden
+                        && !n.locked
+                        && Rect::from_min_size(pos2(n.x, n.y), vec2(n.width, n.height))
+                            .contains(point)
+                })
+                .filter(|n| !self.editor.is_selected(n.id))
+            {
+                let rect = screen(hovered);
+                if rect.intersects(canvas) {
+                    painter.add(outline_mesh(
+                        std::iter::once(rect),
+                        1.0,
+                        ACCENT.gamma_multiply(0.55),
+                        ppp,
+                    ));
+                }
+            }
+        }
         let multiple = self.editor.selection().len() > 1;
         let outlines = self
             .editor
@@ -3038,7 +3130,7 @@ impl PaperCraftApp {
             outlines,
             if multiple { 1.0 } else { 1.5 },
             ACCENT,
-            ui.ctx().pixels_per_point(),
+            ppp,
         ));
         if multiple && let Some([left, top, right, bottom]) = self.editor.selection_bounds() {
             let bounds = Rect::from_min_max(
@@ -3052,30 +3144,34 @@ impl PaperCraftApp {
                 Stroke::new(1.0, ACCENT.gamma_multiply(0.7)),
                 StrokeKind::Outside,
             );
-            painter.text(
-                bounds.center_bottom() + vec2(0.0, SPACE_L),
-                Align2::CENTER_CENTER,
-                format!("{:.0} × {:.0}", right - left, bottom - top),
-                FontId::proportional(CAPTION),
-                ACCENT,
-            );
+            paint_dimension_pill(&painter, bounds, canvas, right - left, bottom - top);
         }
-        let zoom = self.zoom;
-        let to_screen = move |frame: Frame| {
-            Rect::from_min_max(
-                origin + vec2(frame[0], frame[1]) * zoom,
-                origin + vec2(frame[2], frame[3]) * zoom,
-            )
-        };
-        let target = self.resize_target();
         if let Some((frame, _)) = &target {
             let rect = to_screen(*frame);
+            if rect.width() >= 32.0 && rect.height() >= 32.0 {
+                for handle in Handle::ALL.iter().filter(|h| !h.is_corner()) {
+                    let [x, y] = handle.point(*frame);
+                    let raw = origin + vec2(x, y) * self.zoom;
+                    let center = pos2(snap(raw.x), snap(raw.y));
+                    let square = Rect::from_center_size(center, vec2(5.0, 5.0));
+                    let radius = egui::CornerRadius::same(1);
+                    painter.rect_filled(square, radius, Color32::WHITE);
+                    painter.rect_stroke(
+                        square,
+                        radius,
+                        Stroke::new(1.5, ACCENT),
+                        StrokeKind::Inside,
+                    );
+                }
+            }
             for handle in Handle::ALL.iter().filter(|h| h.is_corner()) {
                 let [x, y] = handle.point(*frame);
-                let center = origin + vec2(x, y) * self.zoom;
-                let square = Rect::from_center_size(center, vec2(SPACE_S, SPACE_S));
-                painter.rect_filled(square, 1.0, SHELL);
-                painter.rect_stroke(square, 1.0, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
+                let raw = origin + vec2(x, y) * self.zoom;
+                let center = pos2(snap(raw.x), snap(raw.y));
+                let square = Rect::from_center_size(center, vec2(7.0, 7.0));
+                let radius = egui::CornerRadius::same(2);
+                painter.rect_filled(square, radius, Color32::WHITE);
+                painter.rect_stroke(square, radius, Stroke::new(1.5, ACCENT), StrokeKind::Inside);
             }
             if self.tool == Tool::Select
                 && response.hovered()
@@ -3087,13 +3183,7 @@ impl PaperCraftApp {
                 ui.ctx().set_cursor_icon(resize_cursor(handle));
             }
             if let Some(node) = self.editor.selected_node() {
-                painter.text(
-                    rect.center_bottom() + vec2(0.0, SPACE_L),
-                    Align2::CENTER_CENTER,
-                    format!("{:.0} × {:.0}", node.width, node.height),
-                    FontId::proportional(CAPTION),
-                    ACCENT,
-                );
+                paint_dimension_pill(&painter, rect, canvas, node.width, node.height);
             }
         }
         let to_document = move |p: Pos2| ((p - origin) / zoom).to_pos2();
@@ -3143,7 +3233,7 @@ impl PaperCraftApp {
                 self.flush_properties();
                 self.set_tool(Tool::Select);
                 match kind {
-                    NodeKind::Rectangle => {
+                    NodeKind::Rectangle | NodeKind::Ellipse | NodeKind::Triangle => {
                         let rect = rect.unwrap_or(Rect::from_min_size(at, CLICK_SIZE));
                         let result = self.editor.add_at(
                             kind,
@@ -3515,9 +3605,47 @@ fn paint_guides(painter: &Painter, guides: &[Guide], origin: Pos2, zoom: f32) {
     }
 }
 
-/// Outside outlines of axis-aligned rectangles as one mesh. Large selections would
-/// otherwise tessellate one anti-aliased stroke per layer every frame. Edges snap to
-/// physical pixels, so the outlines stay crisp without feathering.
+/// Gap between the selection bounds and the dimension pill. It clears the 5-point
+/// edge-midpoint and 7-point corner handles, which extend at most 3.5 points past the
+/// bounds.
+const PILL_GAP: f32 = 10.0;
+
+/// Position of a `size` dimension pill for selection `bounds`: centered below them,
+/// or above them when the canvas has no room below, and clamped inside `canvas`.
+fn dimension_pill_rect(bounds: Rect, canvas: Rect, size: Vec2) -> Rect {
+    let safe = canvas.shrink(4.0);
+    let max_x = (safe.right() - size.x).max(safe.left());
+    let max_y = (safe.bottom() - size.y).max(safe.top());
+    let x = (bounds.center().x - size.x * 0.5).clamp(safe.left(), max_x);
+    let below = bounds.bottom() + PILL_GAP;
+    let above = bounds.top() - PILL_GAP - size.y;
+    let y = if below <= max_y {
+        below
+    } else if above >= safe.top() {
+        above
+    } else {
+        below.clamp(safe.top(), max_y)
+    };
+    Rect::from_min_size(pos2(x, y), size)
+}
+
+/// Filled accent pill showing the selection's `width × height` in artboard units.
+fn paint_dimension_pill(painter: &Painter, bounds: Rect, canvas: Rect, width: f32, height: f32) {
+    let text = format!("{width:.0} × {height:.0}");
+    let galley = painter.layout_no_wrap(text, FontId::proportional(CAPTION), Color32::WHITE);
+    let size = galley.size() + vec2(6.0, 2.0) * 2.0;
+    let pill_rect = dimension_pill_rect(bounds, canvas, size);
+    painter.rect_filled(pill_rect, egui::CornerRadius::same(4), ACCENT);
+    painter.galley(
+        pill_rect.center() - galley.size() * 0.5,
+        galley,
+        Color32::WHITE,
+    );
+}
+
+/// Outlines of axis-aligned rectangles as one mesh, straddling the snapped boundary.
+/// Large selections would otherwise tessellate one anti-aliased stroke per layer every
+/// frame. Edges snap to physical pixels, so the outlines stay crisp without feathering.
 fn outline_mesh(
     rects: impl Iterator<Item = Rect>,
     width: f32,
@@ -3525,25 +3653,39 @@ fn outline_mesh(
     pixels_per_point: f32,
 ) -> egui::Mesh {
     let snap = |v: f32| (v * pixels_per_point).round() / pixels_per_point;
+    let half = width * 0.5;
     let mut mesh = egui::Mesh::default();
     let mut quad = |min: Pos2, max: Pos2| {
-        mesh.add_colored_rect(Rect::from_min_max(min, max), color);
+        if min.x < max.x && min.y < max.y {
+            mesh.add_colored_rect(Rect::from_min_max(min, max), color);
+        }
     };
     for rect in rects {
         let inner = Rect::from_min_max(
             pos2(snap(rect.min.x), snap(rect.min.y)),
             pos2(snap(rect.max.x), snap(rect.max.y)),
         );
-        let outer = inner.expand(width);
-        quad(outer.min, pos2(outer.max.x, inner.min.y));
-        quad(pos2(outer.min.x, inner.max.y), outer.max);
+        let outer = inner.expand(half);
+        let center = inner.center();
+        let inner_edge = Rect::from_min_max(
+            pos2(
+                (inner.min.x + half).min(center.x),
+                (inner.min.y + half).min(center.y),
+            ),
+            pos2(
+                (inner.max.x - half).max(center.x),
+                (inner.max.y - half).max(center.y),
+            ),
+        );
+        quad(outer.min, pos2(outer.max.x, inner_edge.min.y));
+        quad(pos2(outer.min.x, inner_edge.max.y), outer.max);
         quad(
-            pos2(outer.min.x, inner.min.y),
-            pos2(inner.min.x, inner.max.y),
+            pos2(outer.min.x, inner_edge.min.y),
+            pos2(inner_edge.min.x, inner_edge.max.y),
         );
         quad(
-            pos2(inner.max.x, inner.min.y),
-            pos2(outer.max.x, inner.max.y),
+            pos2(inner_edge.max.x, inner_edge.min.y),
+            pos2(outer.max.x, inner_edge.max.y),
         );
     }
     mesh
@@ -4008,6 +4150,85 @@ impl eframe::App for PaperCraftApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dimension_pill_clears_the_bottom_handle_and_stays_on_canvas() {
+        let canvas = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let size = vec2(60.0, 16.0);
+        // The bottom-middle handle is 5×5 points centered on the bottom edge.
+        let handle_bottom = |bounds: Rect| bounds.bottom() + 2.5;
+
+        let bounds = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
+        let pill = dimension_pill_rect(bounds, canvas, size);
+        assert!(pill.top() > handle_bottom(bounds));
+        assert!(pill.center().y - bounds.bottom() >= 12.0);
+        assert_eq!(pill.center().x, bounds.center().x);
+
+        // Near the canvas bottom the pill moves above the selection instead of
+        // being clamped onto its bottom handle.
+        let low = Rect::from_min_max(pos2(100.0, 450.0), pos2(300.0, 590.0));
+        let pill = dimension_pill_rect(low, canvas, size);
+        assert!(canvas.shrink(4.0).contains_rect(pill));
+        assert!(pill.bottom() <= low.top() - PILL_GAP + 0.001);
+
+        // Taller than the canvas: clamped inside it.
+        let tall = Rect::from_min_max(pos2(-50.0, -20.0), pos2(900.0, 700.0));
+        let pill = dimension_pill_rect(tall, canvas, size);
+        assert!(canvas.shrink(4.0).contains_rect(pill));
+    }
+
+    #[test]
+    fn inspector_shape_switch_clears_radius_and_upgrades_format() {
+        let mut document = Document::default();
+        document.nodes.clear();
+        let mut app = PaperCraftApp::from_document(document);
+        app.editor.add(NodeKind::Rectangle).unwrap();
+        let id = app.editor.selected().unwrap();
+        app.editor
+            .apply(|doc| {
+                doc.nodes[0].radius = 12.0;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(app.editor.document.required_version(), 1);
+        for kind in [NodeKind::Ellipse, NodeKind::Triangle] {
+            app.editor.set_shape(id, kind).unwrap();
+            let node = &app.editor.document.nodes[0];
+            assert_eq!((node.kind, node.radius), (kind, 0.0));
+            assert_eq!(app.editor.document.version, 3);
+        }
+        app.editor.set_shape(id, NodeKind::Rectangle).unwrap();
+        assert_eq!(app.editor.document.version, 1);
+        app.editor.undo();
+        assert_eq!(app.editor.document.nodes[0].kind, NodeKind::Triangle);
+    }
+
+    #[test]
+    fn saving_a_new_shape_in_place_asks_before_upgrading() {
+        let dir = tempfile::tempdir().unwrap();
+        for version in [1, 2] {
+            let path = dir.path().join(format!("v{version}.papercraft"));
+            let mut document = Document::example();
+            if version == 2 {
+                document.tokens.push(ColorToken {
+                    id: 1,
+                    name: "ink".into(),
+                    value: [30, 52, 40, 255],
+                });
+                document.next_token_id = 2;
+                document.normalize();
+            }
+            document.save(&path).unwrap();
+            let mut app = PaperCraftApp::from_document(Document::default());
+            app.open_path(path.clone());
+            assert_eq!(app.file_version, version);
+            let before = std::fs::read(&path).unwrap();
+            app.editor.add(NodeKind::Ellipse).unwrap();
+            assert!(!app.save_document(false));
+            assert!(app.upgrade_prompt, "v{version} file needs confirmation");
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+    }
 
     #[test]
     fn live_requests_cannot_interrupt_a_local_draft() {

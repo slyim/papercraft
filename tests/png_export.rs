@@ -170,3 +170,30 @@ fn png_bytes_are_a_valid_rgba_image() {
     assert_eq!((info.width, info.height), (40, 20));
     assert_eq!(info.color_type, png::ColorType::Rgba);
 }
+
+#[test]
+fn ellipse_and_triangle_shapes_rasterize_inside_their_bounds() {
+    let mut ellipse = rect(1, 0.0, 0.0, 20.0, 20.0, [255, 0, 0, 255]);
+    ellipse.kind = NodeKind::Ellipse;
+    let mut triangle = rect(2, 20.0, 0.0, 20.0, 20.0, [0, 0, 255, 255]);
+    triangle.kind = NodeKind::Triangle;
+    let mut doc = document(vec![ellipse, triangle]);
+    doc.normalize();
+    let raster = rasterize(&doc, 1.0).unwrap();
+    assert_eq!(pixel(&raster, 10, 10), [255, 0, 0, 255], "ellipse center");
+    assert_eq!(
+        pixel(&raster, 0, 0),
+        [255, 255, 255, 255],
+        "ellipse exterior corner"
+    );
+    assert_eq!(
+        pixel(&raster, 30, 15),
+        [0, 0, 255, 255],
+        "triangle interior"
+    );
+    assert_eq!(
+        pixel(&raster, 21, 1),
+        [255, 255, 255, 255],
+        "triangle exterior top-left"
+    );
+}

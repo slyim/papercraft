@@ -1,0 +1,1059 @@
+{
+  "version": 3,
+  "name": "PaperCraft × Antigravity Studio",
+  "width": 1120.0,
+  "height": 720.0,
+  "background": [
+    246,
+    243,
+    236,
+    255
+  ],
+  "canvas": [
+    25,
+    24,
+    22,
+    255
+  ],
+  "background_token": 1,
+  "canvas_token": 2,
+  "next_id": 43,
+  "next_token_id": 13,
+  "tokens": [
+    {
+      "id": 1,
+      "name": "paper-bg",
+      "value": [
+        246,
+        243,
+        236,
+        255
+      ]
+    },
+    {
+      "id": 2,
+      "name": "canvas-bg",
+      "value": [
+        25,
+        24,
+        22,
+        255
+      ]
+    },
+    {
+      "id": 3,
+      "name": "surface-dark",
+      "value": [
+        23,
+        34,
+        29,
+        255
+      ]
+    },
+    {
+      "id": 4,
+      "name": "surface-card",
+      "value": [
+        235,
+        229,
+        216,
+        255
+      ]
+    },
+    {
+      "id": 5,
+      "name": "surface-elevated",
+      "value": [
+        255,
+        255,
+        255,
+        255
+      ]
+    },
+    {
+      "id": 6,
+      "name": "accent-terracotta",
+      "value": [
+        216,
+        90,
+        58,
+        255
+      ]
+    },
+    {
+      "id": 7,
+      "name": "accent-sage",
+      "value": [
+        47,
+        107,
+        85,
+        255
+      ]
+    },
+    {
+      "id": 8,
+      "name": "accent-gold",
+      "value": [
+        226,
+        168,
+        62,
+        255
+      ]
+    },
+    {
+      "id": 9,
+      "name": "ink-primary",
+      "value": [
+        22,
+        33,
+        28,
+        255
+      ]
+    },
+    {
+      "id": 10,
+      "name": "ink-muted",
+      "value": [
+        82,
+        94,
+        87,
+        255
+      ]
+    },
+    {
+      "id": 11,
+      "name": "ink-on-dark",
+      "value": [
+        245,
+        242,
+        235,
+        255
+      ]
+    },
+    {
+      "id": 12,
+      "name": "ink-subtle-dark",
+      "value": [
+        158,
+        176,
+        165,
+        255
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "name": "Outer Frame",
+      "kind": "rectangle",
+      "x": 40.0,
+      "y": 40.0,
+      "width": 1040.0,
+      "height": 640.0,
+      "fill": [
+        235,
+        229,
+        216,
+        255
+      ],
+      "radius": 28.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 4
+    },
+    {
+      "id": 2,
+      "name": "Hero Left Panel",
+      "kind": "rectangle",
+      "x": 64.0,
+      "y": 64.0,
+      "width": 580.0,
+      "height": 592.0,
+      "fill": [
+        23,
+        34,
+        29,
+        255
+      ],
+      "radius": 22.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 3
+    },
+    {
+      "id": 3,
+      "name": "Live Badge Bg",
+      "kind": "rectangle",
+      "x": 100.0,
+      "y": 102.0,
+      "width": 184.0,
+      "height": 32.0,
+      "fill": [
+        216,
+        90,
+        58,
+        255
+      ],
+      "radius": 16.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 6
+    },
+    {
+      "id": 4,
+      "name": "Live Badge Text",
+      "kind": "text",
+      "x": 100.0,
+      "y": 109.0,
+      "width": 184.0,
+      "height": 20.0,
+      "fill": [
+        245,
+        242,
+        235,
+        255
+      ],
+      "radius": 0.0,
+      "text": "LIVE MCP · PROTOCOL 0.2.0",
+      "font_size": 13.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 11,
+      "line_height": 18.0,
+      "text_align": "center"
+    },
+    {
+      "id": 5,
+      "name": "Hero Title",
+      "kind": "text",
+      "x": 100.0,
+      "y": 158.0,
+      "width": 480.0,
+      "height": 130.0,
+      "fill": [
+        245,
+        242,
+        235,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Crafted by hand.\nWired for agents.",
+      "font_size": 44.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 11,
+      "line_height": 54.0
+    },
+    {
+      "id": 6,
+      "name": "Hero Subtitle",
+      "kind": "text",
+      "x": 100.0,
+      "y": 304.0,
+      "width": 460.0,
+      "height": 96.0,
+      "fill": [
+        158,
+        176,
+        165,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Local-first Rust design canvas with deterministic JSON inspection, atomic batch transactions, and shared undo history over live stdio MCP.",
+      "font_size": 18.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 12,
+      "line_height": 27.0
+    },
+    {
+      "id": 7,
+      "name": "Metric Card 1 Bg",
+      "kind": "rectangle",
+      "x": 100.0,
+      "y": 428.0,
+      "width": 236.0,
+      "height": 124.0,
+      "fill": [
+        35,
+        51,
+        43,
+        255
+      ],
+      "radius": 16.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false
+    },
+    {
+      "id": 8,
+      "name": "Metric 1 Value",
+      "kind": "text",
+      "x": 122.0,
+      "y": 448.0,
+      "width": 200.0,
+      "height": 44.0,
+      "fill": [
+        226,
+        168,
+        62,
+        255
+      ],
+      "radius": 0.0,
+      "text": "11 Tools",
+      "font_size": 36.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 8,
+      "line_height": 40.0
+    },
+    {
+      "id": 9,
+      "name": "Metric 1 Label",
+      "kind": "text",
+      "x": 122.0,
+      "y": 496.0,
+      "width": 200.0,
+      "height": 44.0,
+      "fill": [
+        158,
+        176,
+        165,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Inspect, apply, render, undo/redo & export",
+      "font_size": 15.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 12,
+      "line_height": 21.0
+    },
+    {
+      "id": 10,
+      "name": "Metric Card 2 Bg",
+      "kind": "rectangle",
+      "x": 356.0,
+      "y": 428.0,
+      "width": 236.0,
+      "height": 124.0,
+      "fill": [
+        35,
+        51,
+        43,
+        255
+      ],
+      "radius": 16.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false
+    },
+    {
+      "id": 11,
+      "name": "Metric 2 Value",
+      "kind": "text",
+      "x": 378.0,
+      "y": 448.0,
+      "width": 200.0,
+      "height": 44.0,
+      "fill": [
+        216,
+        90,
+        58,
+        255
+      ],
+      "radius": 0.0,
+      "text": "1 Undo Step",
+      "font_size": 36.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 6,
+      "line_height": 40.0
+    },
+    {
+      "id": 12,
+      "name": "Metric 2 Label",
+      "kind": "text",
+      "x": 378.0,
+      "y": 496.0,
+      "width": 200.0,
+      "height": 44.0,
+      "fill": [
+        158,
+        176,
+        165,
+        255
+      ],
+      "radius": 0.0,
+      "text": "All-or-nothing atomic batch validation",
+      "font_size": 15.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 12,
+      "line_height": 21.0
+    },
+    {
+      "id": 13,
+      "name": "CTA Pill Bg",
+      "kind": "rectangle",
+      "x": 100.0,
+      "y": 578.0,
+      "width": 236.0,
+      "height": 48.0,
+      "fill": [
+        47,
+        107,
+        85,
+        255
+      ],
+      "radius": 12.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 7
+    },
+    {
+      "id": 14,
+      "name": "CTA Pill Label",
+      "kind": "text",
+      "x": 100.0,
+      "y": 591.0,
+      "width": 236.0,
+      "height": 24.0,
+      "fill": [
+        245,
+        242,
+        235,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Connected to Antigravity",
+      "font_size": 16.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 11,
+      "line_height": 20.0,
+      "text_align": "center"
+    },
+    {
+      "id": 15,
+      "name": "Revision Caption",
+      "kind": "text",
+      "x": 356.0,
+      "y": 593.0,
+      "width": 236.0,
+      "height": 24.0,
+      "fill": [
+        158,
+        176,
+        165,
+        255
+      ],
+      "radius": 0.0,
+      "text": "expected_revision guarded · rev 2",
+      "font_size": 14.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 12,
+      "line_height": 18.0
+    },
+    {
+      "id": 16,
+      "name": "Right Top Card Bg",
+      "kind": "rectangle",
+      "x": 668.0,
+      "y": 64.0,
+      "width": 388.0,
+      "height": 284.0,
+      "fill": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "radius": 22.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 5
+    },
+    {
+      "id": 17,
+      "name": "Palette Section Title",
+      "kind": "text",
+      "x": 698.0,
+      "y": 92.0,
+      "width": 320.0,
+      "height": 32.0,
+      "fill": [
+        22,
+        33,
+        28,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Bound Color Tokens",
+      "font_size": 22.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 9,
+      "line_height": 26.0
+    },
+    {
+      "id": 18,
+      "name": "Palette Subtitle",
+      "kind": "text",
+      "x": 698.0,
+      "y": 124.0,
+      "width": 320.0,
+      "height": 22.0,
+      "fill": [
+        82,
+        94,
+        87,
+        255
+      ],
+      "radius": 0.0,
+      "text": "12 live theme tokens linked to layers",
+      "font_size": 14.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 10,
+      "line_height": 18.0
+    },
+    {
+      "id": 19,
+      "name": "Swatch 1 Forest",
+      "kind": "rectangle",
+      "x": 698.0,
+      "y": 162.0,
+      "width": 74.0,
+      "height": 76.0,
+      "fill": [
+        23,
+        34,
+        29,
+        255
+      ],
+      "radius": 14.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 3
+    },
+    {
+      "id": 20,
+      "name": "Swatch 2 Terracotta",
+      "kind": "rectangle",
+      "x": 782.0,
+      "y": 162.0,
+      "width": 74.0,
+      "height": 76.0,
+      "fill": [
+        216,
+        90,
+        58,
+        255
+      ],
+      "radius": 14.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 6
+    },
+    {
+      "id": 21,
+      "name": "Swatch 3 Sage",
+      "kind": "rectangle",
+      "x": 866.0,
+      "y": 162.0,
+      "width": 74.0,
+      "height": 76.0,
+      "fill": [
+        47,
+        107,
+        85,
+        255
+      ],
+      "radius": 14.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 7
+    },
+    {
+      "id": 22,
+      "name": "Swatch 4 Gold",
+      "kind": "rectangle",
+      "x": 950.0,
+      "y": 162.0,
+      "width": 74.0,
+      "height": 76.0,
+      "fill": [
+        226,
+        168,
+        62,
+        255
+      ],
+      "radius": 14.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 8
+    },
+    {
+      "id": 23,
+      "name": "Swatch Labels",
+      "kind": "text",
+      "x": 698.0,
+      "y": 246.0,
+      "width": 74.0,
+      "height": 18.0,
+      "fill": [
+        82,
+        94,
+        87,
+        255
+      ],
+      "radius": 0.0,
+      "text": "forest",
+      "font_size": 12.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 10,
+      "line_height": 16.0,
+      "text_align": "center"
+    },
+    {
+      "id": 40,
+      "name": "Swatch Label Terracotta",
+      "kind": "text",
+      "x": 782.0,
+      "y": 246.0,
+      "width": 74.0,
+      "height": 18.0,
+      "fill": [
+        82,
+        94,
+        87,
+        255
+      ],
+      "radius": 0.0,
+      "text": "terracotta",
+      "font_size": 12.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 10,
+      "line_height": 16.0,
+      "text_align": "center"
+    },
+    {
+      "id": 41,
+      "name": "Swatch Label Sage",
+      "kind": "text",
+      "x": 866.0,
+      "y": 246.0,
+      "width": 74.0,
+      "height": 18.0,
+      "fill": [
+        82,
+        94,
+        87,
+        255
+      ],
+      "radius": 0.0,
+      "text": "sage",
+      "font_size": 12.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 10,
+      "line_height": 16.0,
+      "text_align": "center"
+    },
+    {
+      "id": 42,
+      "name": "Swatch Label Gold",
+      "kind": "text",
+      "x": 950.0,
+      "y": 246.0,
+      "width": 74.0,
+      "height": 18.0,
+      "fill": [
+        82,
+        94,
+        87,
+        255
+      ],
+      "radius": 0.0,
+      "text": "gold",
+      "font_size": 12.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 10,
+      "line_height": 16.0,
+      "text_align": "center"
+    },
+    {
+      "id": 24,
+      "name": "Token Code Banner Bg",
+      "kind": "rectangle",
+      "x": 698.0,
+      "y": 278.0,
+      "width": 326.0,
+      "height": 48.0,
+      "fill": [
+        246,
+        243,
+        236,
+        255
+      ],
+      "radius": 10.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 1
+    },
+    {
+      "id": 25,
+      "name": "Token Code Text",
+      "kind": "text",
+      "x": 698.0,
+      "y": 293.0,
+      "width": 326.0,
+      "height": 20.0,
+      "fill": [
+        22,
+        33,
+        28,
+        255
+      ],
+      "radius": 0.0,
+      "text": "--color-accent-terracotta: #d85a3aff;",
+      "font_size": 13.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 9,
+      "line_height": 16.0,
+      "text_align": "center"
+    },
+    {
+      "id": 26,
+      "name": "Right Bottom Card Bg",
+      "kind": "rectangle",
+      "x": 668.0,
+      "y": 372.0,
+      "width": 388.0,
+      "height": 284.0,
+      "fill": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "radius": 22.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 5
+    },
+    {
+      "id": 27,
+      "name": "Pipeline Title",
+      "kind": "text",
+      "x": 698.0,
+      "y": 400.0,
+      "width": 330.0,
+      "height": 32.0,
+      "fill": [
+        22,
+        33,
+        28,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Export & Verification Pipeline",
+      "font_size": 22.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 9,
+      "line_height": 26.0
+    },
+    {
+      "id": 28,
+      "name": "Step 1 Row Bg",
+      "kind": "rectangle",
+      "x": 698.0,
+      "y": 444.0,
+      "width": 326.0,
+      "height": 62.0,
+      "fill": [
+        246,
+        243,
+        236,
+        255
+      ],
+      "radius": 12.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 1
+    },
+    {
+      "id": 29,
+      "name": "Step 1 Pill",
+      "kind": "rectangle",
+      "x": 712.0,
+      "y": 457.0,
+      "width": 58.0,
+      "height": 36.0,
+      "fill": [
+        216,
+        90,
+        58,
+        255
+      ],
+      "radius": 8.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 6
+    },
+    {
+      "id": 30,
+      "name": "Step 1 Pill Text",
+      "kind": "text",
+      "x": 712.0,
+      "y": 467.0,
+      "width": 58.0,
+      "height": 18.0,
+      "fill": [
+        245,
+        242,
+        235,
+        255
+      ],
+      "radius": 0.0,
+      "text": "JSON",
+      "font_size": 13.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 11,
+      "line_height": 16.0,
+      "text_align": "center"
+    },
+    {
+      "id": 31,
+      "name": "Step 1 Desc",
+      "kind": "text",
+      "x": 784.0,
+      "y": 465.0,
+      "width": 230.0,
+      "height": 22.0,
+      "fill": [
+        22,
+        33,
+        28,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Format v3 · Tokens & Typography",
+      "font_size": 15.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 9,
+      "line_height": 18.0
+    },
+    {
+      "id": 32,
+      "name": "Step 2 Row Bg",
+      "kind": "rectangle",
+      "x": 698.0,
+      "y": 516.0,
+      "width": 326.0,
+      "height": 62.0,
+      "fill": [
+        246,
+        243,
+        236,
+        255
+      ],
+      "radius": 12.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 1
+    },
+    {
+      "id": 33,
+      "name": "Step 2 Pill",
+      "kind": "rectangle",
+      "x": 712.0,
+      "y": 529.0,
+      "width": 58.0,
+      "height": 36.0,
+      "fill": [
+        47,
+        107,
+        85,
+        255
+      ],
+      "radius": 8.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 7
+    },
+    {
+      "id": 34,
+      "name": "Step 2 Pill Text",
+      "kind": "text",
+      "x": 712.0,
+      "y": 539.0,
+      "width": 58.0,
+      "height": 18.0,
+      "fill": [
+        245,
+        242,
+        235,
+        255
+      ],
+      "radius": 0.0,
+      "text": "SVG",
+      "font_size": 13.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 11,
+      "line_height": 16.0,
+      "text_align": "center"
+    },
+    {
+      "id": 35,
+      "name": "Step 2 Desc",
+      "kind": "text",
+      "x": 784.0,
+      "y": 537.0,
+      "width": 230.0,
+      "height": 22.0,
+      "fill": [
+        22,
+        33,
+        28,
+        255
+      ],
+      "radius": 0.0,
+      "text": "VectorCraft & FigCraft Exchange",
+      "font_size": 15.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 9,
+      "line_height": 18.0
+    },
+    {
+      "id": 36,
+      "name": "Step 3 Row Bg",
+      "kind": "rectangle",
+      "x": 698.0,
+      "y": 588.0,
+      "width": 326.0,
+      "height": 48.0,
+      "fill": [
+        246,
+        243,
+        236,
+        255
+      ],
+      "radius": 12.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 1
+    },
+    {
+      "id": 37,
+      "name": "Step 3 Pill",
+      "kind": "rectangle",
+      "x": 712.0,
+      "y": 597.0,
+      "width": 58.0,
+      "height": 30.0,
+      "fill": [
+        226,
+        168,
+        62,
+        255
+      ],
+      "radius": 8.0,
+      "text": "",
+      "font_size": 28.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 8
+    },
+    {
+      "id": 38,
+      "name": "Step 3 Pill Text",
+      "kind": "text",
+      "x": 712.0,
+      "y": 604.0,
+      "width": 58.0,
+      "height": 18.0,
+      "fill": [
+        22,
+        33,
+        28,
+        255
+      ],
+      "radius": 0.0,
+      "text": "PNG 2×",
+      "font_size": 13.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 9,
+      "line_height": 16.0,
+      "text_align": "center"
+    },
+    {
+      "id": 39,
+      "name": "Step 3 Desc",
+      "kind": "text",
+      "x": 784.0,
+      "y": 602.0,
+      "width": 230.0,
+      "height": 22.0,
+      "fill": [
+        22,
+        33,
+        28,
+        255
+      ],
+      "radius": 0.0,
+      "text": "Headless Software Tessellation",
+      "font_size": 15.0,
+      "hidden": false,
+      "locked": false,
+      "fill_token": 9,
+      "line_height": 18.0
+    }
+  ]
+}

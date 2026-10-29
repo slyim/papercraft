@@ -16,18 +16,23 @@ The existing first-save prompt generalizes: when a save would write a higher ver
 
 ## Milestone fields
 
-### M1 — Typography (this change)
+### M1 — Typography and Swappable Shapes (this change)
 
-Text layers only:
+Text layers:
 
 | Field | Default (omitted) | Range | Meaning |
 |---|---|---|---|
 | `line_height` | absent: font's natural line spacing (today's rendering) | 1–4096 document units | Distance between consecutive baselines, in document units |
 | `text_align` | `"left"` | `"left"`, `"center"`, `"right"` | Horizontal alignment of every row inside the layer's width |
 
-A rectangle carrying either field is rejected. The canvas, inline editor, PNG export and headless rendering share one layout function, so entering or leaving edit mode does not move text. HTML writes `line-height:<n>px` and `text-align`; SVG positions explicit lines at `line_height` spacing with `text-anchor` start/middle/end. Browser and SVG font metrics still differ from egui; automatic wrapping is still not reproduced in SVG.
+Shape layers (`kind`: `"rectangle"`, `"ellipse"`, `"triangle"`):
 
-Rollback: clear line height and set alignment to left on every text layer (or delete the two keys); the next save writes version 1 or 2.
+- `kind: "ellipse"` and `kind: "triangle"` require version 3; `radius` must be `0` on ellipses and triangles.
+- A shape layer carrying `line_height`, non-left `text_align` or non-empty `text` is rejected.
+- HTML exports ellipses with `border-radius:50%` and triangles with `clip-path:polygon(50% 0%,100% 100%,0% 100%)`; SVG exports `<ellipse>` and `<polygon>`.
+- The canvas, inline editor, PNG export and headless rendering share one layout function, so entering or leaving edit mode does not move text. HTML writes `line-height:<n>px` and `text-align`; SVG positions explicit lines at `line_height` spacing with `text-anchor` start/middle/end. Browser and SVG font metrics still differ from egui; automatic wrapping is still not reproduced in SVG.
+
+Rollback: clear line height and set alignment to left on every text layer, and switch any ellipse/triangle layers back to rectangle; the next save writes version 1 or 2.
 
 ### Planned, not yet part of the format
 

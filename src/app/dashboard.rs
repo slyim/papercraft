@@ -197,6 +197,14 @@ impl PaperCraftApp {
         {
             self.request(Intent::Open, ctx);
         }
+        if self.live.is_some()
+            && Row::new(icon::COPY, "Copy live MCP command")
+                .show(ui)
+                .on_hover_text("Copy the MCP command for this running editor")
+                .clicked()
+        {
+            self.copy_live_mcp_command(ctx);
+        }
         ui.add_space(SPACE_M);
         ui::hline(ui);
 
@@ -210,7 +218,7 @@ impl PaperCraftApp {
             .show_separator_line(false)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = SPACE_S;
-                if !self.status.is_empty() && !self.document_open {
+                if !self.status.is_empty() {
                     ui.label(RichText::new(&self.status).size(CAPTION).color(TEXT_DIM));
                 }
                 let shortcuts = ui

@@ -17,8 +17,9 @@ Usage:
   papercraft inspect FILE               Print the document as JSON
   papercraft export FILE --format FORMAT --output PATH [--scale N]
                                         Export html, svg or png (scale 0.1–8, default 1)
-  papercraft mcp                        Serve the local MCP protocol on stdin/stdout
-  papercraft mcp --live [SESSION_FILE]   Connect MCP to a running editor
+  papercraft mcp                        Serve the local MCP protocol (live editor if open)
+  papercraft mcp --live [SESSION_FILE]  Connect MCP to a running editor
+  papercraft mcp --headless             Serve an isolated headless MCP session
   papercraft --help | --version
 ";
 
@@ -42,10 +43,23 @@ pub fn run(args: &[OsString]) -> Option<i32> {
     let exit = match command {
         "inspect" => inspect(&args[1..]),
         "export" => export(&args[1..]),
-        "mcp" if args.len() == 1 => match crate::mcp::serve() {
-            Ok(()) => Exit::Ok,
+        "mcp" if args.len() == 1 => match crate::live::discover_optional() {
+            Ok(Some(path)) => match crate::live::serve(&path) {
+                Ok(()) => Exit::Ok,
+                Err(error) => Exit::Failure(error),
+            },
+            Ok(None) => match crate::mcp::serve() {
+                Ok(()) => Exit::Ok,
+                Err(error) => Exit::Failure(error),
+            },
             Err(error) => Exit::Failure(error),
         },
+        "mcp" if args.get(1).is_some_and(|v| v == "--headless") && args.len() == 2 => {
+            match crate::mcp::serve() {
+                Ok(()) => Exit::Ok,
+                Err(error) => Exit::Failure(error),
+            }
+        }
         "mcp" if args.get(1).is_some_and(|v| v == "--live") && args.len() <= 3 => {
             let path = args
                 .get(2)
@@ -57,7 +71,7 @@ pub fn run(args: &[OsString]) -> Option<i32> {
                 Err(error) => Exit::Failure(error),
             }
         }
-        "mcp" => Exit::Usage("Use mcp or mcp --live [SESSION_FILE].".into()),
+        "mcp" => Exit::Usage("Use mcp, mcp --live [SESSION_FILE] or mcp --headless.".into()),
         "--version" | "-V" => {
             println!("papercraft {}", env!("CARGO_PKG_VERSION"));
             Exit::Ok
@@ -183,8 +197,10 @@ pub fn describe(document: &Document) -> Value {
             "height": document.height,
             "background": hex(document.background_color()),
             "background_token": document.background_token,
+            "background_token_name": document.background_token.and_then(|id| document.token(id)).map(|t| &t.name),
             "canvas": hex(document.canvas_color()),
             "canvas_token": document.canvas_token,
+            "canvas_token_name": document.canvas_token.and_then(|id| document.token(id)).map(|t| &t.name),
         },
         "tokens": document.tokens.iter().map(|t| json!({
             "id": t.id,
@@ -202,13 +218,14 @@ fn describe_node(document: &Document, index: usize, node: &Node) -> Value {
         "index": index,
         "id": node.id,
         "name": node.name,
-        "kind": match node.kind { NodeKind::Rectangle => "rectangle", NodeKind::Text => "text" },
+        "kind": node.kind.name(),
         "x": node.x,
         "y": node.y,
         "width": node.width,
         "height": node.height,
         "fill": hex(document.node_fill(node)),
         "fill_token": node.fill_token,
+        "fill_token_name": node.fill_token.and_then(|id| document.token(id)).map(|t| &t.name),
         "hidden": node.hidden,
         "locked": node.locked,
     });
@@ -217,11 +234,17 @@ fn describe_node(document: &Document, index: usize, node: &Node) -> Value {
         NodeKind::Rectangle => {
             fields.insert("radius".into(), json!(node.radius));
         }
+        NodeKind::Ellipse | NodeKind::Triangle => {}
         NodeKind::Text => {
+            let metrics = render::measure_text(node);
             fields.insert("text".into(), json!(node.text));
             fields.insert("font_size".into(), json!(node.font_size));
             fields.insert("line_height".into(), json!(node.line_height));
             fields.insert("text_align".into(), json!(node.text_align.name()));
+            fields.insert("measured_width".into(), json!(metrics.width));
+            fields.insert("measured_height".into(), json!(metrics.height));
+            fields.insert("line_count".into(), json!(metrics.line_count));
+            fields.insert("clipped".into(), json!(metrics.clipped));
         }
     }
     value

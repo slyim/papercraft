@@ -218,3 +218,104 @@ fn stdio_proxy_reaches_the_gui_event_loop() {
     drop(app);
     assert!(!path.exists(), "Closing the host removes its session file");
 }
+
+#[test]
+fn default_mcp_command_connects_to_open_editor_and_headless_isolates() {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        process::{Command, Stdio},
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let ctx = eframe::egui::Context::default();
+    let mut app = PaperCraftApp::from_document(Document::default());
+    app.start_live(&ctx, directory.path()).unwrap();
+
+    // Bare `papercraft mcp` discovers the live session automatically.
+    let child = Command::new(env!("CARGO_BIN_EXE_papercraft"))
+        .arg("mcp")
+        .env("PAPERCRAFT_LIVE_DIR", directory.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let (send, receive) = mpsc::channel();
+    let client = std::thread::spawn(move || {
+        let mut child = child;
+        let mut input = child.stdin.take().unwrap();
+        let mut output = BufReader::new(child.stdout.take().unwrap());
+        let mut rpc = |request: Value| {
+            writeln!(input, "{request}").unwrap();
+            input.flush().unwrap();
+            let mut line = String::new();
+            output.read_line(&mut line).unwrap();
+            serde_json::from_str::<Value>(&line).unwrap()
+        };
+        let list = rpc(
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"document_list","arguments":{}}}),
+        );
+        let docs: Value =
+            serde_json::from_str(list["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(docs.as_array().unwrap().len(), 1);
+        let edit = rpc(
+            json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"document_apply","arguments":{"document_id":docs[0]["document_id"],"operations":[{"op":"create_text","text":"Default mcp reaches live editor"}]}}}),
+        );
+        assert_eq!(edit["result"]["isError"], false);
+        drop(rpc);
+        drop(input);
+        assert!(child.wait().unwrap().success());
+        send.send(()).unwrap();
+    });
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while receive.try_recv().is_err() {
+        assert!(Instant::now() < deadline, "Default mcp client timed out");
+        app.poll_live(&ctx);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    client.join().unwrap();
+    assert_eq!(
+        app.editor.document.nodes[0].text,
+        "Default mcp reaches live editor"
+    );
+
+    // `papercraft mcp --headless` runs an isolated session with zero open documents.
+    let mut headless = Command::new(env!("CARGO_BIN_EXE_papercraft"))
+        .args(["mcp", "--headless"])
+        .env("PAPERCRAFT_LIVE_DIR", directory.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    {
+        let mut input = headless.stdin.take().unwrap();
+        let mut output = BufReader::new(headless.stdout.take().unwrap());
+        writeln!(
+            input,
+            "{}",
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"document_list","arguments":{}}})
+        )
+        .unwrap();
+        input.flush().unwrap();
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        let response: Value = serde_json::from_str(&line).unwrap();
+        let docs: Value =
+            serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert!(docs.as_array().unwrap().is_empty());
+    }
+    assert!(headless.wait().unwrap().success());
+}
+
+#[test]
+fn start_default_succeeds_and_cleans_up_session() {
+    let ctx = eframe::egui::Context::default();
+    let host = papercraft::live::Host::start_default(ctx).unwrap();
+    let path = host.path().to_owned();
+    assert!(path.exists());
+    drop(host);
+    assert!(!path.exists());
+}

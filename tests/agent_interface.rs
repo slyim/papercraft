@@ -473,3 +473,124 @@ fn mcp_typography_fields_and_upgrade_report() {
     );
     assert!(state.get("upgraded_from").is_none());
 }
+
+#[test]
+fn mcp_token_names_shapes_fit_text_and_arrangement() {
+    let mut server = Server::default();
+    let id = new_document(&mut server);
+
+    // 1. Bind tokens by name in the same batch as create_token, and create shapes + text.
+    let (error, state) = call(
+        &mut server,
+        "document_apply",
+        json!({
+            "document_id": id,
+            "operations": [
+                { "op": "create_token", "name": "paper", "value": "#f8f7f3" },
+                { "op": "create_token", "name": "brand", "value": "#d94f30" },
+                { "op": "set_artboard", "background_token": "paper" },
+                { "op": "create_ellipse", "name": "Badge", "x": 10, "y": 15, "width": 20, "height": 20, "fill_token": "brand" },
+                { "op": "create_triangle", "name": "Peak", "x": 40, "y": 30, "width": 20, "height": 20, "fill_token": "brand" },
+                { "op": "create_shape", "name": "Card", "shape": "rectangle", "x": 130, "y": 5, "width": 20, "height": 20, "radius": 6 },
+                { "op": "create_text", "name": "Copy", "x": 10, "y": 60, "width": 80, "height": 10, "font_size": 24, "text": "Multi line wrapped text block" }
+            ]
+        }),
+    );
+    assert!(!error, "{state}");
+
+    // Radius is rejected on non-rectangle shapes.
+    let (error, message) = call(
+        &mut server,
+        "document_apply",
+        json!({
+            "document_id": id,
+            "operations": [{ "op": "create_ellipse", "radius": 4 }]
+        }),
+    );
+    assert!(error && message.as_str().unwrap().contains("radius"));
+
+    let (_, inspected) = call(
+        &mut server,
+        "document_inspect",
+        json!({ "document_id": id }),
+    );
+    assert_eq!(inspected["artboard"]["background_token_name"], "paper");
+    let layers = inspected["layers"].as_array().unwrap();
+    assert_eq!(layers[0]["kind"], "ellipse");
+    assert_eq!(layers[0]["fill_token_name"], "brand");
+    assert_eq!(layers[1]["kind"], "triangle");
+    assert_eq!(layers[3]["kind"], "text");
+    assert_eq!(layers[3]["clipped"], true);
+    assert!(layers[3]["measured_height"].as_f64().unwrap() > 10.0);
+
+    // 2. Swap shape, auto-fit text height, align & distribute shapes, duplicate, and select.
+    let (error, state) = call(
+        &mut server,
+        "document_apply",
+        json!({
+            "document_id": id,
+            "operations": [
+                { "op": "update_layer", "id": 3, "shape": "ellipse" },
+                { "op": "update_layer", "id": 4, "fit_text": true },
+                { "op": "align_layers", "ids": [1, 2, 3], "align": "top" },
+                { "op": "distribute_layers", "ids": [1, 2, 3], "axis": "horizontal" },
+                { "op": "duplicate_layers", "ids": [1], "offset_x": 15, "offset_y": 25 },
+                { "op": "update_token", "id": "brand", "value": "#1e66f5" },
+                { "op": "delete_token", "name": "paper" }
+            ]
+        }),
+    );
+    assert!(!error, "{state}");
+    assert_eq!(state["selected_ids"], json!([5]));
+
+    let (_, inspected) = call(
+        &mut server,
+        "document_inspect",
+        json!({ "document_id": id }),
+    );
+    assert!(inspected["artboard"]["background_token"].is_null());
+    assert_eq!(inspected["artboard"]["background"], "#f8f7f3ff");
+    let layers = inspected["layers"].as_array().unwrap();
+    assert_eq!(layers.len(), 5);
+    assert_eq!(layers[2]["kind"], "ellipse");
+    // Align top -> y == 5.0 for ids 1, 2, 3; distribute horizontal -> x == 10, 70, 130.
+    assert_eq!(layers[0]["y"], 5.0);
+    assert_eq!(layers[1]["y"], 5.0);
+    assert_eq!(layers[2]["y"], 5.0);
+    assert_eq!(layers[0]["x"], 10.0);
+    assert_eq!(layers[1]["x"], 70.0);
+    assert_eq!(layers[2]["x"], 130.0);
+    // Text layer 4 is now auto-sized and not clipped.
+    assert_eq!(layers[3]["clipped"], false);
+    assert!(
+        layers[3]["height"].as_f64().unwrap() >= layers[3]["measured_height"].as_f64().unwrap()
+    );
+    // Duplicated layer 5 is offset by (15, 25) from layer 1 (10, 5) -> (25, 30) and bound to updated brand token.
+    assert_eq!(layers[4]["id"], 5);
+    assert_eq!(layers[4]["x"], 25.0);
+    assert_eq!(layers[4]["y"], 30.0);
+    assert_eq!(layers[4]["fill"], "#1e66f5ff");
+
+    // 3. Explicit select_layers and clearing selection.
+    let (error, state) = call(
+        &mut server,
+        "document_apply",
+        json!({
+            "document_id": id,
+            "operations": [{ "op": "select_layers", "ids": [1, 3] }]
+        }),
+    );
+    assert!(!error);
+    assert_eq!(state["selected_ids"], json!([1, 3]));
+
+    let (error, state) = call(
+        &mut server,
+        "document_apply",
+        json!({
+            "document_id": id,
+            "operations": [{ "op": "select_layers", "ids": [] }]
+        }),
+    );
+    assert!(!error);
+    assert_eq!(state["selected_ids"], json!([]));
+}

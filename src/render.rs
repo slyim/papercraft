@@ -66,6 +66,49 @@ pub fn text_origin(rect: Rect, align: TextAlign) -> Pos2 {
     pos2(rect.left() + rect.width() * align.anchor(), rect.top())
 }
 
+/// Measured layout bounds of a text layer in document units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextMetrics {
+    pub width: f32,
+    pub height: f32,
+    pub line_count: usize,
+    pub clipped: bool,
+}
+
+/// Measures a text layer in document units using the same layout and fonts as the
+/// canvas and headless export.
+pub fn measure_text(node: &crate::document::Node) -> TextMetrics {
+    thread_local! {
+        static CTX: egui::Context = {
+            let ctx = egui::Context::default();
+            ctx.set_fonts(font_definitions());
+            let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+            output.textures_delta.clear();
+            ctx
+        };
+    }
+    let job = text_job(
+        &node.text,
+        node.font_size,
+        node.line_height,
+        node.text_align,
+        Color32::WHITE,
+        1.0,
+        node.width.max(1.0),
+    );
+    let galley = CTX.with(|ctx| ctx.fonts_mut(|f| f.layout_job(job)));
+    let width = galley.size().x;
+    let height = galley.size().y;
+    let line_count = galley.rows.len().max(1);
+    let clipped = height > node.height + 0.5 || width > node.width + 0.5;
+    TextMetrics {
+        width,
+        height,
+        line_count,
+        clipped,
+    }
+}
+
 /// Paints the artboard and its visible layers. `preview` rounds font sizes so small
 /// thumbnails do not rasterize a separate glyph set for every scale. The text of
 /// `editing` is left to the in-place editor.
@@ -97,6 +140,37 @@ pub fn paint_document(
                     (node.radius.min(node.width.min(node.height) / 2.0) * zoom).min(255.0) as u8,
                     color(document.node_fill(node)),
                 );
+            }
+            NodeKind::Ellipse => {
+                let rx = rect.width() * 0.5;
+                let ry = rect.height() * 0.5;
+                if rx > 0.0 && ry > 0.0 {
+                    let center = rect.center();
+                    const STEPS: usize = 64;
+                    let points: Vec<Pos2> = (0..STEPS)
+                        .map(|i| {
+                            let angle = (i as f32 / STEPS as f32) * std::f32::consts::TAU;
+                            let (sin, cos) = angle.sin_cos();
+                            pos2(center.x + rx * cos, center.y + ry * sin)
+                        })
+                        .collect();
+                    content.add(egui::Shape::convex_polygon(
+                        points,
+                        color(document.node_fill(node)),
+                        egui::Stroke::NONE,
+                    ));
+                }
+            }
+            NodeKind::Triangle => {
+                content.add(egui::Shape::convex_polygon(
+                    vec![
+                        pos2(rect.center().x, rect.top()),
+                        pos2(rect.right(), rect.bottom()),
+                        pos2(rect.left(), rect.bottom()),
+                    ],
+                    color(document.node_fill(node)),
+                    egui::Stroke::NONE,
+                ));
             }
             NodeKind::Text if editing == Some(node.id) => {}
             NodeKind::Text => {

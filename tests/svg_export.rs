@@ -57,3 +57,23 @@ fn svg_rejects_invalid_xml_and_geometry_before_replacing_an_existing_export() {
     document.nodes[0].x = f32::NAN;
     assert!(document.export_svg().is_err());
 }
+
+#[test]
+fn svg_and_html_export_ellipse_and_triangle_shapes() {
+    use papercraft::document::NodeKind;
+    let mut document = fixture();
+    document.nodes[0].kind = NodeKind::Ellipse;
+    document.nodes[0].radius = 0.0;
+    document.nodes[1].kind = NodeKind::Triangle;
+    document.nodes[1].radius = 0.0;
+    document.normalize();
+    assert_eq!(document.version, 3);
+    let svg = document.export_svg().unwrap();
+    assert!(svg.contains("<ellipse id=\"layer-1\""));
+    assert!(svg.contains("<polygon id=\"layer-2\""));
+    let html = document.export_html().unwrap();
+    assert!(html.contains("class=\"layer ellipse\""));
+    assert!(html.contains("border-radius:50%"));
+    assert!(html.contains("class=\"layer triangle\""));
+    assert!(html.contains("clip-path:polygon(50% 0%,100% 100%,0% 100%)"));
+}

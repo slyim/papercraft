@@ -39,12 +39,32 @@ pub struct Host {
     stop: Arc<AtomicBool>,
 }
 
-pub fn directory() -> Result<PathBuf, String> {
+pub fn directories() -> Result<Vec<PathBuf>, String> {
     if let Some(path) = std::env::var_os("PAPERCRAFT_LIVE_DIR") {
-        return std::path::absolute(path).map_err(|e| e.to_string());
+        return Ok(vec![std::path::absolute(path).map_err(|e| e.to_string())?]);
     }
-    crate::recents::Recents::default_store()
-        .and_then(|p| p.parent().map(|p| p.join("live")))
+    let mut dirs = Vec::new();
+    if let Some(primary) =
+        crate::recents::Recents::default_store().and_then(|p| p.parent().map(|p| p.join("live")))
+    {
+        dirs.push(primary);
+    }
+    let temp = std::env::temp_dir().join("papercraft-live");
+    dirs.push(temp.clone());
+    #[cfg(unix)]
+    {
+        let fallback = PathBuf::from("/tmp/papercraft-live");
+        if fallback != temp {
+            dirs.push(fallback);
+        }
+    }
+    Ok(dirs)
+}
+
+pub fn directory() -> Result<PathBuf, String> {
+    directories()?
+        .into_iter()
+        .next()
         .ok_or("Cannot locate the local live-session directory.".into())
 }
 
@@ -66,6 +86,17 @@ fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
 }
 
 impl Host {
+    pub fn start_default(ctx: egui::Context) -> Result<Self, String> {
+        let mut last_error = String::from("Cannot locate the local live-session directory.");
+        for dir in directories()? {
+            match Self::start(ctx.clone(), &dir) {
+                Ok(host) => return Ok(host),
+                Err(error) => last_error = error,
+            }
+        }
+        Err(last_error)
+    }
+
     pub fn start(ctx: egui::Context, directory: &Path) -> Result<Self, String> {
         std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
         let private = tempfile::Builder::new()
@@ -200,21 +231,46 @@ fn active(path: &Path) -> bool {
         .is_some_and(|age| age < Duration::from_secs(5))
 }
 
-pub fn discover() -> Result<PathBuf, String> {
+fn active_sessions() -> Result<Vec<PathBuf>, String> {
     let mut paths = Vec::new();
-    for entry in std::fs::read_dir(directory()?)
-        .map_err(|_| "No live editor. Open PaperCraft first.".to_owned())?
-    {
-        let folder = entry.map_err(|e| e.to_string())?.path();
-        let path = folder.join("session.json");
-        if folder
-            .file_name()
-            .is_some_and(|n| n.to_string_lossy().starts_with("session-"))
-            && endpoint(&path).is_ok()
-        {
-            paths.push(path);
+    let mut seen = Vec::new();
+    for dir in directories()? {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let folder = entry.path();
+            let path = folder.join("session.json");
+            if folder
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("session-"))
+                && endpoint(&path).is_ok()
+            {
+                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                if !seen.contains(&canonical) {
+                    seen.push(canonical);
+                    paths.push(path);
+                }
+            }
         }
     }
+    Ok(paths)
+}
+
+pub fn discover_optional() -> Result<Option<PathBuf>, String> {
+    let mut paths = active_sessions()?;
+    match paths.len() {
+        0 => Ok(None),
+        1 => Ok(Some(paths.remove(0))),
+        _ => Err(
+            "Several editors are open. Use mcp --live SESSION_FILE from the editor's file menu, or mcp --headless."
+                .into(),
+        ),
+    }
+}
+
+pub fn discover() -> Result<PathBuf, String> {
+    let mut paths = active_sessions()?;
     match paths.len() {
         0 => Err("No live editor. Open PaperCraft first.".into()),
         1 => Ok(paths.remove(0)),

@@ -6,10 +6,12 @@
 //! saved state so a client can tell exactly what is on disk. Diagnostics go to stderr.
 
 use crate::cli::{describe, export_bytes, same_file};
-use crate::document::{ColorTarget, ColorToken, Document, Editor, Node, NodeKind, TextAlign};
+use crate::document::{
+    Align, Axis, ColorTarget, ColorToken, Document, Editor, Node, NodeKind, TextAlign,
+};
 
 /// Operation fields that apply only to text layers.
-const TEXT_ONLY: [&str; 4] = ["text", "font_size", "line_height", "text_align"];
+const TEXT_ONLY: [&str; 5] = ["text", "font_size", "line_height", "text_align", "fit_text"];
 use crate::render;
 use serde_json::{Map, Value, json};
 use std::{
@@ -46,6 +48,7 @@ impl Session {
             "dirty": self.dirty(),
             "can_undo": self.editor.can_undo(),
             "can_redo": self.editor.can_redo(),
+            "selected_ids": self.editor.selection(),
         })
     }
 }
@@ -183,15 +186,20 @@ impl Server {
                         session.editor.revision()
                     ));
                 }
+                let mut selection_update = None;
                 let created = session.editor.apply(|doc| {
                     let mut created = Vec::new();
                     for (index, operation) in operations.iter().enumerate() {
-                        apply_operation(doc, operation, &mut created).map_err(|e| {
-                            format!("Operation {index} failed: {e} No changes were applied.")
-                        })?;
+                        apply_operation(doc, operation, &mut created, &mut selection_update)
+                            .map_err(|e| {
+                                format!("Operation {index} failed: {e} No changes were applied.")
+                            })?;
                     }
                     Ok(created)
                 })?;
+                if let Some(ids) = selection_update {
+                    session.editor.set_selection(ids);
+                }
                 let mut value = session.state(&id);
                 value["created"] = json!(created);
                 text(value)
@@ -402,19 +410,22 @@ fn apply_operation(
     doc: &mut Document,
     operation: &Value,
     created: &mut Vec<Value>,
+    selection_update: &mut Option<Vec<u64>>,
 ) -> Result<(), String> {
     let op = operation
         .as_object()
         .ok_or("Each operation must be an object.")?;
     let kind = req_str(op, "op")?;
     match kind {
-        "create_rectangle" | "create_text" => {
+        "create_rectangle" | "create_ellipse" | "create_triangle" | "create_shape"
+        | "create_text" => {
             let text = kind == "create_text";
             allow(
                 op,
                 &[
                     "op",
                     "name",
+                    "shape",
                     "x",
                     "y",
                     "width",
@@ -426,6 +437,7 @@ fn apply_operation(
                     "font_size",
                     "line_height",
                     "text_align",
+                    "fit_text",
                     "hidden",
                     "locked",
                     "index",
@@ -437,8 +449,27 @@ fn apply_operation(
                     TEXT_ONLY.join(", ")
                 ));
             }
-            if text && op.contains_key("radius") {
-                return Err("radius applies only to create_rectangle.".into());
+            if text && op.contains_key("shape") {
+                return Err("shape applies only to shape layers.".into());
+            }
+            let node_kind = if text {
+                NodeKind::Text
+            } else {
+                let default_kind = match kind {
+                    "create_ellipse" => NodeKind::Ellipse,
+                    "create_triangle" => NodeKind::Triangle,
+                    _ => NodeKind::Rectangle,
+                };
+                match opt_str(op, "shape")? {
+                    Some(shape) => parse_shape(shape)?,
+                    None => default_kind,
+                }
+            };
+            if node_kind != NodeKind::Rectangle && op.contains_key("radius") {
+                return Err(format!(
+                    "radius applies only to rectangles, not {}.",
+                    node_kind.name()
+                ));
             }
             let id = doc.next_id;
             doc.next_id = id
@@ -446,16 +477,8 @@ fn apply_operation(
                 .ok_or("Layer identifiers are exhausted.")?;
             let mut node = Node {
                 id,
-                name: if text {
-                    "Text".into()
-                } else {
-                    "Rectangle".into()
-                },
-                kind: if text {
-                    NodeKind::Text
-                } else {
-                    NodeKind::Rectangle
-                },
+                name: node_kind.label().into(),
+                kind: node_kind,
                 x: 0.0,
                 y: 0.0,
                 width: if text { 220.0 } else { 100.0 },
@@ -487,6 +510,7 @@ fn apply_operation(
                     "op",
                     "id",
                     "name",
+                    "shape",
                     "x",
                     "y",
                     "width",
@@ -498,6 +522,7 @@ fn apply_operation(
                     "font_size",
                     "line_height",
                     "text_align",
+                    "fit_text",
                     "hidden",
                     "locked",
                 ],
@@ -509,17 +534,24 @@ fn apply_operation(
                 .position(|n| n.id == id)
                 .ok_or_else(|| format!("No layer {id}."))?;
             let mut node = doc.nodes[position].clone();
-            match node.kind {
-                NodeKind::Rectangle if TEXT_ONLY.iter().any(|k| op.contains_key(*k)) => {
-                    return Err(format!(
-                        "Layer {id} is a rectangle; {} do not apply.",
-                        TEXT_ONLY.join(", ")
-                    ));
+            if let Some(shape) = opt_str(op, "shape")? {
+                if !node.kind.is_shape() {
+                    return Err(format!("Layer {id} is text; shape does not apply."));
                 }
-                NodeKind::Text if op.contains_key("radius") => {
-                    return Err(format!("Layer {id} is text; radius does not apply."));
-                }
-                _ => {}
+                node.set_shape(parse_shape(shape)?);
+            }
+            if node.kind.is_shape() && TEXT_ONLY.iter().any(|k| op.contains_key(*k)) {
+                return Err(format!(
+                    "Layer {id} is a {}; {} do not apply.",
+                    node.kind.name(),
+                    TEXT_ONLY.join(", ")
+                ));
+            }
+            if node.kind != NodeKind::Rectangle && op.contains_key("radius") {
+                return Err(format!(
+                    "Layer {id} is {}; radius applies only to rectangles.",
+                    node.kind.name()
+                ));
             }
             set_node_fields(doc, &mut node, op)?;
             doc.nodes[position] = node;
@@ -545,6 +577,61 @@ fn apply_operation(
             let node = doc.nodes.remove(from);
             let to = (req_u64(op, "index")? as usize).min(doc.nodes.len());
             doc.nodes.insert(to, node);
+        }
+        "select_layers" => {
+            allow(op, &["op", "ids"])?;
+            let ids = req_ids(op, "ids")?;
+            for id in &ids {
+                if !doc.nodes.iter().any(|n| n.id == *id) {
+                    return Err(format!("No layer {id}."));
+                }
+            }
+            *selection_update = Some(ids);
+        }
+        "align_layers" => {
+            allow(op, &["op", "ids", "align"])?;
+            let ids = req_ids(op, "ids")?;
+            let align_name = req_str(op, "align")?;
+            let align = match align_name {
+                "left" => Align::Left,
+                "center" | "center_x" | "horizontal_center" => Align::CenterX,
+                "right" => Align::Right,
+                "top" => Align::Top,
+                "middle" | "center_y" | "vertical_center" => Align::CenterY,
+                "bottom" => Align::Bottom,
+                _ => {
+                    return Err(format!(
+                        "align must be left, center, right, top, middle or bottom, not {align_name}."
+                    ));
+                }
+            };
+            doc.align_nodes(&ids, align)?;
+        }
+        "distribute_layers" => {
+            allow(op, &["op", "ids", "axis"])?;
+            let ids = req_ids(op, "ids")?;
+            let axis_name = req_str(op, "axis")?;
+            let axis = match axis_name {
+                "horizontal" => Axis::Horizontal,
+                "vertical" => Axis::Vertical,
+                _ => {
+                    return Err(format!(
+                        "axis must be horizontal or vertical, not {axis_name}."
+                    ));
+                }
+            };
+            doc.distribute_nodes(&ids, axis)?;
+        }
+        "duplicate_layers" => {
+            allow(op, &["op", "ids", "offset_x", "offset_y"])?;
+            let ids = req_ids(op, "ids")?;
+            let dx = opt_f32(op, "offset_x")?.unwrap_or(20.0);
+            let dy = opt_f32(op, "offset_y")?.unwrap_or(20.0);
+            let new_ids = doc.duplicate_nodes(&ids, dx, dy)?;
+            for &id in &new_ids {
+                created.push(json!({ "op": "duplicate_layers", "id": id }));
+            }
+            *selection_update = Some(new_ids);
         }
         "set_artboard" => {
             allow(
@@ -590,10 +677,11 @@ fn apply_operation(
         }
         "update_token" => {
             allow(op, &["op", "id", "name", "value"])?;
-            let id = req_u64(op, "id")?;
-            if doc.token(id).is_none() {
-                return Err(format!("No token {id}."));
-            }
+            let target = op
+                .get("id")
+                .or_else(|| op.get("name"))
+                .ok_or("id is required.")?;
+            let id = resolve_token_id(doc, target, "id")?;
             if let Some(name) = opt_str(op, "name")? {
                 let name = name.trim().to_owned();
                 doc.check_token_name(&name, Some(id))?;
@@ -613,12 +701,16 @@ fn apply_operation(
             }
         }
         "delete_token" => {
-            allow(op, &["op", "id"])?;
-            let id = req_u64(op, "id")?;
+            allow(op, &["op", "id", "name"])?;
+            let target = op
+                .get("id")
+                .or_else(|| op.get("name"))
+                .ok_or("id is required.")?;
+            let id = resolve_token_id(doc, target, "id")?;
             let value = doc
                 .token(id)
                 .map(|t| t.value)
-                .ok_or_else(|| format!("No token {id}."))?;
+                .expect("resolved token exists");
             // Bound properties keep the token's color as a literal.
             for target in doc.token_usage(id) {
                 if let Some((literal, binding)) = doc.target_mut(target) {
@@ -633,6 +725,24 @@ fn apply_operation(
     // Keep bound literals in sync for operations later in the same batch.
     doc.normalize();
     Ok(())
+}
+
+fn parse_shape(name: &str) -> Result<NodeKind, String> {
+    NodeKind::from_shape_name(name)
+        .ok_or_else(|| format!("shape must be rectangle, ellipse or triangle, not {name}."))
+}
+
+fn resolve_token_id(doc: &Document, value: &Value, field: &str) -> Result<u64, String> {
+    if let Some(id) = value.as_u64() {
+        doc.token(id).ok_or_else(|| format!("No token {id}."))?;
+        Ok(id)
+    } else if let Some(name) = value.as_str() {
+        doc.token_by_name(name)
+            .map(|t| t.id)
+            .ok_or_else(|| format!("No token {name}."))
+    } else {
+        Err(format!("{field} must be a token id, token name or null."))
+    }
 }
 
 fn set_node_fields(doc: &Document, node: &mut Node, op: &Map<String, Value>) -> Result<(), String> {
@@ -675,6 +785,10 @@ fn set_node_fields(doc: &Document, node: &mut Node, op: &Map<String, Value>) -> 
     if let Some(text) = opt_str(op, "text")? {
         node.text = text.to_owned();
     }
+    if opt_bool(op, "fit_text")?.unwrap_or(false) {
+        let metrics = render::measure_text(node);
+        node.height = metrics.height.ceil().max(1.0);
+    }
     if let Some(hidden) = opt_bool(op, "hidden")? {
         node.hidden = hidden;
     }
@@ -690,10 +804,8 @@ fn set_node_fields(doc: &Document, node: &mut Node, op: &Map<String, Value>) -> 
         None => {}
         Some(Value::Null) => node.fill_token = None,
         Some(value) => {
-            let id = value
-                .as_u64()
-                .ok_or("fill_token must be a token id or null.")?;
-            let token = doc.token(id).ok_or_else(|| format!("No token {id}."))?;
+            let id = resolve_token_id(doc, value, "fill_token")?;
+            let token = doc.token(id).expect("resolved token exists");
             node.fill = token.value;
             node.fill_token = Some(id);
         }
@@ -713,13 +825,8 @@ fn set_color(
         None => None,
         Some(Value::Null) => Some(None),
         Some(value) => {
-            let id = value
-                .as_u64()
-                .ok_or_else(|| format!("{token_key} must be a token id or null."))?;
-            let value = doc
-                .token(id)
-                .ok_or_else(|| format!("No token {id}."))?
-                .value;
+            let id = resolve_token_id(doc, value, token_key)?;
+            let value = doc.token(id).expect("resolved token exists").value;
             Some(Some((id, value)))
         }
     };
@@ -867,7 +974,55 @@ document_save. Every result reports revision, saved_revision and dirty.";
 
 fn tools() -> Value {
     let id = json!({ "type": "string", "description": "Identifier returned by document_open or document_new." });
-    let color = json!({ "description": "\"#rrggbb\", \"#rrggbbaa\" or [r, g, b, a]." });
+    let color = json!({ "description": "\"#rgb\", \"#rrggbb\", \"#rrggbbaa\" or [r, g, b, a]." });
+    let token_ref =
+        json!({ "description": "Token id (integer), token name (string), or null to detach." });
+    let mut op_properties = json!({
+        "op": { "type": "string", "enum": [
+            "create_rectangle", "create_ellipse", "create_triangle", "create_shape", "create_text",
+            "update_layer", "delete_layers", "move_layer", "select_layers", "align_layers",
+            "distribute_layers", "duplicate_layers", "set_artboard",
+            "create_token", "update_token", "delete_token"
+        ] },
+        "id": { "description": "Layer or token id (or token name for update_token/delete_token)." },
+        "ids": { "type": "array", "items": { "type": "integer" }, "description": "Layer ids." },
+        "name": { "type": "string" },
+        "shape": { "type": "string", "enum": ["rectangle", "ellipse", "triangle"] },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "fill": color,
+        "fill_token": token_ref,
+        "radius": { "type": "number", "description": "Corner radius (rectangle layers only)." },
+        "text": { "type": "string" },
+        "font_size": { "type": "number" },
+    });
+    op_properties
+        .as_object_mut()
+        .expect("object")
+        .extend(
+            json!({
+                "line_height": { "type": ["number", "null"] },
+                "text_align": { "type": "string", "enum": ["left", "center", "right"] },
+                "fit_text": { "type": "boolean", "description": "When true on a text layer, sets height to the measured text height." },
+                "hidden": { "type": "boolean" },
+                "locked": { "type": "boolean" },
+                "index": { "type": "integer" },
+                "background": color,
+                "background_token": token_ref,
+                "canvas": color,
+                "canvas_token": token_ref,
+                "value": color,
+                "align": { "type": "string", "enum": ["left", "center", "center_x", "horizontal_center", "right", "top", "middle", "center_y", "vertical_center", "bottom"] },
+                "axis": { "type": "string", "enum": ["horizontal", "vertical"] },
+                "offset_x": { "type": "number" },
+                "offset_y": { "type": "number" }
+            })
+            .as_object()
+            .expect("object")
+            .clone(),
+        );
     json!([
         {
             "name": "document_new",
@@ -894,16 +1049,13 @@ fn tools() -> Value {
         },
         {
             "name": "document_apply",
-            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_rectangle, create_text {name,x,y,width,height,fill,fill_token,radius|text,font_size,line_height,text_align,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id}. A literal fill detaches a token; fill_token null detaches and keeps the color. Unknown fields are errors. Created ids are returned in order.",
+            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_rectangle, create_ellipse, create_triangle, create_shape, create_text {name,shape,x,y,width,height,fill,fill_token,radius|text,font_size,line_height,text_align,fit_text,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; select_layers {ids}; align_layers {ids,align}; distribute_layers {ids,axis}; duplicate_layers {ids,offset_x,offset_y}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id|name}. Tokens may be referenced by id or name. A literal fill detaches a token; fill_token null detaches and keeps the color. Unknown fields are errors. Created ids are returned in order.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id", "operations"],
                 "properties": {
                     "document_id": id,
                     "expected_revision": { "type": "integer", "description": "Reject the batch unless the document is at this revision." },
                     "operations": { "type": "array", "items": { "type": "object", "required": ["op"],
-                        "properties": { "op": { "type": "string", "enum": [
-                            "create_rectangle", "create_text", "update_layer", "delete_layers", "move_layer",
-                            "set_artboard", "create_token", "update_token", "delete_token"] },
-                            "fill": color, "value": color } } } } }
+                        "properties": op_properties } } } }
         },
         {
             "name": "document_undo",
