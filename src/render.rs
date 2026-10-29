@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 /// Largest PNG side, in pixels.
 pub const MAX_PNG_SIDE: u32 = 16_384;
-/// Largest PNG area, in pixels (about 256 MiB of RGBA working memory).
+/// Largest PNG area, in pixels (1 GiB for the floating-point working buffer).
 pub const MAX_PNG_PIXELS: u64 = 64 * 1024 * 1024;
 /// Accepted PNG export scales.
 pub const PNG_SCALE: std::ops::RangeInclusive<f32> = 0.1..=8.0;
@@ -272,6 +272,14 @@ fn fill_triangle(
             .ceil() as i64;
     let colors = v.map(|v| premultiplied(v.color));
     let edge = |p: Pos2, q: Pos2, r: Pos2| (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    // Include only top/left edges so shared edges are shaded once, even with alpha.
+    let owns_edge = |mut p: Pos2, mut q: Pos2| {
+        if area < 0.0 {
+            std::mem::swap(&mut p, &mut q);
+        }
+        q.y < p.y || (q.y == p.y && q.x > p.x)
+    };
+    let inclusive = [owns_edge(b, c), owns_edge(c, a), owns_edge(a, b)];
     for y in min_y..max_y {
         for x in min_x..max_x {
             let p = pos2(x as f32 + 0.5, y as f32 + 0.5);
@@ -283,7 +291,11 @@ fn fill_triangle(
                 edge(c, a, p) / area,
                 edge(a, b, p) / area,
             );
-            if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+            if [w0, w1, w2]
+                .into_iter()
+                .zip(inclusive)
+                .any(|(weight, inclusive)| weight < 0.0 || (weight == 0.0 && !inclusive))
+            {
                 continue;
             }
             let mut src: [f32; 4] =
@@ -300,6 +312,42 @@ fn fill_triangle(
             let keep = 1.0 - src[3];
             for i in 0..4 {
                 dst[i] = src[i] + dst[i] * keep;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn triangle_edges_are_owned_once_for_both_windings_and_diagonals() {
+        let vertices =
+            [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]].map(|[x, y]| egui::epaint::Vertex {
+                pos: pos2(x, y),
+                uv: Pos2::ZERO,
+                color: color([80, 120, 160, 128]),
+            });
+        for triangles in [[[0, 1, 2], [0, 2, 3]], [[0, 1, 3], [1, 2, 3]]] {
+            for reversed in [false, true] {
+                let mut buffer = vec![[0.0; 4]; 16];
+                for mut triangle in triangles {
+                    if reversed {
+                        triangle.swap(0, 2);
+                    }
+                    fill_triangle(
+                        &mut buffer,
+                        4,
+                        4,
+                        Rect::from_min_max(Pos2::ZERO, pos2(4.0, 4.0)),
+                        triangle.map(|i| &vertices[i]),
+                        None,
+                    );
+                }
+                for pixel in buffer {
+                    assert!((pixel[3] - 128.0 / 255.0).abs() < 0.00001, "{pixel:?}");
+                }
             }
         }
     }

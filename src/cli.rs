@@ -87,7 +87,7 @@ fn inspect(args: &[OsString]) -> Exit {
 
 fn export(args: &[OsString]) -> Exit {
     let mut file = None;
-    let (mut format, mut output, mut scale) = (None, None, 1.0f32);
+    let (mut format, mut output, mut scale) = (None, None, None::<f32>);
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.to_str() {
@@ -99,7 +99,7 @@ fn export(args: &[OsString]) -> Exit {
                     "--format" => format = value.to_str().map(str::to_ascii_lowercase),
                     "--output" => output = Some(PathBuf::from(value)),
                     _ => match value.to_str().and_then(|v| v.parse().ok()) {
-                        Some(value) => scale = value,
+                        Some(value) => scale = Some(value),
                         None => return Exit::Usage("--scale needs a number.".into()),
                     },
                 }
@@ -117,10 +117,10 @@ fn export(args: &[OsString]) -> Exit {
     if !matches!(format.as_str(), "html" | "svg" | "png") {
         return Exit::Usage(format!("Unknown format {format}; use html, svg or png."));
     }
-    if format != "png" && scale != 1.0 {
+    if format != "png" && scale.is_some() {
         return Exit::Usage("--scale applies only to png.".into());
     }
-    match export_file(&file, &format, &output, scale) {
+    match export_file(&file, &format, &output, scale.unwrap_or(1.0)) {
         Ok(()) => Exit::Ok,
         Err(error) => Exit::Failure(error),
     }

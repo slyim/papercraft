@@ -13,7 +13,7 @@ Paper comparison uses the retained [workflow evidence](../research/paper/workflo
 | Selection and geometry | Multi-selection, marquee, shared move/nudge, align/distribute, eight-way/group resize and aspect lock | Group resize is temporary selection geometry, not persistent groups or parent/child transforms |
 | Snapping | Artboard/layer edge-center matches, guides, screen-space tolerance, toggle and bypass | No creation snapping, equal-gap guides or pixel grid; exact Paper heuristics unknown |
 | Theme | Named color tokens, bindings, propagation, detach/delete preservation, undo/redo; conditional v1/v2 persistence | No other token types, theme modes or token duplication |
-| Exchange | HTML and SVG export from the authoritative model; bounded SVG fixture exchange previously checked in VectorCraft/FigCraft | No PNG/PDF export or image/path nodes/import; SVG explicit lines do not reproduce automatic wrapping or font metrics |
+| Exchange | HTML/SVG/PNG export from the authoritative model; PNG uses canvas text layout and bundled fonts; bounded SVG fixture exchange previously checked in VectorCraft/FigCraft | No PDF export or image/path nodes/import; SVG explicit lines do not reproduce automatic wrapping or font metrics |
 | Layout and styling | Absolute geometry, fill, uniform rectangle radius | No frames/flex, rotation/flip, strokes, per-corner radii, blend/effects or reusable components |
 | Agent interface | `inspect`/`export` commands; local stdio MCP with atomic edit batches, revision guard, render-to-PNG, undo/redo and save state ([agent interface](agent-interface.md)) | No live editing of an open editor tab; batch operations cover only the current rectangle/text/token model |
 

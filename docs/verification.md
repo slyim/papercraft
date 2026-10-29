@@ -439,21 +439,37 @@ The upload action reports a non-blocking Node 20→24 runtime warning and succee
 
 ## Agent interface: CLI, PNG export and local MCP (29 October 2026)
 
-Host: Windows 11 x86_64 (display scale 125%), Rust 1.99.1 `x86_64-pc-windows-gnu` with MinGW-w64 GCC 16.2. CI's Windows target remains MSVC; this host had no MSVC linker. Contract: [agent interface](agent-interface.md). Resolves [#4](https://github.com/slyim/papercraft/issues/4) and [#5](https://github.com/slyim/papercraft/issues/5).
+Finalization host: Windows x86_64, Rust 1.99.1 `x86_64-pc-windows-gnu`, Scoop MinGW. Review starts at `f2cefe5`, with parent `c735a37`. A separate main-only checkout was used; the design worktree and unrelated handoff file were not modified. Contract: [agent interface](agent-interface.md).
 
-### Completed checks
+### Review and fixes
 
-- Baseline before the change: `cargo test --locked`, 76 passing tests.
-- After the change: `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` and `cargo test --locked` pass with **92 tests**. New coverage: PNG size by scale, paint order and alpha blending, hidden-layer omission, transparent background, clipping, token-resolved colors, glyph pixels inside the text layer, scale/side/area limits, valid RGBA PNG bytes; CLI inspection determinism and source preservation, HTML/SVG output equal to the document API, PNG output, preservation of an existing destination after a failed export, exit status 2 for six usage errors; MCP atomic batches as one undo step, rollback naming the failing operation, stale `expected_revision`, unknown fields, invalid geometry, wrong-kind fields, invalid token names, unknown operations, save/dirty/undo state, close refusal, render image content, reopening an open file, handshake, notifications and JSON-RPC errors.
-- Actual executable in a throwaway directory: `inspect` on v1 (`legacy.crumbs`), token-bearing v2 and the Unicode exchange fixture; `export` to PNG (1× and 2×), HTML and SVG. Malformed JSON and a version-99 file exit 1 with an actionable message; `--format gif`, missing arguments, `--scale` on SVG and unknown options exit 2; `--scale 50` exits 1. An existing destination kept its bytes after both a PNG-limit and a newer-version failure; the source file's SHA-256 was unchanged.
-- PNG output inspected visually: the 2× starter document (1920×1280) and the 640×400 Unicode fixture show correct order, alpha overlap, clamped pill radius, wrapping and İ/é/Greek glyphs; CJK shows the same placeholder boxes as the canvas.
-- MCP over real stdio pipes, driven by an external JSON-RPC client: 20 of 20 checks passed, including a seven-operation batch (artboard color, two tokens, two rectangles, two text layers), rollback of a failing batch, stale-revision and unknown-field rejection, token propagation, a 960×1040 render with wrapped Turkish text, save/undo/redo dirty-state transitions, SVG export, refusal to export onto the document's own file, and a clean exit when stdin closes.
-- `cargo run --locked --example verify_native -- target/verification selected 1470x922` passes. Its screenshot is pixel-identical to the same scenario built from the unchanged baseline, so moving `paint_document` into `render.rs` did not change canvas output.
+- The PNG rasterizer included shared triangle edges twice. A regression failed with alpha **192 instead of 128** at pixel (2, 2) of a translucent artboard. Top/left edge ownership now shades each shared edge once. Tests cover translucent backgrounds/layers, both windings and both triangulation diagonals. Premultiplied source-over blending, bilinear sampling, ordered full/partial texture updates and pre-allocation side/area limits were reviewed. The floating-point buffer's documented maximum memory was corrected to 1 GiB; limits are unchanged.
+- CLI export accepted `--scale 1` for SVG because it compared the numeric value with the default. Supplying scale for non-PNG exports now exits 2 regardless of value, with a regression in the existing usage-error test.
+- MCP batches remain inside `Editor::apply`. An added regression verifies that both operation errors and final document-validation errors preserve the complete inspection state and redo history. Documentation now distinguishes indexed operation errors from final validation errors.
 
-### Found, not changed
+### Gates actually run
 
-- On this Windows host at 125% display scale, the native scenario window captures at 1260×1341 logical pixels and the fitted artboard is cropped on the left behind the tool rail. The baseline build produces the identical image, so this predates the change; Windows editor-window interaction remains unverified as before.
+| Command | Result |
+|---|---|
+| `cargo fmt --check` | Pass |
+| `cargo clippy --locked --all-targets -- -D warnings` | Pass |
+| `cargo test --locked` | **95 passed: 12 unit + 83 integration; zero failed or ignored; zero doctests** |
+| `cargo run --locked --example verify_native -- target/verification selected 1470x922` | Exit 0; model lifecycle, token/arrangement lifecycle and selected-scenario postconditions pass; screenshot opened |
 
-### Not verified
+Environment: `TEMP` and `TMP` explicitly point to `C:\Users\shyle\AppData\Local\Temp`. The sandbox's default package temp directory allowed creation but rejected atomic replacement: the first full test attempt stopped after 10 passing and 2 failing unit tests with `Cannot replace destination: Access is denied. (os error 5)`. The unchanged save logic succeeds in the explicitly writable temp root. A new test also initially compared a JSON float (`10.0`) with an integer; its assertion now checks the numeric value. Final gates above were rerun after these corrections. Incremental compilation was disabled for the final gates because this filesystem cannot hard-link its cache; warnings-denied Clippy was retained.
 
-- macOS and Linux runs of the new tests (expected through CI), MSVC builds on Windows, Windows release-subsystem console attachment for `inspect` in an interactive terminal (debug builds use the console subsystem), and use with a specific third-party MCP client beyond the stdio JSON-RPC client above.
+### Executable and real stdio checks
+
+An external harness ran the built debug executable from a throwaway directory under the writable temp root: **115 assertions passed**, separate from the Rust test count.
+
+- Deterministic `inspect` on copied `legacy.crumbs` (v1, six layers), `tokens-v2.papercraft` (v2, three layers/three tokens), and `svg-exchange.papercraft` (v1, five layers). Source SHA-256 values remained unchanged.
+- Exported the Unicode exchange fixture to PNG at scale 2, SVG and HTML. The **1280×800** PNG was opened: rounded blue geometry, translucent overlap, Unicode/Greek text, hidden-layer omission and text clipping were visible. CJK retains the bundled font's placeholder boxes.
+- Malformed JSON and version 99 exit 1; unknown format/option and SVG scale 1/2 exit 2; PNG scale 50 exits 1. Error stdout is empty and stderr contains diagnostics. Existing output bytes survive malformed/newer/scale-limit failures. Exporting onto the source is refused.
+- Real piped MCP: initialize, initialized notification, tools/list (11 tools), document_new, a five-operation token/rectangle/text batch, operation-error and validation-error rollback, stale-revision rejection, document_render, document_save, undo, failed batch with an existing redo history, and redo. The failing batches preserve the document and revision/history state. Saved JSON retains the text and reports a clean revision. Closing stdin exits **0**, without stray stdout or stderr.
+- MCP's **960×640** PNG was decoded and opened; text, rounded geometry and alpha overlap are visible.
+
+### Observed limits and remote verification
+
+The native selected screenshot still shows the artboard cropped on the left behind the tool rail at this host's display scaling. No baseline screenshot comparison was rerun, and no change for that layout issue is included. Physical input, native file-dialog choices, IME, screen readers, Windows release-subsystem console attachment, and a specific third-party MCP client were not exercised.
+
+Shell `git fetch origin` failed with `Could not resolve host: github.com`. The connected GitHub integration independently reported main at `c735a37`, so no rebase was needed. Remote publication must preserve identical reviewed trees and use a non-forced main update; the unpushed feature commit's identifier changes when recreated through the API. CI results must be associated with the published commit, not inferred from these GNU-host results. No version, tag or packaging change is included.

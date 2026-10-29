@@ -127,6 +127,16 @@ fn usage_errors_exit_with_status_two() {
             "2",
         ],
         vec!["export", "a.papercraft", "--frobnicate"],
+        vec![
+            "export",
+            "a.papercraft",
+            "--format",
+            "svg",
+            "--output",
+            "x",
+            "--scale",
+            "1",
+        ],
         vec!["mcp", "extra"],
     ] {
         let output = papercraft().args(&args).output().unwrap();
@@ -308,4 +318,59 @@ fn mcp_protocol_handshake_and_notifications() {
     assert_eq!(unknown["error"]["code"], -32601);
     let garbage = server.handle_line("{not json").unwrap();
     assert_eq!(garbage["error"]["code"], -32700);
+}
+
+#[test]
+fn rejected_batches_preserve_the_document_and_redo_history() {
+    let mut server = Server::default();
+    let id = new_document(&mut server);
+    let operations = json!([{ "op": "create_rectangle", "width": 10, "height": 10 }]);
+    assert!(
+        !call(
+            &mut server,
+            "document_apply",
+            json!({
+                "document_id": id, "operations": operations,
+            })
+        )
+        .0
+    );
+    call(&mut server, "document_undo", json!({ "document_id": id }));
+    let (_, before) = call(
+        &mut server,
+        "document_inspect",
+        json!({ "document_id": id }),
+    );
+    assert_eq!(before["state"]["can_redo"], true);
+    for failing in [
+        json!({ "op": "update_layer", "id": 999, "x": 1 }),
+        json!({ "op": "set_artboard", "width": -1 }),
+    ] {
+        assert!(
+            call(
+                &mut server,
+                "document_apply",
+                json!({
+                    "document_id": id,
+                    "operations": [{ "op": "create_rectangle" }, failing],
+                })
+            )
+            .0
+        );
+        let (_, after) = call(
+            &mut server,
+            "document_inspect",
+            json!({ "document_id": id }),
+        );
+        assert_eq!(after, before);
+    }
+    let (_, restored) = call(&mut server, "document_redo", json!({ "document_id": id }));
+    assert_eq!(restored["revision"], 1);
+    let (_, inspected) = call(
+        &mut server,
+        "document_inspect",
+        json!({ "document_id": id }),
+    );
+    assert_eq!(inspected["layers"].as_array().unwrap().len(), 1);
+    assert_eq!(inspected["layers"][0]["width"].as_f64(), Some(10.0));
 }

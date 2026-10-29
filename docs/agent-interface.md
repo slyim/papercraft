@@ -90,7 +90,7 @@ Colors are `"#rgb"`, `"#rrggbb"`, `"#rrggbbaa"` or `[r, g, b, a]`. A literal `fi
 
 Rules:
 
-1. The batch is applied to a copy of the document and committed through `Editor::apply`. If any operation fails, or the result fails document validation (geometry limits, finite numbers, token names, identifier rules), nothing changes and the error names the failing operation.
+1. The batch commits through `Editor::apply`, which retains a document snapshot for rollback. An operation error names its index; final document-validation errors report the invalid state. Either failure preserves the document and history.
 2. `expected_revision`, when given, must equal the current revision; otherwise the batch is rejected with the current revision so the client re-inspects first.
 3. Unknown fields and operation names are errors, not ignored.
 4. Created layer and token identifiers are returned in order as `created`.

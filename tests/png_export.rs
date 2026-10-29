@@ -93,6 +93,32 @@ fn transparent_artboard_keeps_alpha_and_layers_clip_to_it() {
 }
 
 #[test]
+fn translucent_surfaces_have_no_triangle_seams() {
+    for background in [true, false] {
+        let mut doc = document(Vec::new());
+        doc.height = doc.width;
+        doc.background = [0, 0, 0, 0];
+        if background {
+            doc.background = [80, 120, 160, 128];
+        } else {
+            doc.nodes
+                .push(rect(1, 0.0, 0.0, 40.0, 40.0, [80, 120, 160, 128]));
+            doc.next_id = 2;
+        }
+        let raster = rasterize(&doc, 1.0).unwrap();
+        for y in 2..38 {
+            for x in 2..38 {
+                assert_eq!(
+                    pixel(&raster, x, y)[3],
+                    128,
+                    "background={background}, ({x}, {y})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn bound_token_colors_are_resolved() {
     let tokens: Document =
         serde_json::from_str(include_str!("fixtures/tokens-v2.papercraft")).unwrap();
