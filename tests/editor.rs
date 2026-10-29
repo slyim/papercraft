@@ -1,7 +1,7 @@
 use eframe::egui;
 use papercraft::{
     app::{PaperCraftApp, Tool, View},
-    document::{DEFAULT_CANVAS, Document, Editor, NodeKind},
+    document::{CURRENT_VERSION, DEFAULT_CANVAS, Document, Editor, NodeKind},
     recents::Recents,
     ui,
 };
@@ -83,7 +83,7 @@ fn invalid_documents_and_edits_cannot_replace_valid_work() {
     invalid.nodes[1].id = invalid.nodes[0].id;
     assert!(invalid.validate().is_err());
     invalid = valid.clone();
-    invalid.version = 3;
+    invalid.version = CURRENT_VERSION + 1;
     assert!(invalid.validate().is_err());
     invalid = valid.clone();
     invalid.nodes[0].height = -1.0;

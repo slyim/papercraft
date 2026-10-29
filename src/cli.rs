@@ -208,6 +208,8 @@ fn describe_node(document: &Document, index: usize, node: &Node) -> Value {
         NodeKind::Text => {
             fields.insert("text".into(), json!(node.text));
             fields.insert("font_size".into(), json!(node.font_size));
+            fields.insert("line_height".into(), json!(node.line_height));
+            fields.insert("text_align".into(), json!(node.text_align.name()));
         }
     }
     value

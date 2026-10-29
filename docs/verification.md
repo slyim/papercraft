@@ -473,3 +473,18 @@ An external harness ran the built debug executable from a throwaway directory un
 The native selected screenshot still shows the artboard cropped on the left behind the tool rail at this host's display scaling. No baseline screenshot comparison was rerun, and no change for that layout issue is included. Physical input, native file-dialog choices, IME, screen readers, Windows release-subsystem console attachment, and a specific third-party MCP client were not exercised.
 
 Shell `git fetch origin` failed with `Could not resolve host: github.com`. The connected GitHub integration independently reported main at `c735a37`, so no rebase was needed. Remote publication must preserve identical reviewed trees and use a non-forced main update; the unpushed feature commit's identifier changes when recreated through the API. CI results must be associated with the published commit, not inferred from these GNU-host results. No version, tag or packaging change is included.
+
+## Format version 3, M1 typography (29 October 2026)
+
+Branch `feature/design-tools`. Host and toolchain as in the previous entry. Contract: [format version 3](format-v3.md). Implements the line-height and alignment slice of [#9](https://github.com/slyim/papercraft/issues/9).
+
+### Completed checks
+
+- `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` and `cargo test --locked` pass with **99 tests**. Two existing tests that used version 3 as an example of an unsupported future version now use `CURRENT_VERSION + 1`; their intent (reject newer files without modification) is unchanged.
+- New regressions: version selection (defaults keep version 1; either field writes version 3; clearing both returns to version 1 on save; defaults omitted from the file); all three fixtures load with default typography; a version 2 file carrying `line_height` is rejected and left byte-identical; zero, negative, non-finite and over-range line heights and typography on a rectangle are rejected atomically with no history entry; legacy HTML/SVG text output is unchanged (`line-height:1.2`, baselines at font size and 1.2 × font size); authored HTML/SVG mapping (`line-height:40px`, `text-align`, `text-anchor` middle/end with center/right x); PNG ink is left-, center- (±3 px) and right-aligned in the layer, and a 40-unit line-height increase moves the second line by 40 ± 2 px; MCP typography fields, kind and value errors, inspection, and `upgraded_from` on saving an opened version 1 file as version 3 and back to version 1.
+- The canvas text and the inline editor's text occupy the same rectangle (within 0.6 px) on entering edit mode for left/center/right alignment, each with natural and 44-unit line heights, at 1380×860.
+- Native window, new `typography` scenario at 1600×1000: the inspector shows the line-height field, its reset control and the alignment control with the current choice highlighted; the canvas paints the centered heading and right-aligned description. A CLI PNG export of the same document matches the canvas layout; its SVG places the centered heading at x = 456 and the right-aligned lines at x = 740.
+
+### Not verified
+
+- Physical typing in a centered or right-aligned layer. The shared layout does not keep trailing whitespace (as static painting never did), so a space typed at the end of a centered or right-aligned row may not visibly move the caret until the next character. The upgrade prompt's new wording in a native save is also unchecked.

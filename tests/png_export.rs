@@ -17,6 +17,8 @@ fn rect(id: u64, x: f32, y: f32, w: f32, h: f32, fill: [u8; 4]) -> Node {
         hidden: false,
         locked: false,
         fill_token: None,
+        line_height: None,
+        text_align: papercraft::document::TextAlign::Left,
     }
 }
 

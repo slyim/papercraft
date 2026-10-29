@@ -74,13 +74,13 @@ claude mcp add papercraft -- /path/to/papercraft mcp
 | `document_save` | Validate and write atomically to the document's file or `path` |
 | `document_close` | Refuses unsaved changes unless `discard: true` |
 
-Every successful result includes `state`: `document_id`, `path`, `revision`, `saved_revision`, `dirty`, `can_undo`, `can_redo`. `dirty` is `revision != saved_revision`, so undoing back to the saved state reports a clean document.
+`document_save` also reports the written `version`, and `upgraded_from` when it raised the format version of the document's own file. Every successful result includes `state`: `document_id`, `path`, `revision`, `saved_revision`, `dirty`, `can_undo`, `can_redo`. `dirty` is `revision != saved_revision`, so undoing back to the saved state reports a clean document.
 
 ### Batch operations
 
 `document_apply` takes `operations` (1–10,000) and optional `expected_revision`. Operations:
 
-- `create_rectangle`, `create_text`: `name`, `x`, `y`, `width`, `height`, `fill`, `fill_token`, `hidden`, `locked`, `index`; rectangles also `radius`, text also `text`, `font_size`.
+- `create_rectangle`, `create_text`: `name`, `x`, `y`, `width`, `height`, `fill`, `fill_token`, `hidden`, `locked`, `index`; rectangles also `radius`, text also `text`, `font_size`, `line_height` (1–4096 or `null` for the font's spacing) and `text_align` (`left`, `center`, `right`).
 - `update_layer`: `id` plus any field above valid for its kind.
 - `delete_layers` `{ids}`, `move_layer` `{id, index}`.
 - `set_artboard`: `name`, `width`, `height`, `background`, `background_token`, `canvas`, `canvas_token`.

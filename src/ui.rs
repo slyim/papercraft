@@ -501,6 +501,17 @@ pub fn inert_field(
 /// Icon buttons joined in one field, separated by thin rules.
 /// Returns the index of the clicked item.
 pub fn segmented(ui: &mut Ui, width: f32, items: &[(&str, &str)], enabled: bool) -> Option<usize> {
+    segmented_choice(ui, width, items, None, enabled)
+}
+
+/// [`segmented`] with the item at `selected` shown as the current choice.
+pub fn segmented_choice(
+    ui: &mut Ui,
+    width: f32,
+    items: &[(&str, &str)],
+    selected: Option<usize>,
+    enabled: bool,
+) -> Option<usize> {
     let (rect, _) = ui.allocate_exact_size(vec2(width, ROW), Sense::hover());
     ui.painter().rect_filled(rect, RADIUS, CONTROL);
     let cell = width / items.len().max(1) as f32;
@@ -515,7 +526,8 @@ pub fn segmented(ui: &mut Ui, width: f32, items: &[(&str, &str)], enabled: bool)
                 .vline(slot.left(), rect.y_range(), Stroke::new(1.0, SHELL));
         }
         let id = ui.id().with(("segment", *label));
-        if icon_button_at(ui, slot, id, glyph, 16.0, false, enabled, label).clicked() {
+        let current = selected == Some(index);
+        if icon_button_at(ui, slot, id, glyph, 16.0, current, enabled, label).clicked() {
             clicked = Some(index);
         }
     }

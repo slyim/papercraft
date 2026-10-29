@@ -32,6 +32,7 @@ const SCENARIOS: &[&str] = &[
     "long-text",
     "text-token",
     "text-tabs",
+    "typography",
 ];
 
 struct NativeCheck {
@@ -559,12 +560,25 @@ fn main() -> eframe::Result {
             if hover.is_some() { "-hover" } else { "" }
         ))
     };
+    // Typography: centered heading with an explicit line height, right-aligned body.
+    let document = if scenario == "typography" {
+        let mut styled = document.clone();
+        styled.nodes[1].text_align = papercraft::document::TextAlign::Center;
+        styled.nodes[1].line_height = Some(64.0);
+        styled.nodes[2].text_align = papercraft::document::TextAlign::Right;
+        styled.nodes[2].line_height = Some(36.0);
+        styled.normalize();
+        styled
+    } else {
+        document
+    };
     let mut app = PaperCraftApp::from_document(document.clone());
     match scenario.as_str() {
         "resize" => app.editor.select(Some(document.nodes[0].id)),
         "selected" => app.editor.select(document.nodes.get(3).map(|n| n.id)),
         "tool" => app.tool = Tool::Rectangle,
         "text-token" => app.editor.select(Some(document.nodes[0].id)),
+        "typography" => app.editor.select(Some(document.nodes[1].id)),
         "theme" => {
             app.theme = true;
             app.selected_token = document

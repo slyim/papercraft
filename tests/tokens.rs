@@ -125,7 +125,11 @@ fn invalid_references_are_rejected_without_replacing_work() {
     let cases = [
         ("dangling", serde_json::json!({"fill_token": 99}), "nodes"),
         ("v1 with tokens", serde_json::json!({"version": 1}), "root"),
-        ("newer", serde_json::json!({"version": 3}), "root"),
+        (
+            "newer",
+            serde_json::json!({ "version": papercraft::document::CURRENT_VERSION + 1 }),
+            "root",
+        ),
         (
             "duplicate token",
             serde_json::json!({"tokens": [

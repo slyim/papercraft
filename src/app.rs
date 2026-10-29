@@ -1,9 +1,9 @@
 use crate::document::{
-    Align, Axis, ColorTarget, ColorToken, Document, Editor, IdSet, MAX_COORDINATE, MAX_TEXT_BYTES,
-    NEW_TEXT, Node, NodeKind, TextStyle, atomic_write,
+    Align, Axis, ColorTarget, ColorToken, Document, Editor, IdSet, LINE_HEIGHT, MAX_COORDINATE,
+    MAX_TEXT_BYTES, NEW_TEXT, Node, NodeKind, TextAlign, TextStyle, atomic_write,
 };
 use crate::recents::Recents;
-use crate::render::{color, export_png, font_definitions, paint_document};
+use crate::render::{color, export_png, font_definitions, paint_document, text_job};
 use crate::snap::{self, Frame, Guide, Handle, SNAP_DISTANCE, Side, Snapper};
 use crate::ui::{
     self, ACCENT, BODY, BORDER, CAPTION, CONTROL, ICON, ICON_SMALL, ROW, Row, SHELL, SPACE_L,
@@ -889,7 +889,7 @@ impl PaperCraftApp {
         let geometry = match rect {
             Some(rect) => [rect.min.x, rect.min.y, rect.width(), rect.height()],
             None => {
-                let size = text_size(painter, NEW_TEXT, style.font_size, None);
+                let size = text_size(painter, NEW_TEXT, style.font_size, style.line_height, None);
                 [at.x, at.y, size.x, size.y]
             }
         };
@@ -1116,14 +1116,16 @@ impl PaperCraftApp {
             egui::Modal::new(egui::Id::new("format_upgrade")).show(&ctx, |ui| {
                 ui.set_max_width(400.0);
                 ui.label(RichText::new("Save this file in the new format?").size(16.0));
-                ui.label(
-                    RichText::new(
-                        "Color tokens need document format version 2. Earlier builds, including \
-                         the published v0.1.1, cannot open it. Saving as a new file keeps \
-                         the original unchanged.",
-                    )
-                    .color(TEXT_DIM),
-                );
+                let message = if self.editor.document.required_version() >= 3 {
+                    "Line height and text alignment need document format version 3. Earlier \
+                     builds, including the published v0.1.3, cannot open it. Saving as a new \
+                     file keeps the original unchanged."
+                } else {
+                    "Color tokens need document format version 2. Earlier builds, including \
+                     the published v0.1.1, cannot open it. Saving as a new file keeps \
+                     the original unchanged."
+                };
+                ui.label(RichText::new(message).color(TEXT_DIM));
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     let saved = if ui.button("Save as new file…").clicked() {
@@ -2138,6 +2140,55 @@ impl PaperCraftApp {
                             ui.available_width(),
                         );
                         finish |= r.drag_stopped() || r.lost_focus();
+                        let half =
+                            ((ui.available_width() - SPACE_S) / 2.0 / SPACE_XS).floor() * SPACE_XS;
+                        ui.horizontal(|ui| {
+                            // Without an authored value the field shows an approximation of
+                            // the font's spacing; editing it sets an explicit line height.
+                            let natural = (node.font_size * 1.2).round();
+                            let shown = node.line_height.unwrap_or(natural);
+                            let mut line = shown;
+                            let r = ui::number_field(
+                                ui,
+                                "Line",
+                                &mut line,
+                                LINE_HEIGHT,
+                                half - ROW - SPACE_XS,
+                            );
+                            if line != shown {
+                                node.line_height = Some(line);
+                            }
+                            finish |= r.drag_stopped() || r.lost_focus();
+                            let (slot, _) = ui.allocate_exact_size(vec2(ROW, ROW), Sense::hover());
+                            if ui::icon_button_at(
+                                ui,
+                                slot,
+                                egui::Id::new("line_height_auto"),
+                                icon::ARROW_COUNTER_CLOCKWISE,
+                                16.0,
+                                false,
+                                node.line_height.is_some(),
+                                "Use the font's line spacing",
+                            )
+                            .clicked()
+                            {
+                                node.line_height = None;
+                                finish = true;
+                            }
+                            let items = [
+                                (icon::TEXT_ALIGN_LEFT, "Align left"),
+                                (icon::TEXT_ALIGN_CENTER, "Align center"),
+                                (icon::TEXT_ALIGN_RIGHT, "Align right"),
+                            ];
+                            let aligns = [TextAlign::Left, TextAlign::Center, TextAlign::Right];
+                            let current = aligns.iter().position(|a| *a == node.text_align);
+                            if let Some(index) =
+                                ui::segmented_choice(ui, half, &items, current, true)
+                            {
+                                node.text_align = aligns[index];
+                                finish = true;
+                            }
+                        });
                         finish |= ui
                             .add(
                                 egui::TextEdit::multiline(&mut node.text)
@@ -3052,6 +3103,26 @@ impl PaperCraftApp {
             origin + vec2(node.x, node.y) * zoom,
             vec2(node.width, node.height) * zoom,
         );
+        // Lay out with the same job as static painting so text does not move when
+        // editing starts or ends.
+        let (font_size, line_height, align) = (node.font_size, node.line_height, node.text_align);
+        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+            let job = text_job(
+                text.as_str(),
+                font_size * zoom,
+                line_height,
+                align,
+                fill,
+                zoom,
+                wrap_width,
+            );
+            ui.fonts_mut(|f| f.layout_job(job))
+        };
+        let horizontal = match align {
+            TextAlign::Left => egui::Align::LEFT,
+            TextAlign::Center => egui::Align::Center,
+            TextAlign::Right => egui::Align::RIGHT,
+        };
         let response = ui.put(
             rect,
             egui::TextEdit::multiline(&mut node.text)
@@ -3061,7 +3132,9 @@ impl PaperCraftApp {
                 .frame(egui::Frame::NONE)
                 .margin(egui::Margin::ZERO)
                 .desired_width(rect.width())
-                .desired_rows(1),
+                .desired_rows(1)
+                .horizontal_align(horizontal)
+                .layouter(&mut layouter),
         );
         if response.changed() {
             if node.text.len() > MAX_TEXT_BYTES {
@@ -3075,15 +3148,28 @@ impl PaperCraftApp {
             let painter = ui.painter();
             if edit.auto_width {
                 // Content wider than the largest layer wraps at that width instead.
-                let size = text_size(painter, &node.text, node.font_size, None);
+                let size = text_size(painter, &node.text, node.font_size, node.line_height, None);
                 node.width = size.x.clamp(1.0, MAX_COORDINATE);
                 node.height = if size.x > MAX_COORDINATE {
-                    text_size(painter, &node.text, node.font_size, Some(MAX_COORDINATE)).y
+                    text_size(
+                        painter,
+                        &node.text,
+                        node.font_size,
+                        node.line_height,
+                        Some(MAX_COORDINATE),
+                    )
+                    .y
                 } else {
                     size.y
                 };
             } else {
-                let size = text_size(painter, &node.text, node.font_size, Some(node.width));
+                let size = text_size(
+                    painter,
+                    &node.text,
+                    node.font_size,
+                    node.line_height,
+                    Some(node.width),
+                );
                 node.height = node.height.max(size.y);
             }
             // Taller content overflows the layer at the largest height.
@@ -3095,14 +3181,25 @@ impl PaperCraftApp {
     }
 }
 
-/// Size in artboard units of `text` at `font_size`, wrapped at `width` when given.
-fn text_size(painter: &Painter, text: &str, font_size: f32, width: Option<f32>) -> Vec2 {
-    let font = FontId::proportional(font_size);
-    let galley = match width {
-        Some(width) => painter.layout(text.into(), font, Color32::WHITE, width),
-        None => painter.layout_no_wrap(text.into(), font, Color32::WHITE),
-    };
-    let size = galley.size().ceil();
+/// Size in artboard units of `text` at `font_size` and `line_height`, wrapped at
+/// `width` when given. Alignment does not change the size.
+fn text_size(
+    painter: &Painter,
+    text: &str,
+    font_size: f32,
+    line_height: Option<f32>,
+    width: Option<f32>,
+) -> Vec2 {
+    let job = text_job(
+        text,
+        font_size,
+        line_height,
+        TextAlign::Left,
+        Color32::WHITE,
+        1.0,
+        width.unwrap_or(f32::INFINITY),
+    );
+    let size = painter.layout_job(job).size().ceil();
     match width {
         Some(_) => size,
         None => size + vec2(AUTO_WIDTH_SLACK, 0.0),

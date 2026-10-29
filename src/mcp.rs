@@ -6,7 +6,10 @@
 //! saved state so a client can tell exactly what is on disk. Diagnostics go to stderr.
 
 use crate::cli::{describe, export_bytes, same_file};
-use crate::document::{ColorTarget, ColorToken, Document, Editor, Node, NodeKind};
+use crate::document::{ColorTarget, ColorToken, Document, Editor, Node, NodeKind, TextAlign};
+
+/// Operation fields that apply only to text layers.
+const TEXT_ONLY: [&str; 4] = ["text", "font_size", "line_height", "text_align"];
 use crate::render;
 use serde_json::{Map, Value, json};
 use std::{
@@ -26,6 +29,8 @@ struct Session {
     path: Option<PathBuf>,
     /// Revision last written to `path`; `None` when never saved.
     saved_revision: Option<u64>,
+    /// Format version of the file at `path` when it was opened or last saved.
+    file_version: u32,
 }
 
 impl Session {
@@ -166,6 +171,7 @@ impl Server {
                     editor: Editor::new(document),
                     path: None,
                     saved_revision: None,
+                    file_version: 0,
                 });
                 text(self.sessions[&id].state(&id))
             }
@@ -180,10 +186,12 @@ impl Server {
                     return text(session.state(id));
                 }
                 let document = Document::load(&path)?;
+                let file_version = document.required_version();
                 let id = self.insert(Session {
                     editor: Editor::new(document),
                     path: Some(path),
                     saved_revision: Some(0),
+                    file_version,
                 });
                 text(self.sessions[&id].state(&id))
             }
@@ -288,10 +296,21 @@ impl Server {
                 let path = path
                     .or_else(|| session.path.clone())
                     .ok_or("This document has no file yet; pass path.")?;
+                let version = session.editor.document.required_version();
+                let upgraded = session
+                    .path
+                    .as_ref()
+                    .is_some_and(|p| same_file(p, &path) && version > session.file_version);
                 session.editor.document.save(&path)?;
+                let previous = std::mem::replace(&mut session.file_version, version);
                 session.path = Some(path);
                 session.saved_revision = Some(session.editor.revision());
-                text(session.state(&id))
+                let mut value = session.state(&id);
+                value["version"] = json!(version);
+                if upgraded {
+                    value["upgraded_from"] = json!(previous);
+                }
+                text(value)
             }
             "document_close" => {
                 allow(args, &["document_id", "discard"])?;
@@ -362,13 +381,18 @@ fn apply_operation(
                     "radius",
                     "text",
                     "font_size",
+                    "line_height",
+                    "text_align",
                     "hidden",
                     "locked",
                     "index",
                 ],
             )?;
-            if !text && (op.contains_key("text") || op.contains_key("font_size")) {
-                return Err("text and font_size apply only to create_text.".into());
+            if !text && TEXT_ONLY.iter().any(|k| op.contains_key(*k)) {
+                return Err(format!(
+                    "{} apply only to create_text.",
+                    TEXT_ONLY.join(", ")
+                ));
             }
             if text && op.contains_key("radius") {
                 return Err("radius applies only to create_rectangle.".into());
@@ -404,6 +428,8 @@ fn apply_operation(
                 hidden: false,
                 locked: false,
                 fill_token: None,
+                line_height: None,
+                text_align: TextAlign::Left,
             };
             set_node_fields(doc, &mut node, op)?;
             let index = opt_u64(op, "index")?
@@ -427,6 +453,8 @@ fn apply_operation(
                     "radius",
                     "text",
                     "font_size",
+                    "line_height",
+                    "text_align",
                     "hidden",
                     "locked",
                 ],
@@ -439,9 +467,10 @@ fn apply_operation(
                 .ok_or_else(|| format!("No layer {id}."))?;
             let mut node = doc.nodes[position].clone();
             match node.kind {
-                NodeKind::Rectangle if op.contains_key("text") || op.contains_key("font_size") => {
+                NodeKind::Rectangle if TEXT_ONLY.iter().any(|k| op.contains_key(*k)) => {
                     return Err(format!(
-                        "Layer {id} is a rectangle; text and font_size do not apply."
+                        "Layer {id} is a rectangle; {} do not apply.",
+                        TEXT_ONLY.join(", ")
                     ));
                 }
                 NodeKind::Text if op.contains_key("radius") => {
@@ -579,6 +608,23 @@ fn set_node_fields(doc: &Document, node: &mut Node, op: &Map<String, Value>) -> 
     }
     if let Some(radius) = opt_f32(op, "radius")? {
         node.radius = radius;
+    }
+    match op.get("line_height") {
+        None => {}
+        Some(Value::Null) => node.line_height = None,
+        Some(_) => node.line_height = opt_f32(op, "line_height")?,
+    }
+    if let Some(align) = opt_str(op, "text_align")? {
+        node.text_align = match align {
+            "left" => TextAlign::Left,
+            "center" => TextAlign::Center,
+            "right" => TextAlign::Right,
+            _ => {
+                return Err(format!(
+                    "text_align must be left, center or right, not {align}."
+                ));
+            }
+        };
     }
     if let Some(size) = opt_f32(op, "font_size")? {
         node.font_size = size;
@@ -802,7 +848,7 @@ fn tools() -> Value {
         },
         {
             "name": "document_apply",
-            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_rectangle, create_text {name,x,y,width,height,fill,fill_token,radius|text,font_size,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id}. A literal fill detaches a token; fill_token null detaches and keeps the color. Unknown fields are errors. Created ids are returned in order.",
+            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_rectangle, create_text {name,x,y,width,height,fill,fill_token,radius|text,font_size,line_height,text_align,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id}. A literal fill detaches a token; fill_token null detaches and keeps the color. Unknown fields are errors. Created ids are returned in order.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id", "operations"],
                 "properties": {
                     "document_id": id,

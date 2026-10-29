@@ -1,5 +1,7 @@
 # PaperCraft document format
 
+Version 3 and the design-tool fields planned for it are specified in [format version 3](format-v3.md); the rules below continue to apply to it.
+
 Written 18 October 2026, before the color-token persistence change was implemented. This page records compatibility, downgrade limits and rollback for each format version.
 
 ## Version 1 (unchanged)

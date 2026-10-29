@@ -42,6 +42,8 @@ fn document(layers: usize) -> Document {
             hidden: false,
             locked: false,
             fill_token: None,
+            line_height: None,
+            text_align: papercraft::document::TextAlign::Left,
         });
     }
     doc.next_id = layers as u64 + 1;

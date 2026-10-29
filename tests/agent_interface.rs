@@ -374,3 +374,102 @@ fn rejected_batches_preserve_the_document_and_redo_history() {
     assert_eq!(inspected["layers"].as_array().unwrap().len(), 1);
     assert_eq!(inspected["layers"][0]["width"].as_f64(), Some(10.0));
 }
+
+#[test]
+fn mcp_typography_fields_and_upgrade_report() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("legacy.papercraft");
+    std::fs::copy("tests/fixtures/svg-exchange.papercraft", &path).unwrap();
+    let mut server = Server::default();
+    let (_, state) = call(
+        &mut server,
+        "document_open",
+        json!({ "path": path.to_str().unwrap() }),
+    );
+    let id = state["document_id"].as_str().unwrap().to_owned();
+    let (_, inspected) = call(
+        &mut server,
+        "document_inspect",
+        json!({ "document_id": id }),
+    );
+    let text = inspected["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["kind"] == "text")
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let rectangle = inspected["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["kind"] == "rectangle")
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let (error, message) = call(
+        &mut server,
+        "document_apply",
+        json!({ "document_id": id,
+        "operations": [{ "op": "update_layer", "id": rectangle, "text_align": "center" }] }),
+    );
+    assert!(error && message.as_str().unwrap().contains("rectangle"));
+    let (error, message) = call(
+        &mut server,
+        "document_apply",
+        json!({ "document_id": id,
+        "operations": [{ "op": "update_layer", "id": text, "text_align": "justify" }] }),
+    );
+    assert!(error && message.as_str().unwrap().contains("left, center or right"));
+    let (error, _) = call(
+        &mut server,
+        "document_apply",
+        json!({ "document_id": id,
+        "operations": [{ "op": "update_layer", "id": text, "line_height": 0 }] }),
+    );
+    assert!(error, "line height out of range");
+
+    let (error, state) = call(
+        &mut server,
+        "document_apply",
+        json!({ "document_id": id,
+        "operations": [{ "op": "update_layer", "id": text, "line_height": 36, "text_align": "right" }] }),
+    );
+    assert!(!error, "{state}");
+    let (_, inspected) = call(
+        &mut server,
+        "document_inspect",
+        json!({ "document_id": id }),
+    );
+    let layer = inspected["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["id"] == text)
+        .unwrap()
+        .clone();
+    assert_eq!(layer["line_height"], 36.0);
+    assert_eq!(layer["text_align"], "right");
+    assert_eq!(inspected["version"], 3);
+
+    let (error, state) = call(&mut server, "document_save", json!({ "document_id": id }));
+    assert!(!error);
+    assert_eq!(state["version"], 3);
+    assert!(state["upgraded_from"].as_u64().unwrap() < 3, "{state}");
+    assert_eq!(Document::load(&path).unwrap().required_version(), 3);
+
+    let (_, state) = call(
+        &mut server,
+        "document_apply",
+        json!({ "document_id": id,
+        "operations": [{ "op": "update_layer", "id": text, "line_height": null, "text_align": "left" }] }),
+    );
+    assert_eq!(state["dirty"], true);
+    let (_, state) = call(&mut server, "document_save", json!({ "document_id": id }));
+    assert_eq!(
+        state["version"], 1,
+        "removing the fields returns the fixture to its original version 1"
+    );
+    assert!(state.get("upgraded_from").is_none());
+}

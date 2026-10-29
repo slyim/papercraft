@@ -5,7 +5,7 @@
 //! resulting triangles in software. Text therefore wraps and shapes exactly as it does
 //! on the canvas, with the bundled egui fonts.
 
-use crate::document::{Document, NodeKind};
+use crate::document::{Document, NodeKind, TextAlign};
 use eframe::egui::{
     self, Color32, FontId, LayerId, Painter, Pos2, Rect, TextureId, epaint::Primitive, pos2, vec2,
 };
@@ -27,6 +27,43 @@ pub fn font_definitions() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     fonts
+}
+
+/// Layout of a text layer's content at `zoom`, wrapped at `wrap_width` screen units
+/// (`f32::INFINITY` for no wrapping). The canvas, the inline editor and headless
+/// rendering all use this job, so text does not move between them.
+pub fn text_job(
+    text: &str,
+    font_size: f32,
+    line_height: Option<f32>,
+    align: TextAlign,
+    color: Color32,
+    zoom: f32,
+    wrap_width: f32,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::simple(
+        text.to_owned(),
+        FontId::proportional(font_size),
+        color,
+        wrap_width,
+    );
+    job.halign = match align {
+        TextAlign::Left => egui::Align::LEFT,
+        TextAlign::Center => egui::Align::Center,
+        TextAlign::Right => egui::Align::RIGHT,
+    };
+    if let Some(height) = line_height {
+        for section in &mut job.sections {
+            section.format.line_height = Some(height * zoom);
+        }
+    }
+    job
+}
+
+/// Screen position at which a galley laid out with [`text_job`] is painted so its rows
+/// align inside `rect`.
+pub fn text_origin(rect: Rect, align: TextAlign) -> Pos2 {
+    pos2(rect.left() + rect.width() * align.anchor(), rect.top())
 }
 
 /// Paints the artboard and its visible layers. `preview` rounds font sizes so small
@@ -71,15 +108,19 @@ pub fn paint_document(
                     size = (size * 2.0).round() / 2.0;
                 }
                 let fill = color(document.node_fill(node));
-                let galley = content.layout(
-                    node.text.clone(),
-                    FontId::proportional(size),
+                let job = text_job(
+                    &node.text,
+                    size,
+                    node.line_height,
+                    node.text_align,
                     fill,
+                    zoom,
                     rect.width(),
                 );
+                let galley = content.layout_job(job);
                 content
                     .with_clip_rect(rect.intersect(artboard).intersect(clip))
-                    .galley(rect.min, galley, fill);
+                    .galley(text_origin(rect, node.text_align), galley, fill);
             }
         }
     }

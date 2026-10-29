@@ -40,7 +40,7 @@ pub const MAX_TEXT_BYTES: usize = 100_000;
 pub const DEFAULT_CANVAS: [u8; 4] = [40, 40, 40, 255];
 
 /// Newest document version this build reads and writes. See `docs/document-format.md`.
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 const MAX_TOKENS: usize = 1_000;
 const MAX_TOKEN_NAME: usize = 64;
 
@@ -80,6 +80,54 @@ pub struct Node {
     /// Color token bound to `fill` (version 2). `fill` keeps the synchronized value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fill_token: Option<u64>,
+    /// Baseline-to-baseline distance of text, in document units (version 3). `None`
+    /// keeps the font's natural line spacing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<f32>,
+    /// Horizontal alignment of text rows within the layer (version 3).
+    #[serde(default, skip_serializing_if = "TextAlign::is_left")]
+    pub text_align: TextAlign,
+}
+
+/// Horizontal alignment of text rows within a text layer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl TextAlign {
+    pub fn is_left(&self) -> bool {
+        *self == Self::Left
+    }
+    /// Fraction of the layer width at which rows are anchored.
+    pub fn anchor(self) -> f32 {
+        match self {
+            Self::Left => 0.0,
+            Self::Center => 0.5,
+            Self::Right => 1.0,
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Center => "center",
+            Self::Right => "right",
+        }
+    }
+}
+
+/// Accepted explicit line heights, in document units.
+pub const LINE_HEIGHT: std::ops::RangeInclusive<f32> = 1.0..=4096.0;
+
+impl Node {
+    /// Whether the layer uses a version 3 field.
+    pub fn uses_v3(&self) -> bool {
+        self.line_height.is_some() || !self.text_align.is_left()
+    }
 }
 
 /// Content of a newly placed text layer.
@@ -91,6 +139,8 @@ pub struct TextStyle {
     pub font_size: f32,
     pub fill: [u8; 4],
     pub fill_token: Option<u64>,
+    pub line_height: Option<f32>,
+    pub text_align: TextAlign,
 }
 
 impl Default for TextStyle {
@@ -99,6 +149,8 @@ impl Default for TextStyle {
             font_size: 28.0,
             fill: [35, 40, 48, 255],
             fill_token: None,
+            line_height: None,
+            text_align: TextAlign::Left,
         }
     }
 }
@@ -110,6 +162,8 @@ impl TextStyle {
             font_size: node.font_size,
             fill: node.fill,
             fill_token: node.fill_token,
+            line_height: node.line_height,
+            text_align: node.text_align,
         })
     }
 }
@@ -294,6 +348,8 @@ impl Document {
                 hidden: false,
                 locked: false,
                 fill_token: None,
+                line_height: None,
+                text_align: TextAlign::Left,
             });
             doc.next_id += 1;
         }
@@ -302,7 +358,13 @@ impl Document {
 
     /// Lowest format version that can represent this document.
     pub fn required_version(&self) -> u32 {
-        if self.tokens.is_empty() { 1 } else { 2 }
+        if self.nodes.iter().any(Node::uses_v3) {
+            3
+        } else if self.tokens.is_empty() {
+            1
+        } else {
+            2
+        }
     }
 
     fn has_bindings(&self) -> bool {
@@ -455,6 +517,11 @@ impl Document {
         if self.version == 1 && (!self.tokens.is_empty() || self.has_bindings()) {
             return Err("Version 1 documents cannot contain color tokens.".into());
         }
+        if self.version < 3 && self.nodes.iter().any(Node::uses_v3) {
+            return Err(
+                "Version 1 and 2 documents cannot contain line height or text alignment.".into(),
+            );
+        }
         if self.tokens.len() > MAX_TOKENS {
             return Err("Document exceeds the 1,000 token limit.".into());
         }
@@ -503,6 +570,15 @@ impl Document {
                 || !(1.0..=512.0).contains(&node.font_size)
             {
                 return Err("Layer geometry contains an invalid or out-of-range number.".into());
+            }
+            if node.kind != NodeKind::Text && node.uses_v3() {
+                return Err("Only text layers have line height and text alignment.".into());
+            }
+            if node
+                .line_height
+                .is_some_and(|h| !h.is_finite() || !LINE_HEIGHT.contains(&h))
+            {
+                return Err("Line height must be between 1 and 4,096.".into());
             }
         }
         if self.next_id == 0 {
@@ -603,7 +679,14 @@ impl Document {
             let fill = self.css_value(node.fill, node.fill_token);
             match node.kind {
                 NodeKind::Rectangle => html.push_str(&format!("<div aria-label=\"{}\" style=\"{style}background:{fill};border-radius:{}px\"></div>\n", escape(&node.name), node.radius)),
-                NodeKind::Text => html.push_str(&format!("<div style=\"{style}white-space:pre-wrap;overflow-wrap:break-word;font:{}px sans-serif;line-height:1.2;color:{fill}\">{}</div>\n", node.font_size, escape(&node.text))),
+                NodeKind::Text => {
+                    let line_height = node.line_height.map_or("1.2".into(), |h| format!("{h}px"));
+                    let align = match node.text_align {
+                        TextAlign::Left => String::new(),
+                        align => format!(";text-align:{}", align.name()),
+                    };
+                    html.push_str(&format!("<div style=\"{style}white-space:pre-wrap;overflow-wrap:break-word;font:{}px sans-serif;line-height:{line_height};color:{fill}{align}\">{}</div>\n", node.font_size, escape(&node.text)));
+                }
             }
         }
         html.push_str("</main></body></html>\n");
@@ -649,18 +732,25 @@ impl Document {
                     svg_fill(self.node_fill(node))
                 )),
                 NodeKind::Text => {
+                    let anchor = match node.text_align {
+                        TextAlign::Left => "",
+                        TextAlign::Center => " text-anchor=\"middle\"",
+                        TextAlign::Right => " text-anchor=\"end\"",
+                    };
                     svg.push_str(&format!(
-                        "<defs><clipPath id=\"clip-{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/></clipPath></defs>\n<text {label} clip-path=\"url(#clip-{})\" font-family=\"sans-serif\" font-size=\"{}\" xml:space=\"preserve\" {}>",
+                        "<defs><clipPath id=\"clip-{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/></clipPath></defs>\n<text {label} clip-path=\"url(#clip-{})\" font-family=\"sans-serif\" font-size=\"{}\"{anchor} xml:space=\"preserve\" {}>",
                         node.id, node.x, node.y, node.width, node.height,
                         node.id, node.font_size, svg_fill(self.node_fill(node))
                     ));
                     // shortcut: explicit lines only; share native text layout when wrapped SVG text is required.
                     let text = node.text.replace("\r\n", "\n").replace('\r', "\n");
+                    let x = node.x + node.width * node.text_align.anchor();
+                    // Without an authored line height, lines keep the earlier 1.2 × font size.
+                    let step = node.line_height.unwrap_or(node.font_size * 1.2);
                     for (line, text) in text.split('\n').enumerate() {
                         svg.push_str(&format!(
-                            "<tspan x=\"{}\" y=\"{}\">{}</tspan>",
-                            node.x,
-                            node.y + node.font_size * (1.0 + line as f32 * 1.2),
+                            "<tspan x=\"{x}\" y=\"{}\">{}</tspan>",
+                            node.y + node.font_size + line as f32 * step,
                             escape(text)
                         ));
                     }
@@ -993,6 +1083,12 @@ impl Editor {
             hidden: false,
             locked: false,
             fill_token,
+            line_height: if text { style.line_height } else { None },
+            text_align: if text {
+                style.text_align
+            } else {
+                TextAlign::Left
+            },
         });
         self.document.next_id = next;
         self.commit(before)?;
