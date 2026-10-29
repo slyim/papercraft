@@ -39,6 +39,9 @@ const SCENARIOS: &[&str] = &[
     "marquee-1b",
     "creation-1b",
     "navigation-1b",
+    "starter-frame",
+    "pen-v4",
+    "pen-cancel",
 ];
 
 struct NativeCheck {
@@ -283,6 +286,64 @@ impl NativeCheck {
 
     fn verify_scenario(&mut self, ctx: &egui::Context) {
         match self.scenario.as_str() {
+            "starter-frame" => {
+                let doc = self.app.editor.document.clone();
+                for (before, after) in self.initial_document.nodes.iter().zip(&doc.nodes) {
+                    assert!(
+                        (after.x - before.x - 40.0).abs() < 0.05
+                            && (after.y - before.y - 20.0).abs() < 0.05
+                    );
+                    assert_eq!([after.width, after.height], [before.width, before.height]);
+                }
+                assert_eq!(
+                    self.app.editor.selected_node().unwrap().name,
+                    "A place to begin"
+                );
+                assert_eq!(
+                    self.app.editor.selected_node().unwrap().kind,
+                    NodeKind::Frame
+                );
+                self.save_1b_artifacts();
+                self.app.editor.undo();
+                assert_eq!(self.app.editor.document, self.initial_document);
+                self.app.editor.redo();
+                assert_eq!(self.app.editor.document, doc);
+            }
+            "pen-cancel" => {
+                assert_eq!(self.app.editor.document, self.initial_document);
+                assert_eq!(self.app.editor.revision(), self.initial_revision);
+                assert!(!self.app.editor.can_undo());
+            }
+            "pen-v4" => {
+                let doc = self.app.editor.document.clone();
+                let path = doc.nodes.last().unwrap();
+                assert_eq!(path.kind, NodeKind::Path);
+                assert!(path.closed);
+                assert_eq!(path.anchors.len(), 3);
+                assert_eq!(doc.required_version(), 4);
+                let a = &papercraft::vector::world_anchors(path)[0];
+                let near = |p: [f32; 2], q: [f32; 2]| {
+                    assert!(
+                        (p[0] - q[0]).abs() < 0.1 && (p[1] - q[1]).abs() < 0.1,
+                        "{p:?} != {q:?}"
+                    )
+                };
+                near(a.outgoing.unwrap(), [250.0, 100.0]);
+                near(a.incoming.unwrap(), [70.0, 260.0]);
+                assert_eq!(a.mode, papercraft::vector::PointMode::Corner);
+                assert!(doc.export_svg().unwrap().contains(" C "));
+                assert!(doc.export_html().unwrap().contains(" C "));
+                self.save_1b_artifacts();
+                self.app.editor.undo();
+                self.app.editor.undo();
+                self.app.editor.undo();
+                assert_eq!(self.app.editor.document, self.initial_document);
+                self.app.editor.redo();
+                self.app.editor.redo();
+                self.app.editor.redo();
+                assert_eq!(self.app.editor.document, doc);
+                self.app.editor.select(Some(path.id));
+            }
             "offboard" => {
                 let node = self
                     .app
@@ -472,8 +533,10 @@ impl NativeCheck {
                     let second = self.app.editor.document.clone();
                     let second_id = node.id;
                     self.app.activate_tab(0);
-                    assert_eq!(self.app.editor.document.nodes[0].id, second_id);
-                    assert_eq!(self.app.editor.document.nodes[0].text, TEXT);
+                    let first = self.app.editor.selected_node().unwrap();
+                    assert_eq!(first.id, second_id);
+                    assert_eq!(first.kind, NodeKind::Text);
+                    assert_eq!(first.text, TEXT);
                     self.app.activate_tab(1);
                     assert_eq!(
                         self.app.editor.document, second,
@@ -636,6 +699,13 @@ fn main() -> eframe::Result {
         "selection-1b" | "marquee-1b" | "navigation-1b"
     ) {
         selection_1b_document()
+    } else if scenario == "starter-frame" {
+        let mut doc = Document::starter(true);
+        doc.nodes[1].locked = true;
+        doc.nodes.last_mut().unwrap().hidden = true;
+        doc
+    } else if matches!(scenario.as_str(), "pen-v4" | "pen-cancel") {
+        Document::starter(false)
     } else if scenario == "creation-1b" {
         let mut editor = Editor::new(Document::default());
         editor
@@ -673,6 +743,8 @@ fn main() -> eframe::Result {
             .unwrap()
             .unwrap();
         editor.document
+    } else if scenario == "text-tabs" {
+        Document::starter(false)
     } else if is_text_scenario(&scenario) {
         Document::default()
     } else if scenario == "exchange" {
@@ -981,6 +1053,95 @@ fn script(scenario: &str, size: [f32; 2], document: &Document) -> Vec<Vec<egui::
         modifiers: egui::Modifiers::NONE,
     };
     match scenario {
+        "starter-frame" => {
+            let a = at(8.0, 8.0);
+            let b = at(48.0, 28.0);
+            vec![
+                vec![egui::Event::PointerMoved(a), button(a, true)],
+                vec![egui::Event::PointerMoved(b)],
+                vec![button(b, false)],
+            ]
+        }
+        "pen-v4" | "pen-cancel" => {
+            let mut frames = vec![
+                vec![key(egui::Key::P, true)],
+                vec![key(egui::Key::P, false)],
+            ];
+            let mut click = |x, y| {
+                let p = at(x, y);
+                frames.extend([
+                    vec![egui::Event::PointerMoved(p), button(p, true)],
+                    vec![button(p, false)],
+                    vec![],
+                    vec![],
+                ]);
+            };
+            if scenario == "pen-cancel" {
+                click(150.0, 170.0);
+                click(370.0, 170.0);
+                frames.extend([
+                    vec![key(egui::Key::Escape, true)],
+                    vec![key(egui::Key::Escape, false)],
+                ]);
+                return frames;
+            }
+            let a = at(150.0, 170.0);
+            let h = at(210.0, 110.0);
+            frames.extend([
+                vec![egui::Event::PointerMoved(a), button(a, true)],
+                vec![egui::Event::PointerMoved(h)],
+                vec![button(h, false)],
+                vec![],
+            ]);
+            for (x, y) in [(370.0, 170.0), (330.0, 330.0), (150.0, 170.0)] {
+                let p = at(x, y);
+                frames.extend([
+                    vec![egui::Event::PointerMoved(p), button(p, true)],
+                    vec![button(p, false)],
+                    vec![],
+                    vec![],
+                ]);
+            }
+            frames.extend([
+                vec![key(egui::Key::Enter, true)],
+                vec![key(egui::Key::Enter, false)],
+                vec![],
+                vec![egui::Event::PointerMoved(a), button(a, true)],
+                vec![button(a, false)],
+                vec![],
+            ]);
+            let b = at(230.0, 80.0);
+            frames.extend([
+                vec![egui::Event::PointerMoved(h), button(h, true)],
+                vec![egui::Event::PointerMoved(b)],
+                vec![button(b, false)],
+                vec![],
+            ]);
+            let c = at(250.0, 100.0);
+            let alt = |p, pressed| egui::Event::PointerButton {
+                pos: p,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::ALT,
+            };
+            frames.extend([
+                vec![
+                    egui::Event::ModifiersChanged(egui::Modifiers::ALT),
+                    egui::Event::PointerMoved(b),
+                    alt(b, true),
+                ],
+                vec![
+                    egui::Event::ModifiersChanged(egui::Modifiers::ALT),
+                    egui::Event::PointerMoved(c),
+                ],
+                vec![
+                    egui::Event::ModifiersChanged(egui::Modifiers::ALT),
+                    alt(c, false),
+                ],
+                vec![],
+            ]);
+            frames
+        }
         "selection-1b" => {
             let corner = at(122.0, 102.0);
             let center = at(170.0, 150.0);
@@ -1146,7 +1307,7 @@ fn script(scenario: &str, size: [f32; 2], document: &Document) -> Vec<Vec<egui::
                 vec![],
             ]);
             frames.extend(create(scenario_text(scenario)));
-            // Both text layers now have ID 1. Undo in a fresh inline editor in
+            // IDs are tab-local. Undo in a fresh inline editor in
             // tab B must not revive any text from the previous tab/editor.
             frames.extend([
                 vec![key(egui::Key::Enter, true)],

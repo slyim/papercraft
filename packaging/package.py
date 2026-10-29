@@ -405,7 +405,7 @@ def main():
            else "Run papercraft.exe. No Rust or Node installation is needed.\n" if executable.endswith(".exe")
            else "Run ./papercraft from this folder. Requires glibc 2.35+, libxkbcommon-x11, a desktop session and OpenGL/EGL drivers. File dialogs use a desktop portal.\n")
         + "\nUse SHA256SUMS.txt from the release page to verify downloads.\n"
-        "Documents with tokens use format version 2; authored line height/alignment uses version 3. Older builds reject newer files without modification.\n"
+        "Native formats: basic documents v1, tokens v2, typography/toolkit v3, Bezier anchors/point modes v4. Writers choose the lowest representable version. Older builds reject newer files without modification; in-place upgrades require consent.\n"
         "For live agent edits, open the editor and run: papercraft mcp --live\n"
         "https://github.com/slyim/papercraft/releases/tag/v" + version + "\n",
         encoding="utf-8",

@@ -9,6 +9,12 @@ pub(crate) fn rect(bounds: [f32; 4]) -> Rect {
 
 /// Same fallback used by the released straight-path painter.
 pub(crate) fn path_stroke(document: &Document, node: &Node) -> ([u8; 4], f32) {
+    if !node.anchors.is_empty() {
+        return (
+            document.node_stroke(node).unwrap_or([0; 4]),
+            node.stroke_width,
+        );
+    }
     (
         document
             .node_stroke(node)
@@ -41,7 +47,9 @@ pub(crate) fn stroke_width(document: &Document, node: &Node) -> f32 {
 /// It is deliberately conservative at polygon joins and rounded corners.
 pub(crate) fn bounds(document: &Document, node: &Node) -> [f32; 4] {
     let mut b = node.bounds();
-    if node.kind == NodeKind::Path && !node.points.is_empty() {
+    if node.kind == NodeKind::Path && !node.anchors.is_empty() {
+        b = crate::vector::world_bounds(&crate::vector::world_anchors(node), node.closed);
+    } else if node.kind == NodeKind::Path && !node.points.is_empty() {
         b = [
             f32::INFINITY,
             f32::INFINITY,
@@ -70,6 +78,9 @@ pub(crate) fn contour(node: &Node) -> Vec<Pos2> {
     let r = rect(node.bounds());
     match node.kind {
         NodeKind::Path => {
+            if !node.anchors.is_empty() {
+                return crate::vector::flatten(node).unwrap_or_default();
+            }
             let mut points: Vec<_> = node
                 .points
                 .iter()
@@ -108,32 +119,6 @@ pub(crate) fn contour(node: &Node) -> Vec<Pos2> {
             points
         }
     }
-}
-
-/// Consistent turns AND one total turn: rejects collinear, concave and star/self-
-/// intersecting contours in O(n), without adding concave tessellation or rewriting data.
-fn convex(points: &[Pos2]) -> bool {
-    if points.len() < 3 {
-        return false;
-    }
-    let mut sign = 0.0_f32;
-    let mut turn = 0.0_f32;
-    for i in 0..points.len() {
-        let a = points[(i + 1) % points.len()] - points[i];
-        let b = points[(i + 2) % points.len()] - points[(i + 1) % points.len()];
-        if a.length_sq() == 0.0 || b.length_sq() == 0.0 {
-            continue;
-        }
-        let cross = a.x * b.y - a.y * b.x;
-        if cross != 0.0 {
-            if sign != 0.0 && sign.signum() != cross.signum() {
-                return false;
-            }
-            sign = cross;
-        }
-        turn += cross.atan2(a.dot(b));
-    }
-    sign != 0.0 && (turn.abs() - std::f32::consts::TAU).abs() < 0.01
 }
 
 fn segments(points: &[Pos2], closed: bool) -> impl Iterator<Item = (Pos2, Pos2)> + '_ {
@@ -195,24 +180,24 @@ fn area_corners(r: Rect) -> [Pos2; 4] {
         r.left_bottom(),
     ]
 }
-fn contains_convex(points: &[Pos2], p: Pos2) -> bool {
-    let mut positive = false;
-    let mut negative = false;
+fn contains_polygon(points: &[Pos2], p: Pos2) -> bool {
+    // Even-odd winding applies to convex, concave and self-intersecting contours.
+    let mut inside = false;
     for (a, b) in segments(points, true) {
-        let cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-        positive |= cross > 0.0;
-        negative |= cross < 0.0;
-        if positive && negative {
-            return false;
+        if point_segment_distance_sq(p, a, b) < 1e-10 {
+            return true;
+        }
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            inside = !inside;
         }
     }
-    true
+    inside
 }
 fn polygon_intersects(points: &[Pos2], area: Rect) -> bool {
     points.iter().any(|p| area.contains(*p))
         || area_corners(area)
             .into_iter()
-            .any(|p| contains_convex(points, p))
+            .any(|p| contains_polygon(points, p))
         || segments(points, true).any(|(a, b)| segment_intersects(a, b, area))
 }
 
@@ -228,13 +213,18 @@ pub(crate) fn intersects(document: &Document, node: &Node, area: Rect, tolerance
     }
     let points = contour(node);
     let closed = node.kind != NodeKind::Path || node.closed;
-    let convex = closed && (node.kind != NodeKind::Path || convex(&points));
+    let filled_contour = closed
+        && points.windows(3).any(|p| {
+            let a = p[1] - p[0];
+            let b = p[2] - p[0];
+            (a.x * b.y - a.y * b.x).abs() > 1e-8
+        });
     let fill = document.node_fill(node)[3] > 0
         || (matches!(
             node.kind,
             NodeKind::Rectangle | NodeKind::Frame | NodeKind::Ellipse
         ) && node.shader.is_some_and(|s| s.secondary[3] > 0));
-    let inside = convex && polygon_intersects(&points, area);
+    let inside = filled_contour && polygon_intersects(&points, area);
     if fill && inside {
         return true;
     }

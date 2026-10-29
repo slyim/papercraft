@@ -18,10 +18,50 @@ struct Check {
     finished: bool,
     screenshot: bool,
     fitted: bool,
+    frames: usize,
+    draft_ready: Option<mpsc::Sender<()>>,
+    busy_result: mpsc::Receiver<()>,
+    resume: Option<mpsc::Sender<()>>,
+    cancel_pen: bool,
+    resumed: bool,
 }
 
 impl eframe::App for Check {
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if self.frames == 0 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        let key = |key, pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        match self.frames {
+            8 => input.events.push(key(egui::Key::P, true)),
+            9 => input.events.push(key(egui::Key::P, false)),
+            10 | 11 => {
+                let p = egui::pos2(500.0, 450.0);
+                input.events.extend([
+                    egui::Event::PointerMoved(p),
+                    egui::Event::PointerButton {
+                        pos: p,
+                        button: egui::PointerButton::Primary,
+                        pressed: self.frames == 10,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            _ => {}
+        }
+        if self.cancel_pen {
+            input
+                .events
+                .extend([key(egui::Key::Escape, true), key(egui::Key::Escape, false)]);
+            self.cancel_pen = false;
+            self.resumed = true;
+        }
         if self.finished && !self.fitted {
             input
                 .events
@@ -41,8 +81,20 @@ impl eframe::App for Check {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.show(ui);
+        self.frames += 1;
+        if self.frames == 14 {
+            assert_eq!(self.app.editor.revision(), 0);
+            self.draft_ready.take().unwrap().send(()).unwrap();
+        }
+        if self.busy_result.try_recv().is_ok() {
+            self.cancel_pen = true;
+        }
+        if self.resumed && self.resume.is_some() {
+            assert_eq!(self.app.editor.revision(), 0);
+            self.resume.take().unwrap().send(()).unwrap();
+        }
         if !self.finished && self.result.try_recv().is_ok() {
-            assert_eq!(self.app.editor.document.nodes.len(), 10);
+            assert_eq!(self.app.editor.document.nodes.len(), 11);
             assert_eq!(self.app.editor.document.nodes[1].text, "Your workspace");
             assert_eq!(self.app.editor.document.nodes[6].text, "Project settings");
             assert!(self.app.editor.can_undo());
@@ -88,7 +140,15 @@ impl eframe::App for Check {
     }
 }
 
-fn client(binary: PathBuf, session: PathBuf, folder: PathBuf, send: mpsc::Sender<()>) {
+fn client(
+    binary: PathBuf,
+    session: PathBuf,
+    folder: PathBuf,
+    send: mpsc::Sender<()>,
+    ready: mpsc::Receiver<()>,
+    busy: mpsc::Sender<()>,
+    resume: mpsc::Receiver<()>,
+) {
     let mut child = Command::new(binary)
         .args(["mcp", "--live"])
         .arg(session)
@@ -124,21 +184,31 @@ fn client(binary: PathBuf, session: PathBuf, folder: PathBuf, send: mpsc::Sender
     let list = tool("document_list", json!({}));
     let docs: Value = serde_json::from_str(list["content"][0]["text"].as_str().unwrap()).unwrap();
     let doc = docs[0]["document_id"].clone();
+    ready.recv_timeout(Duration::from_secs(10)).unwrap();
+    let rejected = tool(
+        "document_apply",
+        json!({"document_id":doc,"operations":[{"op":"create_rectangle"}]}),
+    );
+    assert_eq!(rejected["isError"], true);
+    assert!(rejected.to_string().contains("Editor busy"));
+    busy.send(()).unwrap();
+    resume.recv_timeout(Duration::from_secs(10)).unwrap();
     let applied = tool(
         "document_apply",
         json!({"document_id":doc,"expected_revision":0,"operations":[
             {"op":"create_token","ref":"ink","name":"ink","value":"#20392e"},
             {"op":"create_token","ref":"accent","name":"accent","value":"#ff6b2b"},
-            {"op":"create_frame","ref":"workspace","name":"Workspace screen","x":-360,"y":70,"width":320,"height":400,"radius":0,"fill":"#f8f7f3"},
+            {"op":"create_frame","ref":"workspace","name":"Workspace screen","x":-360,"y":70,"width":320,"height":400,"radius":0,"clip":false,"fill":"#f8f7f3"},
             {"op":"create_text","parent":{"ref":"workspace"},"x":-336,"y":102,"width":272,"height":60,"text":"Your workspace","font_size":28,"fill_token":{"ref":"ink"}},
             {"op":"create_text","parent":{"ref":"workspace"},"x":-336,"y":182,"width":272,"height":100,"text":"Two local screens, built through external live MCP. No toolbar simulation.","font_size":18,"fill_token":{"ref":"ink"}},
             {"op":"create_rectangle","parent":{"ref":"workspace"},"x":-336,"y":374,"width":272,"height":48,"radius":8,"fill_token":{"ref":"accent"}},
             {"op":"create_text","parent":{"ref":"workspace"},"x":-320,"y":384,"width":240,"height":28,"text":"Open project","font_size":20,"fill":"#fff","text_align":"center"},
-            {"op":"create_frame","ref":"settings","name":"Settings screen","x":1000,"y":70,"width":320,"height":400,"radius":0,"fill":"#f8f7f3"},
+            {"op":"create_frame","ref":"settings","name":"Settings screen","x":1000,"y":70,"width":320,"height":400,"radius":0,"clip":false,"fill":"#f8f7f3"},
             {"op":"create_text","parent":{"ref":"settings"},"x":1024,"y":102,"width":272,"height":60,"text":"Project settings","font_size":28,"fill_token":{"ref":"ink"}},
             {"op":"create_text","parent":{"ref":"settings"},"x":1024,"y":182,"width":272,"height":100,"text":"Local files\nShared editing history\nPortable document state","font_size":18,"line_height":28,"fill_token":{"ref":"ink"}},
             {"op":"create_rectangle","parent":{"ref":"settings"},"x":1024,"y":374,"width":272,"height":48,"radius":8,"fill_token":{"ref":"accent"}},
-            {"op":"create_text","parent":{"ref":"settings"},"x":1040,"y":384,"width":240,"height":28,"text":"Save settings","font_size":20,"fill":"#fff","text_align":"center"}
+            {"op":"create_text","parent":{"ref":"settings"},"x":1040,"y":384,"width":240,"height":28,"text":"Save settings","font_size":20,"fill":"#fff","text_align":"center"},
+            {"op":"create_path","parent":{"ref":"workspace"},"name":"Authored curve","x":-330,"y":290,"width":260,"height":52,"fill":"#00000000","stroke":"#7564ff","stroke_width":3,"anchors":[{"position":[0,0.5],"outgoing":[0.2,-0.4]},{"position":[1,0.5],"incoming":[0.8,1.4]}]}
         ]}),
     );
     assert_eq!(applied["isError"], false);
@@ -160,7 +230,23 @@ fn client(binary: PathBuf, session: PathBuf, folder: PathBuf, send: mpsc::Sender
         inspected["capabilities"]["selection_rules"]["pointer_stroke_tolerance_screen_points"],
         5.0
     );
-    assert_eq!(inspected["layers"].as_array().unwrap().len(), 10);
+    assert_eq!(inspected["layers"].as_array().unwrap().len(), 11);
+    assert_eq!(inspected["version"], 4);
+    assert_eq!(
+        tool(
+            "document_apply",
+            json!({"document_id":doc,"operations":[{"op":"update_layer","id":1,"x":-380,"y":50}]})
+        )["isError"],
+        false
+    );
+    let moved = tool("document_inspect", json!({"document_id":doc}));
+    let moved: Value = serde_json::from_str(moved["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(moved["layers"][10]["x"], -350.0);
+    assert_eq!(moved["layers"][10]["y"], 270.0);
+    assert_eq!(
+        tool("document_undo", json!({"document_id":doc}))["isError"],
+        false
+    );
     assert_eq!(
         inspected["content_bounds"],
         json!([-360.0, 70.0, 1320.0, 470.0])
@@ -187,7 +273,19 @@ fn client(binary: PathBuf, session: PathBuf, folder: PathBuf, send: mpsc::Sender
         false
     );
     let reopened = Document::load(&saved).unwrap();
-    assert_eq!(reopened.nodes.len(), 10);
+    assert_eq!(reopened.nodes.len(), 11);
+    assert_eq!(reopened.required_version(), 4);
+    for (extension, text) in [
+        ("svg", reopened.export_svg().unwrap()),
+        ("html", reopened.export_html().unwrap()),
+    ] {
+        assert!(text.contains(" C "));
+        papercraft::document::atomic_write(
+            &folder.join(format!("live-native.{extension}")),
+            text.as_bytes(),
+        )
+        .unwrap();
+    }
     assert_eq!(reopened.hit_test([-335.0, 375.0]), Some(1));
     assert_eq!(reopened.hit_test([-200.0, 418.0]), Some(4));
     assert_eq!(
@@ -242,7 +340,12 @@ fn main() -> eframe::Result {
             let session = app.live_session_path().unwrap().to_owned();
             let (send, result) = mpsc::channel();
             let client_folder = folder.clone();
-            std::thread::spawn(move || client(binary, session, client_folder, send));
+            let (draft_ready, ready) = mpsc::channel();
+            let (busy, busy_result) = mpsc::channel();
+            let (resume, resumed) = mpsc::channel();
+            std::thread::spawn(move || {
+                client(binary, session, client_folder, send, ready, busy, resumed)
+            });
             Ok(Box::new(Check {
                 app,
                 result,
@@ -251,6 +354,12 @@ fn main() -> eframe::Result {
                 finished: false,
                 screenshot: false,
                 fitted: false,
+                frames: 0,
+                draft_ready: Some(draft_ready),
+                busy_result,
+                resume: Some(resume),
+                cancel_pen: false,
+                resumed: false,
             }))
         }),
     )

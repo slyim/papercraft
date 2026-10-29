@@ -197,20 +197,20 @@ pub fn describe(document: &Document) -> Value {
         "content_bounds": document.content_bounds(),
         "capabilities": {
             "workspace": "off-artboard absolute world geometry",
-            "selection": "shape-aware rectangles/rounded rectangles, ellipses, triangles and straight path/stroke geometry; text layout boxes",
+            "selection": "shape-aware rectangles/rounded rectangles, ellipses, triangles and bounded straight/cubic path geometry; text layout boxes",
             "selection_rules": {
                 "fill": "resolved alpha > 0; transparent shapes have no interior hit; rectangular shader footprint is partial",
                 "stroke": "inside rectangles/Frames; centered elsewhere; existing path fallback; geometric distance, not antialias/miter accuracy",
                 "pointer_stroke_tolerance_screen_points": crate::snap::SNAP_DISTANCE,
                 "marquee": "intersect or touch supported fill/stroke geometry; no pointer tolerance; ancestor rectangular clips, hiding and locking apply",
-                "closed_path_fill": "convex only; concave/degenerate/self-intersecting contours select segments only",
+                "closed_path_fill": "even-odd single contour, including concavity and self-intersection",
                 "precision": "bounded native contours, not glyph/curve/pixel accuracy"
             },
             "canvas_interactions": {"creation_snapping":true,"snap_bypass":"Command or Ctrl","navigation":"fit content/visible selection/artboard; pointer-anchored zoom; press-owned pan; tab-local transient view"},
             "png": {"regions":true,"frame_crop":true,"max_side":render::MAX_PNG_SIDE,"max_pixels":render::MAX_PNG_PIXELS},
             "html_svg": {"bounds":"artboard only","ancestor_clipping":false,"shaders":false,"text":"explicit SVG lines; fonts and wrapping differ"},
-            "vectors": "partial normalized straight polylines; closed fills are convex-only, stroke parity incomplete; Path preset is not authored Pen, no curve or point editing",
-            "hierarchy": "partial earlier-frame parent links with absolute child coordinates; no local transforms, group or reparent operations",
+            "vectors": "authored straight/cubic single contours, anchor/handle editing, bounded even-odd fills; v4 normalized anchors, v3 straight points; SVG curve input remains unsupported",
+            "hierarchy": "absolute child coordinates; shared subtree translation/duplicate/delete, container-only Frame resize, parent-first layer rows; no local transforms, general group/reparent/unwrap operations",
             "layout": false, "images":false, "components":false, "pages":false,
             "embedded_agent_execution": false
         },
@@ -302,6 +302,9 @@ fn describe_node(document: &Document, index: usize, node: &Node) -> Value {
         NodeKind::Ellipse | NodeKind::Triangle => {}
         NodeKind::Path => {
             fields.insert("points".into(), json!(node.points));
+            if !node.anchors.is_empty() {
+                fields.insert("anchors".into(), json!(node.anchors));
+            }
             fields.insert("closed".into(), json!(node.closed));
         }
         NodeKind::Text => {

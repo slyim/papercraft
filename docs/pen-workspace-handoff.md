@@ -1,6 +1,8 @@
-# Next update: editable starter Frame and authored Pen
+# Original handoff: editable starter Frame and authored Pen
 
-**Status: proposed behavior and implementation handoff, not implemented fixes.** The user prioritizes a familiar Illustrator/Figma-style Pen, an editable first Frame in an infinite workspace, Graphify, then a verified push to main and local install. The existing Rust/egui editor and visual direction remain authoritative. These are PaperCraft design decisions, not newly verified Paper/Illustrator/Figma parity claims.
+**Current source status:** the bounded update is implemented; see [verification](pen-workspace-verification.md) and [v4](format-v4.md). Findings and the section 3 prompt below are the original pre-implementation record, not a request to redo completed work. Publication/install have separate exact-commit gates.
+
+**Status at planning time: proposed behavior and implementation handoff, not implemented fixes.** The user prioritizes a familiar Illustrator/Figma-style Pen, an editable first Frame in an infinite workspace, Graphify, then a verified push to main and local install. The existing Rust/egui editor and visual direction remain authoritative. These are PaperCraft design decisions, not newly verified Paper/Illustrator/Figma parity claims.
 
 ## 1. Findings and evidence
 

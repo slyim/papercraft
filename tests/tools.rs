@@ -375,7 +375,14 @@ fn add_text(app: &mut PaperCraftApp, text: &str) -> u64 {
         .add_at(NodeKind::Text, 10.0, 10.0, 200.0, 60.0)
         .unwrap();
     let before = app.editor.document.clone();
-    app.editor.document.nodes[0].text = text.into();
+    let id = app.editor.selected().unwrap();
+    app.editor
+        .document
+        .nodes
+        .iter_mut()
+        .find(|n| n.id == id)
+        .unwrap()
+        .text = text.into();
     app.editor.commit(before).unwrap();
     app.editor.selected().unwrap()
 }
@@ -392,7 +399,11 @@ fn edit_inline(ctx: &egui::Context, app: &mut PaperCraftApp, text: &str) {
 
 #[test]
 fn inline_text_undo_stays_within_its_document_tab() {
-    let (ctx, mut app, _, _) = setup(Document::default());
+    // GUI New reserves ID 1 for its Frame; keep repeated text IDs across tabs.
+    let (ctx, mut app, _, _) = setup(Document {
+        next_id: 2,
+        ..Document::default()
+    });
     let a = add_text(&mut app, "A-original");
     edit_inline(&ctx, &mut app, "A-secret");
     assert_eq!(app.editor.selected_node().unwrap().text, "A-secret");

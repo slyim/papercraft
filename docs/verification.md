@@ -507,3 +507,7 @@ Branch audit: GitHub had only main. The sole additional local branch had one typ
 Limits: native display scaling still crops the left of the artboard on this host. Physical typing/IME, screen readers, third-party MCP-client setup and release-subsystem console attachment are not proven by these runs. GitHub CI/release results must be checked on the exact published source; they are not inferred from GNU-host tests.
 
 Release workflow run `40845160227` passed all five native build/installer jobs, including live-window checks on Linux/macOS. Its publication job failed before tag creation with `ModuleNotFoundError: No module named tomllib` because Ubuntu 22.04 defaulted to Python 3.10. Publication now explicitly installs Python 3.12 using the same pinned setup action as the native jobs. No binary or application code changes accompany this correction.
+
+## Editable Frames and authored Pen (29 October 2026)
+
+The [detailed verification ledger](pen-workspace-verification.md) records the bounded Frame/Pen/v4 update after preservation checkpoint `9a5d705`: **165 passing Rust tests**, formatting/Clippy/release-build gates, native Frame/Pen/cancellation runs at 1380×860 and 960×680, real stdio/live-MCP busy/curve/subtree/save/history proof, Chromium-rendered cubic SVG/HTML and artifact hashes. Historical convex-only/missing-Pen and pre-v4 statements above describe their original revisions, not current source. Publication and installed-bundle proof are distinct gated checks; machine-specific results are retained under ignored `target/verification/pen-v4/`.

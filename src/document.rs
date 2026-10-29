@@ -40,7 +40,7 @@ pub const MAX_TEXT_BYTES: usize = 100_000;
 pub const DEFAULT_CANVAS: [u8; 4] = [40, 40, 40, 255];
 
 /// Newest document version this build reads and writes. See `docs/document-format.md`.
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 4;
 const MAX_TOKENS: usize = 1_000;
 const MAX_TOKEN_NAME: usize = 64;
 
@@ -248,6 +248,9 @@ pub struct Node {
     /// Normalized `[0.0..=1.0, 0.0..=1.0]` points within the layer bounds for `NodeKind::Path` (version 3).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub points: Vec<[f32; 2]>,
+    /// Canonical normalized Bézier anchors (v4), mutually exclusive with points.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<crate::vector::Anchor>,
     /// Whether a `NodeKind::Path` contour is closed (version 3).
     #[serde(default, skip_serializing_if = "is_false")]
     pub closed: bool,
@@ -281,6 +284,7 @@ impl Default for Node {
             stroke_token: None,
             stroke_width: 0.0,
             points: Vec::new(),
+            anchors: Vec::new(),
             closed: false,
             shader: None,
         }
@@ -682,8 +686,43 @@ impl Document {
         doc
     }
 
+    /// New GUI documents use an ordinary editable Frame, not the legacy export backing.
+    pub fn starter(sample: bool) -> Self {
+        let mut doc = if sample {
+            Self::example()
+        } else {
+            Self::default()
+        };
+        let id = doc.next_id;
+        doc.next_id += 1;
+        let frame = Node {
+            id,
+            name: if sample {
+                "A place to begin".into()
+            } else {
+                "Frame 1".into()
+            },
+            kind: NodeKind::Frame,
+            width: doc.width,
+            height: doc.height,
+            fill: doc.background,
+            clip: false,
+            ..Node::default()
+        };
+        for node in &mut doc.nodes {
+            node.parent = Some(id);
+        }
+        doc.nodes.insert(0, frame);
+        doc.background = [0; 4];
+        doc.normalize();
+        doc
+    }
+
     /// Lowest format version that can represent this document.
     pub fn required_version(&self) -> u32 {
+        if self.nodes.iter().any(|n| !n.anchors.is_empty()) {
+            return 4;
+        }
         if self.nodes.iter().any(Node::uses_v3)
             || !self.directives.is_empty()
             || self.next_directive_id > 1
@@ -760,9 +799,14 @@ impl Document {
         let arrangeable: IdSet = self
             .nodes
             .iter()
-            .filter(|n| target_ids.contains(&n.id) && !n.hidden && !n.locked)
+            .filter(|n| {
+                target_ids.contains(&n.id)
+                    && !self.is_effectively_hidden(n)
+                    && !self.is_effectively_locked(n)
+            })
             .map(|n| n.id)
             .collect();
+        let arrangeable = self.mutation_roots(&arrangeable);
         if arrangeable.is_empty() {
             return Err("No unlocked visible layers to align.".into());
         }
@@ -783,19 +827,25 @@ impl Document {
                 })
                 .expect("two or more arrangeable layers")
         };
-        for node in self
+        let targets: Vec<_> = self
             .nodes
-            .iter_mut()
+            .iter()
             .filter(|n| arrangeable.contains(&n.id))
-        {
-            match align {
-                Align::Left => node.x = reference[0],
-                Align::CenterX => node.x = (reference[0] + reference[2] - node.width) / 2.0,
-                Align::Right => node.x = reference[2] - node.width,
-                Align::Top => node.y = reference[1],
-                Align::CenterY => node.y = (reference[1] + reference[3] - node.height) / 2.0,
-                Align::Bottom => node.y = reference[3] - node.height,
-            }
+            .map(|n| {
+                let (mut x, mut y) = (n.x, n.y);
+                match align {
+                    Align::Left => x = reference[0],
+                    Align::CenterX => x = (reference[0] + reference[2] - n.width) / 2.0,
+                    Align::Right => x = reference[2] - n.width,
+                    Align::Top => y = reference[1],
+                    Align::CenterY => y = (reference[1] + reference[3] - n.height) / 2.0,
+                    Align::Bottom => y = reference[3] - n.height,
+                }
+                (n.id, [x, y, n.width, n.height])
+            })
+            .collect();
+        for (id, geometry) in targets {
+            self.set_geometry(id, geometry)?;
         }
         Ok(())
     }
@@ -812,9 +862,14 @@ impl Document {
         let arrangeable: IdSet = self
             .nodes
             .iter()
-            .filter(|n| target_ids.contains(&n.id) && !n.hidden && !n.locked)
+            .filter(|n| {
+                target_ids.contains(&n.id)
+                    && !self.is_effectively_hidden(n)
+                    && !self.is_effectively_locked(n)
+            })
             .map(|n| n.id)
             .collect();
+        let arrangeable = self.mutation_roots(&arrangeable);
         if arrangeable.len() < 3 {
             return Err("Distribute requires at least 3 unlocked visible layers.".into());
         }
@@ -845,14 +900,15 @@ impl Document {
         let mut position = first;
         let count = items.len();
         for (order, (index, _, size)) in items.into_iter().enumerate() {
-            let node = &mut self.nodes[index];
+            let node = &self.nodes[index];
             // The last layer keeps its position exactly.
             if order + 1 < count {
-                if horizontal {
-                    node.x = position;
+                let geometry = if horizontal {
+                    [position, node.y, node.width, node.height]
                 } else {
-                    node.y = position;
-                }
+                    [node.x, position, node.width, node.height]
+                };
+                self.set_geometry(node.id, geometry)?;
             }
             position += size + gap;
         }
@@ -870,7 +926,14 @@ impl Document {
                 return Err(format!("No layer {id}."));
             }
         }
-        let target_ids: IdSet = ids.iter().copied().collect();
+        let selected: IdSet = self
+            .nodes
+            .iter()
+            .filter(|n| ids.contains(&n.id) && !self.is_effectively_locked(n))
+            .map(|n| n.id)
+            .collect();
+        let target_ids = self.translation_ids(&selected);
+        let translation = self.clamp_translation(&target_ids, [dx, dy]);
         let originals: Vec<Node> = self
             .nodes
             .iter()
@@ -898,8 +961,8 @@ impl Document {
             {
                 node.parent = Some(mapped);
             }
-            node.x = (node.x + dx).clamp(-MAX_COORDINATE, MAX_COORDINATE);
-            node.y = (node.y + dy).clamp(-MAX_COORDINATE, MAX_COORDINATE);
+            node.x += translation[0];
+            node.y += translation[1];
             let mut name_end = node.name.len().min(251);
             while !node.name.is_char_boundary(name_end) {
                 name_end -= 1;
@@ -1092,6 +1155,103 @@ impl Document {
             }
         }
         crate::geometry::intersects(self, node, crate::geometry::rect(area), tolerance)
+    }
+
+    /// Selected ancestors own their subtree; a selected descendant is not moved twice.
+    pub fn mutation_roots(&self, ids: &IdSet) -> IdSet {
+        self.nodes
+            .iter()
+            .filter(|n| ids.contains(&n.id))
+            .filter(|n| {
+                let mut parent = n.parent;
+                for _ in 0..self.nodes.len() {
+                    let Some(id) = parent else {
+                        return true;
+                    };
+                    if ids.contains(&id) {
+                        return false;
+                    }
+                    parent = self
+                        .nodes
+                        .iter()
+                        .find(|p| p.id == id)
+                        .and_then(|p| p.parent);
+                }
+                false
+            })
+            .map(|n| n.id)
+            .collect()
+    }
+
+    /// Container movement includes hidden and locally locked descendants.
+    pub fn translation_ids(&self, ids: &IdSet) -> IdSet {
+        let mut all = ids.clone();
+        for &id in ids {
+            all.extend(self.descendants_of(id));
+        }
+        all
+    }
+
+    /// Exact subtree translation. Callers wanting bounded movement clamp the unit first.
+    pub fn translate_nodes(&mut self, ids: &IdSet, delta: [f32; 2]) -> Result<(), String> {
+        let ids = self.translation_ids(ids);
+        if !delta.iter().all(|v| v.is_finite())
+            || self.nodes.iter().filter(|n| ids.contains(&n.id)).any(|n| {
+                (n.x + delta[0]).abs() > MAX_COORDINATE || (n.y + delta[1]).abs() > MAX_COORDINATE
+            })
+        {
+            return Err(
+                "The whole frame movement must stay within world coordinate limits.".into(),
+            );
+        }
+        for node in self.nodes.iter_mut().filter(|n| ids.contains(&n.id)) {
+            node.x += delta[0];
+            node.y += delta[1];
+        }
+        Ok(())
+    }
+
+    /// Common position/size path for inspector and agent edits. Resizing never scales children.
+    pub fn set_geometry(&mut self, id: u64, geometry: [f32; 4]) -> Result<(), String> {
+        let node = self
+            .nodes
+            .iter()
+            .find(|n| n.id == id)
+            .ok_or("No such layer.")?;
+        if self.is_effectively_locked(node) {
+            return Err("Unlock the layer and its ancestors before editing geometry.".into());
+        }
+        let [x, y, w, h] = geometry;
+        if !geometry.iter().all(|v| v.is_finite()) || !valid_size(w) || !valid_size(h) {
+            return Err("Layer geometry contains an invalid or out-of-range number.".into());
+        }
+        let delta = [x - node.x, y - node.y];
+        self.translate_nodes(&std::iter::once(id).collect(), delta)?;
+        let node = self
+            .nodes
+            .iter_mut()
+            .find(|n| n.id == id)
+            .expect("existing layer");
+        node.width = w;
+        node.height = h;
+        Ok(())
+    }
+
+    pub fn delete_nodes(&mut self, ids: &[u64]) -> Result<(), String> {
+        if ids.iter().any(|id| !self.nodes.iter().any(|n| n.id == *id)) {
+            return Err("No such layer to delete.".into());
+        }
+        let roots: IdSet = self
+            .nodes
+            .iter()
+            .filter(|n| ids.contains(&n.id) && !self.is_effectively_locked(n))
+            .map(|n| n.id)
+            .collect();
+        let all = self.translation_ids(&roots);
+        self.nodes.retain(|n| !all.contains(&n.id));
+        self.directives
+            .retain(|d| d.layer_id.is_none_or(|id| !all.contains(&id)));
+        Ok(())
     }
 
     /// Returns all node IDs whose `parent` chain includes `frame_id`.
@@ -1455,7 +1615,11 @@ impl Document {
                     return Err("Only rectangles have a corner radius.".into());
                 }
             }
-            if node.kind == NodeKind::Path {
+            crate::vector::validate(node)?;
+            if self.version < 4 && !node.anchors.is_empty() {
+                return Err("Version 4 is required for Bézier anchors.".into());
+            }
+            if node.kind == NodeKind::Path && node.anchors.is_empty() {
                 if !(2..=10_000).contains(&node.points.len()) {
                     return Err("Path layers must contain between 2 and 10,000 points.".into());
                 }
@@ -1467,8 +1631,14 @@ impl Document {
                 }) {
                     return Err("Path points must be normalized coordinates in 0..=1.".into());
                 }
-            } else if !node.points.is_empty() || node.closed {
+            } else if node.kind != NodeKind::Path && (!node.points.is_empty() || node.closed) {
                 return Err("Only path layers can have path points or closed contours.".into());
+            }
+            if node.kind == NodeKind::Path && node.closed && self.node_fill(node)[3] > 0 {
+                crate::vector::fill_mesh(
+                    &crate::vector::flatten(node)?,
+                    eframe::egui::Color32::WHITE,
+                )?;
             }
             if let Some(shader) = &node.shader {
                 if !node.kind.supports_shader() {
@@ -1594,6 +1764,15 @@ impl Document {
         {
             return Err("Version 1 and 2 documents cannot contain version 3 fields, even at their defaults.".into());
         }
+        if version.is_some_and(|v| v < 4)
+            && fields["nodes"]
+                .as_array()
+                .is_some_and(|nodes| nodes.iter().any(|n| n.get("anchors").is_some()))
+        {
+            return Err(
+                "Version 1–3 documents cannot contain version 4 anchors, even at defaults.".into(),
+            );
+        }
         let mut doc: Self = serde_json::from_slice(&data)
             .map_err(|e| format!("Invalid PaperCraft document: {e}"))?;
         doc.validate()?;
@@ -1649,15 +1828,26 @@ impl Document {
     }
 
     fn svg_paint(&self, node: &Node) -> String {
-        let mut paint = svg_fill(self.node_fill(node));
-        if let Some(sc) = self.node_stroke(node) {
+        let mut paint = svg_fill(if node.kind.is_path() && !node.closed {
+            [0; 4]
+        } else {
+            self.node_fill(node)
+        });
+        let stroke = if node.kind.is_path() {
+            let (color, width) = crate::geometry::path_stroke(self, node);
+            (width > 0.0 && color[3] > 0).then_some((color, width))
+        } else {
+            self.node_stroke(node)
+                .map(|color| (color, node.stroke_width))
+        };
+        if let Some((sc, width)) = stroke {
             paint.push_str(&format!(
                 " stroke=\"#{:02x}{:02x}{:02x}\" stroke-opacity=\"{:.4}\" stroke-width=\"{}\"",
                 sc[0],
                 sc[1],
                 sc[2],
                 sc[3] as f32 / 255.0,
-                node.stroke_width
+                width
             ));
         }
         paint
@@ -1718,17 +1908,19 @@ impl Document {
                 NodeKind::Triangle => html.push_str(&format!("<div class=\"layer triangle\" aria-label=\"{}\" style=\"{style}background:{bg};clip-path:polygon(50% 0%,100% 100%,0% 100%){border};\"></div>\n", escape(&node.name))),
                 NodeKind::Path => {
                     let d = svg_path_d(node, true);
-                    let stroke_attr = if let Some(sc) = self.node_stroke(node) {
+                    let (sc,width) = crate::geometry::path_stroke(self,node);
+                    let stroke_attr = if width>0.0 && sc[3]>0 {
                         format!(
                             " stroke=\"{}\" stroke-width=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"",
                             css_color(sc),
-                            node.stroke_width
+                            width
                         )
                     } else {
                         String::new()
                     };
+                    let fill = if node.closed {fill} else {"none".into()};
                     html.push_str(&format!(
-                        "<svg class=\"layer path\" aria-label=\"{}\" style=\"{style}\" viewBox=\"0 0 {} {}\"><path d=\"{d}\" fill=\"{fill}\"{stroke_attr}/></svg>\n",
+                        "<svg class=\"layer path\" aria-label=\"{}\" style=\"{style}overflow:visible;\" viewBox=\"0 0 {} {}\"><path d=\"{d}\" fill=\"{fill}\" fill-rule=\"evenodd\"{stroke_attr}/></svg>\n",
                         escape(&node.name),
                         node.width,
                         node.height
@@ -1805,7 +1997,7 @@ impl Document {
                     self.svg_paint(node)
                 )),
                 NodeKind::Path => svg.push_str(&format!(
-                    "<path {label} d=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\" {}/>\n",
+                    "<path {label} d=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill-rule=\"evenodd\" {}/>\n",
                     svg_path_d(node, false),
                     self.svg_paint(node)
                 )),
@@ -1842,6 +2034,9 @@ impl Document {
 }
 
 fn svg_path_d(node: &Node, relative: bool) -> String {
+    if !node.anchors.is_empty() {
+        return crate::vector::svg_d(node, relative);
+    }
     let mut d = String::new();
     let ox = if relative { 0.0 } else { node.x };
     let oy = if relative { 0.0 } else { node.y };
@@ -2221,6 +2416,7 @@ impl Editor {
             } else {
                 Vec::new()
             },
+            anchors: Vec::new(),
             closed: false,
             shader,
         });
@@ -2243,32 +2439,8 @@ impl Editor {
 
     /// Deletes every selected unlocked layer (hidden ones included) as one step.
     pub fn delete(&mut self) -> Result<(), String> {
-        let mut selection = self.selected.clone();
-        for &id in &self.selection {
-            if self
-                .document
-                .nodes
-                .iter()
-                .any(|n| n.id == id && !n.locked && n.kind == NodeKind::Frame)
-            {
-                selection.extend(self.document.descendants_of(id));
-            }
-        }
-        self.transaction(|doc| {
-            doc.nodes.retain(|n| !selection.contains(&n.id) || n.locked);
-            let remaining: IdSet = doc.nodes.iter().map(|n| n.id).collect();
-            for node in &mut doc.nodes {
-                if let Some(pid) = node.parent
-                    && !remaining.contains(&pid)
-                {
-                    node.parent = None;
-                }
-            }
-            doc.directives
-                .retain(|d| d.layer_id.is_none_or(|lid| remaining.contains(&lid)));
-        })?;
-        self.check_selection();
-        Ok(())
+        let ids = self.selection.clone();
+        self.apply(|doc| doc.delete_nodes(&ids))
     }
 
     /// Duplicates every selected unlocked layer above the current layers, in their
@@ -2329,21 +2501,11 @@ impl Editor {
 
     /// Moves the arrangeable selection by `dx`, `dy` as one step.
     pub fn nudge(&mut self, dx: f32, dy: f32) -> Result<(), String> {
-        let mut ids: IdSet = self.arrangeable().into_iter().collect();
-        for id in ids.clone() {
-            for d in self.document.descendants_of(id) {
-                if self.document.nodes.iter().any(|n| n.id == d && !n.locked) {
-                    ids.insert(d);
-                }
-            }
-        }
-        let [dx, dy] = self.document.clamp_translation(&ids, [dx, dy]);
-        self.transaction(|doc| {
-            for node in doc.nodes.iter_mut().filter(|n| ids.contains(&n.id)) {
-                node.x += dx;
-                node.y += dy;
-            }
-        })
+        let ids = self
+            .document
+            .translation_ids(&self.arrangeable().into_iter().collect());
+        let delta = self.document.clamp_translation(&ids, [dx, dy]);
+        self.apply(|doc| doc.translate_nodes(&ids, delta))
     }
 
     /// Shows all selected layers when any is hidden; otherwise hides them. One step.

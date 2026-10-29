@@ -9,5 +9,5 @@
 - Keep implementation original. Use documented behavior and evidence to write the alternative; do not add Paper source, branding, fonts, or assets to application code.
 - Keep research evidence separate from original application code. The user has selected Rust and egui and authorized the first implementation slice; broader Paper parity still requires feature-specific evidence and scope.
 - Use the local Graphify code graph before broad cross-file exploration, then confirm results in source/tests. See `docs/code-graph.md` for privacy exclusions, coverage, health warnings and the key-free rebuild/query commands. Generated `graphify-out/` stays ignored; it is not behavior proof.
-- The next requested update is planned in `docs/pen-workspace-handoff.md`: editable starter Frame/workspace, then authored Pen/point/Bézier editing, followed by verified main integration and a local macOS install. It does not mark those changes implemented.
+- The bounded editable-Frame/authored-Pen update is implemented; current proof and limitations are in `docs/pen-workspace-verification.md`, with the v4 contract in `docs/format-v4.md`. `docs/pen-workspace-handoff.md` retains the original plan/source findings. Main publication and local macOS installation require their separate exact-commit/checksum gates.
 - Use concise, factual, impersonal communication.

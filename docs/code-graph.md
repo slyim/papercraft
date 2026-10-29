@@ -48,4 +48,6 @@ The initial graph reflects the **dirty working tree on `97e833e`**, including pe
 
 Extraction used **0 external-LLM input/output tokens**. This excludes the host-agent planning session. `graphify benchmark` reported an estimated 18.3× reduction against its generic full-corpus-query baseline; that is a tool estimate, not a measured saving for this task.
 
-The implementation handoff for the next editor update is [Pen and editable workspace](pen-workspace-handoff.md).
+The original implementation handoff is [Pen and editable workspace](pen-workspace-handoff.md); completion proof is in [Pen/workspace verification](pen-workspace-verification.md).
+
+After the authored-Pen/Frame implementation, code-only extraction and clustering were refreshed: **42 code/tooling files, 1,288 nodes, 3,063 edges, 66 communities**, with no external model calls. The added vector/Pen modules and regressions are indexed. Communities and inferred call edges remain navigation aids, not behavioral proof; the earlier raw-health numbers above describe the initial extraction only.

@@ -8,3 +8,4 @@ pub mod recents;
 pub mod render;
 pub mod snap;
 pub mod ui;
+pub mod vector;

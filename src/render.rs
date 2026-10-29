@@ -377,12 +377,16 @@ pub fn paint_document(
                     .map(|p| origin + p.to_vec2() * zoom)
                     .collect();
                 let fill = document.node_fill(node);
-                if pts.len() >= 3 && node.closed && fill[3] > 0 {
-                    content.add(egui::Shape::convex_polygon(
-                        pts.clone(),
-                        color(fill),
-                        egui::Stroke::NONE,
-                    ));
+                if pts.len() >= 3
+                    && node.closed
+                    && fill[3] > 0
+                    && let Ok(mut mesh) =
+                        crate::vector::fill_mesh(&crate::geometry::contour(node), color(fill))
+                {
+                    for v in &mut mesh.vertices {
+                        v.pos = origin + v.pos.to_vec2() * zoom;
+                    }
+                    content.add(egui::Shape::mesh(mesh));
                 }
                 if pts.len() >= 2 {
                     let (stroke_col, width) = crate::geometry::path_stroke(document, node);

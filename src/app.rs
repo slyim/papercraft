@@ -18,6 +18,8 @@ use egui_phosphor::regular as icon;
 use std::path::PathBuf;
 
 mod dashboard;
+mod pen;
+use pen::PenState;
 
 /// Left inset of the tab strip. On macOS the strip shares the title bar with the window
 /// controls.
@@ -116,7 +118,7 @@ pub const TOOLS: [ToolSpec; 7] = [
     ToolSpec {
         tool: Tool::Pen,
         glyph: icon::PEN_NIB,
-        label: "Path preset",
+        label: "Pen",
         key: Key::P,
         group: 1,
     },
@@ -141,7 +143,7 @@ impl Tool {
         match self {
             Tool::Frame => Some(NodeKind::Frame),
             Tool::Rectangle => Some(NodeKind::Rectangle),
-            Tool::Pen => Some(NodeKind::Path),
+            Tool::Pen => None,
             Tool::Text => Some(NodeKind::Text),
             Tool::Shader => Some(NodeKind::Rectangle),
             Tool::Select | Tool::Hand => None,
@@ -367,6 +369,7 @@ pub struct PaperCraftApp {
     drag: Option<Drag>,
     marquee: Option<Marquee>,
     creation: Option<Creation>,
+    pen: PenState,
     /// A cancelled press stays inert through release, even before drag threshold.
     ignore_canvas_pointer: bool,
     /// Last observed input state, including a press before the drag threshold.
@@ -435,6 +438,7 @@ impl PaperCraftApp {
             drag: None,
             marquee: None,
             creation: None,
+            pen: PenState::default(),
             ignore_canvas_pointer: false,
             pointer_down: false,
             pan_button: None,
@@ -534,7 +538,9 @@ impl PaperCraftApp {
         let recents = Recents::default_store()
             .map(Recents::load)
             .unwrap_or_default();
-        let mut app = Self::from_document(Document::example()).with_recents(recents);
+        let mut app = Self::from_document(Document::starter(true)).with_recents(recents);
+        app.editor
+            .select(app.editor.document.nodes.first().map(|n| n.id));
         if let Some(path) = std::env::args_os().nth(1) {
             app.open_path(PathBuf::from(path));
         }
@@ -647,7 +653,9 @@ impl PaperCraftApp {
                     .collect::<Vec<_>>()
             ));
         }
-        if self.text_edit.is_some()
+        if self.pen.busy()
+            || self.pen.edit.is_some()
+            || self.text_edit.is_some()
             || self.property_before.is_some()
             || self.renaming.is_some()
             || self.drag.is_some()
@@ -872,6 +880,7 @@ impl PaperCraftApp {
     /// Drops in-progress gestures and edits that belong to the active document.
     fn clear_transient(&mut self) {
         self.cancel_canvas_gesture();
+        self.pen = PenState::default();
         self.property_before = None;
         self.text_edit = None;
         self.renaming = None;
@@ -1004,6 +1013,7 @@ impl PaperCraftApp {
         self.drag = None;
         self.marquee = None;
         self.creation = None;
+        self.pen = PenState::default();
         self.text_edit = None;
         self.text_style = TextStyle::default();
         self.tool = Tool::Select;
@@ -1014,6 +1024,12 @@ impl PaperCraftApp {
     fn save_document(&mut self, save_as: bool) -> bool {
         if !self.document_open {
             return false;
+        }
+        if self.pen.draft.is_some() {
+            self.finish_pen(false);
+            if self.pen.draft.is_some() {
+                return false;
+            }
         }
         self.flush_properties();
         let path = if !save_as && self.path.is_some() {
@@ -1098,6 +1114,12 @@ impl PaperCraftApp {
     }
 
     fn request(&mut self, intent: Intent, ctx: &egui::Context) {
+        if matches!(intent, Intent::CloseDocument | Intent::Close) {
+            self.finish_pen(false);
+            if self.pen.draft.is_some() {
+                return;
+            }
+        }
         self.flush_properties();
         match intent {
             // New and opened documents get their own tabs; only closing can lose work.
@@ -1116,8 +1138,10 @@ impl PaperCraftApp {
     fn perform(&mut self, intent: Intent, ctx: &egui::Context) {
         match intent {
             Intent::New => {
-                self.open_tab(Document::default(), None);
-                self.status = "New document".into();
+                self.open_tab(Document::starter(false), None);
+                self.editor
+                    .select(self.editor.document.nodes.first().map(|n| n.id));
+                self.status = "New Frame document · draw anywhere on the canvas".into();
             }
             Intent::Open => {
                 if let Some(path) = rfd::FileDialog::new()
@@ -1147,6 +1171,10 @@ impl PaperCraftApp {
     }
 
     fn export(&mut self, format: ExportFormat) {
+        self.finish_pen(false);
+        if self.pen.draft.is_some() {
+            return;
+        }
         self.flush_properties();
         let (label, extension) = match format {
             ExportFormat::Html => ("HTML", "html"),
@@ -1205,7 +1233,10 @@ impl PaperCraftApp {
             ("Export SVG…", ExportFormat::Svg),
             ("Export PNG 1×…", ExportFormat::Png(1.0)),
             ("Export PNG 2×…", ExportFormat::Png(2.0)),
-            ("Export selection PNG 1×…", ExportFormat::SelectionPng),
+            (
+                "Export Frame / selection PNG 1×…",
+                ExportFormat::SelectionPng,
+            ),
         ] {
             if ui.button(label).clicked() {
                 ui.close();
@@ -1230,6 +1261,10 @@ impl PaperCraftApp {
     }
 
     fn set_tool(&mut self, tool: Tool) {
+        if tool != self.tool {
+            self.finish_pen(false);
+            self.pen = PenState::default();
+        }
         if self.text_edit.is_some() {
             self.flush_properties();
         }
@@ -1290,6 +1325,9 @@ impl PaperCraftApp {
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if self.pen_shortcuts(ctx) {
+            return;
+        }
         let command = |key| egui::KeyboardShortcut::new(Modifiers::COMMAND, key);
         if ctx.input_mut(|i| i.consume_shortcut(&command(Key::S))) {
             self.save_document(false);
@@ -1391,6 +1429,11 @@ impl PaperCraftApp {
             {
                 self.begin_text_edit(id, false);
             }
+            if let Some(node) = self.editor.selected_node().filter(|n| n.kind.is_path())
+                && ctx.input(|i| i.key_pressed(Key::Enter))
+            {
+                self.begin_path_edit(node.id);
+            }
             if ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::Num1)) {
                 self.fit = Some(FitTarget::Content);
             } else if ctx.input(|i| i.modifiers.shift && i.key_pressed(Key::Num2)) {
@@ -1459,14 +1502,15 @@ impl PaperCraftApp {
             || self.creation.is_some()
             || self.marquee.is_some()
             || self.pan_button.is_some();
-        if gesture || self.pointer_down {
+        if gesture || self.pointer_down || self.pen.busy() {
             let lost_focus = ctx.input(|i| {
                 !i.focused
                     || i.events
                         .iter()
                         .any(|event| matches!(event, egui::Event::WindowFocused(false)))
             });
-            let escape = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+            let escape = (gesture || self.pointer_down || self.pen.drag.is_some())
+                && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
             if lost_focus || escape {
                 self.cancel_canvas_gesture();
                 self.ignore_canvas_pointer = true;
@@ -1934,30 +1978,42 @@ impl PaperCraftApp {
             return;
         }
         let total = self.editor.document.nodes.len();
+        let mut children = std::collections::HashMap::<u64, Vec<usize>>::new();
+        for (i, n) in self.editor.document.nodes.iter().enumerate() {
+            children.entry(n.parent.unwrap_or(0)).or_default().push(i);
+        }
+        let mut stack: Vec<_> = children
+            .get(&0)
+            .into_iter()
+            .flatten()
+            .map(|&i| (i, 0usize))
+            .collect();
+        let mut order = Vec::with_capacity(total);
+        while let Some((i, depth)) = stack.pop() {
+            order.push((i, depth));
+            if let Some(children) = children.get(&self.editor.document.nodes[i].id) {
+                stack.extend(children.iter().map(|&i| (i, depth + 1)));
+            }
+        }
         // Only visible rows are built, so long layer lists cost the same as short ones.
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show_rows(ui, ROW, total, |ui, rows| {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
-                let nodes: Vec<_> = self
-                    .editor
-                    .document
-                    .nodes
+                let nodes: Vec<_> = order
                     .iter()
-                    .rev()
                     .skip(rows.start)
                     .take(rows.len())
-                    .map(|n| (n.id, n.name.clone(), n.kind, n.hidden, n.locked, n.parent))
+                    .map(|&(i, depth)| {
+                        let n = &self.editor.document.nodes[i];
+                        (n.id, n.name.clone(), n.kind, n.hidden, n.locked, depth)
+                    })
                     .collect();
-                for (id, name, kind, hidden, locked, parent) in nodes {
+                for (id, name, kind, hidden, locked, depth) in nodes {
                     let (rect, response) =
                         ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
                     let selected = self.editor.is_selected(id);
-                    let display_name = if parent.is_some() {
-                        format!("  ↳ {name}")
-                    } else {
-                        name.clone()
-                    };
+                    let display_name = format!("{}{name}", "  ".repeat(depth.min(16)));
                     response.widget_info(|| {
                         egui::WidgetInfo::selected(
                             egui::WidgetType::Button,
@@ -2418,7 +2474,7 @@ impl PaperCraftApp {
                             .fill(CONTROL)
                             .min_size(vec2(0.0, ROW)),
                     )
-                    .on_hover_text("Export artboard as HTML, SVG or PNG");
+                    .on_hover_text("HTML/SVG/PNG use the legacy artboard crop. Select a Frame for Frame/selection PNG.");
                 egui::Popup::menu(&export).show(|ui| self.export_menu(ui));
                 let zoom = ui
                     .add(
@@ -2529,6 +2585,8 @@ impl PaperCraftApp {
         let mut toggle_hidden = false;
         let mut shape_kind = None;
         let mut wrap_in_frame = false;
+        let mut edit_path = None;
+        let mut point_mode = None;
         let tokens = self.editor.document.tokens.clone();
         // TextEdit sizes its text from `margin`, so the frame margin must match it.
         let text_margin = egui::Margin::symmetric(8, 4);
@@ -2584,8 +2642,11 @@ impl PaperCraftApp {
             .iter()
             .position(|n| Some(n.id) == self.editor.selected())
         {
+            let locked = self
+                .editor
+                .document
+                .is_effectively_locked(&self.editor.document.nodes[index]);
             let node = &mut self.editor.document.nodes[index];
-            let locked = node.locked;
             let hidden = node.hidden;
             let kind = node.kind;
             let id = node.id;
@@ -2662,60 +2723,24 @@ impl PaperCraftApp {
                     inspector_body(ui, |ui| {
                         let r = ui::check_row(ui, &mut node.closed, "Closed path", "", !locked);
                         finish |= r.changed();
-                        let third = ((ui.available_width() - 2.0 * SPACE_S) / 3.0 / SPACE_XS)
-                            .floor()
-                            * SPACE_XS;
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_sized([third, ROW], egui::Button::new("Wave"))
-                                .clicked()
-                            {
-                                node.points = vec![
-                                    [0.0, 0.65],
-                                    [0.25, 0.2],
-                                    [0.5, 0.75],
-                                    [0.75, 0.25],
-                                    [1.0, 0.5],
-                                ];
-                                node.closed = false;
-                                finish = true;
-                            }
-                            if ui
-                                .add_sized([third, ROW], egui::Button::new("Star"))
-                                .clicked()
-                            {
-                                node.points = vec![
-                                    [0.5, 0.0],
-                                    [0.62, 0.35],
-                                    [0.98, 0.35],
-                                    [0.68, 0.57],
-                                    [0.79, 0.91],
-                                    [0.5, 0.70],
-                                    [0.21, 0.91],
-                                    [0.32, 0.57],
-                                    [0.02, 0.35],
-                                    [0.38, 0.35],
-                                ];
-                                node.closed = true;
-                                finish = true;
-                            }
-                            if ui
-                                .add_sized([third, ROW], egui::Button::new("Arrow"))
-                                .clicked()
-                            {
-                                node.points = vec![
-                                    [0.0, 0.35],
-                                    [0.6, 0.35],
-                                    [0.6, 0.1],
-                                    [1.0, 0.5],
-                                    [0.6, 0.9],
-                                    [0.6, 0.65],
-                                    [0.0, 0.65],
-                                ];
-                                node.closed = true;
-                                finish = true;
-                            }
-                        });
+                        if ui::wide_button(ui, "Edit points", "Enter", !locked).clicked() {
+                            edit_path = Some(id);
+                        }
+                        if self.pen.edit == Some(id) {
+                            ui.label(RichText::new(format!("{} points selected", self.pen.selected.len())).size(CAPTION).color(TEXT_DIM));
+                            ui.horizontal_wrapped(|ui| {
+                                for (label, mode) in [
+                                    ("Corner", crate::vector::PointMode::Corner),
+                                    ("Smooth", crate::vector::PointMode::Smooth),
+                                    ("Symmetric", crate::vector::PointMode::Symmetric),
+                                ] {
+                                    if ui.add_enabled(!self.pen.selected.is_empty(), egui::Button::new(label)).clicked() {
+                                        point_mode = Some(mode);
+                                    }
+                                }
+                            });
+                            ui.label(RichText::new("Click a segment to insert. Alt-click a point removes its handles.").size(CAPTION).color(TEXT_DIM));
+                        }
                     });
                 } else if kind == NodeKind::Text {
                     inspector_heading(ui, "Typography", true, false);
@@ -3092,6 +3117,21 @@ impl PaperCraftApp {
                 });
         }
         let before = snapshot.before(&mut self.editor.document);
+        if let Some(before) = &before
+            && let Some(index) = edited
+        {
+            let old = &before.nodes[index];
+            let new = &self.editor.document.nodes[index];
+            if old.kind.is_frame() && (old.x != new.x || old.y != new.y) {
+                let geometry = [new.x, new.y, new.width, new.height];
+                self.editor.document.nodes[index].x = old.x;
+                self.editor.document.nodes[index].y = old.y;
+                if let Err(error) = self.editor.document.set_geometry(old.id, geometry) {
+                    self.editor.document = before.clone();
+                    self.status = error;
+                }
+            }
+        }
         self.track_properties(before, finish, ui.ctx());
         if let Some(choice) = choice {
             self.flush_properties();
@@ -3113,6 +3153,13 @@ impl PaperCraftApp {
             self.flush_properties();
             let result = self.editor.set_shape(id, next_kind);
             self.result(result);
+        }
+        if let Some(id) = edit_path {
+            self.begin_path_edit(id);
+        }
+        if let Some(mode) = point_mode {
+            self.flush_properties();
+            self.set_point_mode(mode);
         }
         if wrap_in_frame {
             self.flush_properties();
@@ -3593,10 +3640,13 @@ impl PaperCraftApp {
     }
 
     fn cancel_canvas_gesture(&mut self) {
-        self.ignore_canvas_pointer |= self.drag.is_some()
+        self.ignore_canvas_pointer |= self.pointer_down
+            || self.pen.busy()
+            || self.drag.is_some()
             || self.creation.is_some()
             || self.marquee.is_some()
             || self.pan_button.is_some();
+        self.pen.cancel();
         self.pan_button = None;
         self.drag = None;
         self.creation = None;
@@ -3628,12 +3678,23 @@ impl PaperCraftApp {
 
     fn start_drag(&mut self, start: Pos2, nodes: IdSet, handle: Option<Handle>, frame: Frame) {
         let document = &self.editor.document;
+        if handle.is_some() && document.mutation_roots(&nodes) != nodes {
+            self.status =
+                "Resize the Frame alone; mixed ancestor/child resizing is unsupported.".into();
+            return;
+        }
+        let nodes = if handle.is_none() {
+            document.translation_ids(&nodes)
+        } else {
+            nodes
+        };
         let indices = (document.nodes.iter().enumerate())
             .filter(|(_, n)| nodes.contains(&n.id))
             .map(|(index, _)| index)
             .collect();
+        let excluded = document.translation_ids(&nodes);
         let others = (document.nodes.iter())
-            .filter(|n| !nodes.contains(&n.id))
+            .filter(|n| !excluded.contains(&n.id))
             .filter_map(|n| document.visible_bounds(n));
         let snapper = Snapper::new([0.0, 0.0, document.width, document.height], others);
         self.drag = Some(Drag {
@@ -3681,6 +3742,19 @@ impl PaperCraftApp {
                 node.width = (right - left).clamp(1.0, 100_000.0);
                 node.height = (bottom - top).clamp(1.0, 100_000.0);
             }
+            for &index in &drag.indices {
+                let original = &drag.before.nodes[index];
+                if original.kind.is_frame() {
+                    let delta = [nodes[index].x - original.x, nodes[index].y - original.y];
+                    let children = drag.before.descendants_of(original.id);
+                    for (node, before) in nodes.iter_mut().zip(&drag.before.nodes) {
+                        if children.contains(&node.id) {
+                            node.x = before.x + delta[0];
+                            node.y = before.y + delta[1];
+                        }
+                    }
+                }
+            }
             to
         } else {
             let mut offset = [delta.x.round(), delta.y.round()];
@@ -3724,7 +3798,13 @@ impl PaperCraftApp {
                 .clamp(MIN_ZOOM, 2.0);
             self.pan = (size * 0.5 - center) * self.zoom;
         }
-        let geometry_gesture = self.drag.is_some()
+        let geometry_gesture = self.pen.drag.is_some()
+            || self.pen.draft.as_ref().is_some_and(|_| {
+                self.pointer_down
+                    && self.pan_button.is_none()
+                    && !ui.input(|i| i.key_down(Key::Space))
+            })
+            || self.drag.is_some()
             || self.creation.is_some()
             || self.marquee.is_some()
             || self.ignore_canvas_pointer;
@@ -3799,24 +3879,29 @@ impl PaperCraftApp {
         }
         let origin = canvas.center() - size * self.zoom / 2.0 + self.pan;
         let artboard = Rect::from_min_size(origin, size * self.zoom);
-        painter.text(
-            artboard.min - vec2(0.0, SPACE_M),
-            Align2::LEFT_CENTER,
-            format!(
-                "{}   {} × {}",
-                self.editor.document.name, self.editor.document.width, self.editor.document.height
-            ),
-            FontId::proportional(CAPTION),
-            TEXT_DIM,
-        );
+        if self.editor.document.background_color()[3] > 0 {
+            painter.text(
+                artboard.min - vec2(0.0, SPACE_M),
+                Align2::LEFT_CENTER,
+                format!(
+                    "{}   {} × {}",
+                    self.editor.document.name,
+                    self.editor.document.width,
+                    self.editor.document.height
+                ),
+                FontId::proportional(CAPTION),
+                TEXT_DIM,
+            );
+        }
         if let Some(style) = self.editor.selected_node().and_then(TextStyle::of) {
             self.text_style = style;
         }
         self.sync_text_style();
-        let displayed = self
-            .drag
-            .as_ref()
-            .map_or(&self.editor.document, |drag| &drag.preview);
+        let displayed = self.pen.preview.as_ref().unwrap_or_else(|| {
+            self.drag
+                .as_ref()
+                .map_or(&self.editor.document, |drag| &drag.preview)
+        });
         paint_document(
             &painter,
             displayed,
@@ -3826,10 +3911,29 @@ impl PaperCraftApp {
             false,
             self.text_edit.as_ref().map(|e| e.id),
         );
+        for frame in displayed
+            .nodes
+            .iter()
+            .filter(|n| n.kind.is_frame() && !displayed.is_effectively_hidden(n))
+        {
+            let label = frame_label_rect(frame, origin, self.zoom);
+            painter.text(
+                label.left_center(),
+                Align2::LEFT_CENTER,
+                format!("{}   {} × {}", frame.name, frame.width, frame.height),
+                FontId::proportional(CAPTION),
+                if self.editor.is_selected(frame.id) {
+                    ACCENT
+                } else {
+                    TEXT_DIM
+                },
+            );
+        }
+        let screen_zoom = self.zoom;
         let screen = |n: &crate::document::Node| {
             Rect::from_min_size(
-                origin + vec2(n.x, n.y) * self.zoom,
-                vec2(n.width, n.height) * self.zoom,
+                origin + vec2(n.x, n.y) * screen_zoom,
+                vec2(n.width, n.height) * screen_zoom,
             )
         };
         let ppp = ui.ctx().pixels_per_point();
@@ -3841,6 +3945,13 @@ impl PaperCraftApp {
                 origin + vec2(frame[2], frame[3]) * zoom,
             )
         };
+        if self.pen_canvas(ui, &response, &painter, origin, panning) {
+            return;
+        }
+        let displayed = self
+            .drag
+            .as_ref()
+            .map_or(&self.editor.document, |drag| &drag.preview);
         let target = self.resize_target();
         // Hover previews what a click would select, so it is hidden while the pointer is
         // on a resize handle, during gestures and while text is edited in place.
@@ -4126,7 +4237,22 @@ impl PaperCraftApp {
                     let point = to_document(hit_point);
                     self.editor
                         .document
-                        .hit_test_with_tolerance([point.x, point.y], SNAP_DISTANCE / self.zoom)
+                        .nodes
+                        .iter()
+                        .rev()
+                        .find(|n| {
+                            n.kind.is_frame()
+                                && !self.editor.document.is_effectively_hidden(n)
+                                && !self.editor.document.is_effectively_locked(n)
+                                && frame_label_rect(n, origin, self.zoom).contains(hit_point)
+                        })
+                        .map(|n| n.id)
+                        .or_else(|| {
+                            self.editor.document.hit_test_with_tolerance(
+                                [point.x, point.y],
+                                SNAP_DISTANCE / self.zoom,
+                            )
+                        })
                 };
                 if let Some((handle, frame, ids)) = handle {
                     // A click on a handle keeps the selection.
@@ -4183,8 +4309,12 @@ impl PaperCraftApp {
                     .document
                     .hit_test_with_tolerance([point.x, point.y], SNAP_DISTANCE / self.zoom)
                     .and_then(|id| self.editor.document.nodes.iter().find(|n| n.id == id));
-                if let Some(id) = hit.filter(|n| n.kind == NodeKind::Text).map(|n| n.id) {
-                    self.begin_text_edit(id, false);
+                if let Some(node) = hit {
+                    if node.kind == NodeKind::Text {
+                        self.begin_text_edit(node.id, false);
+                    } else if node.kind == NodeKind::Path {
+                        self.begin_path_edit(node.id);
+                    }
                 }
             }
             if (response.dragged() || response.drag_stopped())
@@ -4372,6 +4502,16 @@ fn text_size(
         Some(_) => size,
         None => size + vec2(AUTO_WIDTH_SLACK, 0.0),
     }
+}
+
+fn frame_label_rect(node: &Node, origin: Pos2, zoom: f32) -> Rect {
+    Rect::from_min_size(
+        origin + vec2(node.x, node.y) * zoom - vec2(0.0, 24.0),
+        vec2(
+            (node.name.chars().count() as f32 * 7.0 + 110.0).max(140.0),
+            20.0,
+        ),
+    )
 }
 
 fn node_frame(node: &Node) -> Frame {

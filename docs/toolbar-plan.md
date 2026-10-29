@@ -1,5 +1,7 @@
 # Tool rail plan
 
+Historical plan. Current source uses an authored Pen (`P`), not the earlier preset/parser placeholder. See [Pen/workspace verification](pen-workspace-verification.md), [v4](format-v4.md), and the [current roadmap](editor-completion-plan.md); old “implemented” labels below are not parity evidence.
+
 18 October 2026, Europe/Istanbul. Proposed sequence for the full tool rail. Nothing here is implemented beyond what [implementation process](implementation-process.md) and [verification](verification.md) already record. Each milestone follows the change workflow in the implementation process: evidence, behavior contract, original implementation, verification, stop.
 
 ## Target rail

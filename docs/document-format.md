@@ -1,6 +1,6 @@
 # PaperCraft document format
 
-Current readers accept versions 1–3. The actual released v3 typography/toolkit collision is reconciled in [format version 3](format-v3.md); it is frozen at the v0.3.0 superset. Future persisted changes require v4 or later. The [current completion roadmap](editor-completion-plan.md) governs implementation, not the historical plans below.
+Current readers accept versions 1–4. The actual released v3 typography/toolkit collision is reconciled in [format version 3](format-v3.md); it remains frozen at the v0.3.0 superset. [Version 4](format-v4.md) adds normalized Bézier anchors/handles and point modes. Writers retain the lowest representable version; all in-place version increases retain explicit consent and atomic preservation. The [current completion roadmap](editor-completion-plan.md) governs implementation, not the historical plans below.
 
 Written 18 October 2026, before the color-token persistence change was implemented. This page records compatibility, downgrade limits and rollback for each format version.
 
@@ -23,7 +23,7 @@ Version 2 adds these fields. A version 1 document has none of them.
 
 **Writer rule.** PaperCraft writes the lowest version that can represent the document. A document with no tokens is written as version 1, without `tokens`, `next_token_id` or binding keys, so its bytes keep the version 1 shape and older PaperCraft can open it. A document with at least one token is written as version 2.
 
-**Reader rule at the v2 increment.** Those readers accepted versions 1 and 2 and rejected versions above 2. Current readers also accept v3. Version 1 containing token fields is rejected as malformed, even at default values. Unknown fields are still rejected. Bindings to missing tokens are rejected on load and on every commit, so an invalid reference can never be saved.
+**Reader rule at the v2 increment.** Those readers accepted versions 1 and 2 and rejected versions above 2. Current readers also accept v3 and v4. Version 1 containing token fields is rejected as malformed, even at default values. Unknown fields are still rejected. Bindings to missing tokens are rejected on load and on every commit, so an invalid reference can never be saved.
 
 ## Migration and preservation of originals
 

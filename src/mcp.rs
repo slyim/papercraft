@@ -640,6 +640,7 @@ fn apply_operation(
                     "stroke_width",
                     "radius",
                     "points",
+                    "anchors",
                     "svg_path",
                     "closed",
                     "shader",
@@ -764,6 +765,7 @@ fn apply_operation(
                     "stroke_width",
                     "radius",
                     "points",
+                    "anchors",
                     "svg_path",
                     "closed",
                     "shader",
@@ -783,6 +785,13 @@ fn apply_operation(
                 .position(|n| n.id == id)
                 .ok_or_else(|| format!("No layer {id}."))?;
             let mut node = doc.nodes[position].clone();
+            if doc.is_effectively_locked(&node)
+                && ["x", "y", "width", "height", "points", "anchors", "svg_path"]
+                    .iter()
+                    .any(|k| op.contains_key(*k))
+            {
+                return Err("Unlock the layer and its ancestors before editing geometry.".into());
+            }
             if let Some(shape) = opt_str(op, "shape")? {
                 if !node.kind.is_shape() {
                     return Err(format!(
@@ -806,6 +815,10 @@ fn apply_operation(
                 ));
             }
             set_node_fields(doc, &mut node, op)?;
+            let old = &doc.nodes[position];
+            if [node.x, node.y, node.width, node.height] != [old.x, old.y, old.width, old.height] {
+                doc.set_geometry(id, [node.x, node.y, node.width, node.height])?;
+            }
             doc.nodes[position] = node;
         }
         "delete_layers" => {
@@ -816,7 +829,7 @@ fn apply_operation(
                     return Err(format!("No layer {id}."));
                 }
             }
-            doc.nodes.retain(|n| !ids.contains(&n.id));
+            doc.delete_nodes(&ids)?;
         }
         "move_layer" => {
             allow(op, &["op", "id", "index"])?;
@@ -1032,6 +1045,14 @@ fn resolve_token_id(doc: &Document, value: &Value, field: &str) -> Result<u64, S
 }
 
 fn set_node_fields(doc: &Document, node: &mut Node, op: &Map<String, Value>) -> Result<(), String> {
+    if ["anchors", "points", "svg_path"]
+        .iter()
+        .filter(|key| op.contains_key(**key))
+        .count()
+        > 1
+    {
+        return Err("Path geometry inputs anchors/points/svg_path are mutually exclusive.".into());
+    }
     if let Some(name) = opt_str(op, "name")? {
         node.name = name.to_owned();
     }
@@ -1159,6 +1180,20 @@ fn set_node_fields(doc: &Document, node: &mut Node, op: &Map<String, Value>) -> 
         }
         node.stroke_width = width;
     }
+    if let Some(value) = op.get("anchors") {
+        if !node.kind.is_path() || op.contains_key("points") || op.contains_key("svg_path") {
+            return Err(
+                "anchors apply only to paths and are mutually exclusive with points/svg_path."
+                    .into(),
+            );
+        }
+        node.anchors =
+            serde_json::from_value(value.clone()).map_err(|e| format!("Invalid anchors: {e}"))?;
+        if !(2..=crate::vector::MAX_ANCHORS).contains(&node.anchors.len()) {
+            return Err("anchors requires 2–1,024 records.".into());
+        }
+        node.points.clear();
+    }
     if let Some(d) = opt_str(op, "svg_path")? {
         if !node.kind.is_path() {
             return Err(format!(
@@ -1168,6 +1203,7 @@ fn set_node_fields(doc: &Document, node: &mut Node, op: &Map<String, Value>) -> 
         }
         let (points, closed) = crate::document::parse_svg_path_points(d)?;
         node.points = points;
+        node.anchors.clear();
         node.closed = closed;
     }
     if let Some(points_val) = op.get("points") {
@@ -1178,6 +1214,7 @@ fn set_node_fields(doc: &Document, node: &mut Node, op: &Map<String, Value>) -> 
             ));
         }
         node.points = parse_points(points_val)?;
+        node.anchors.clear();
     }
     if let Some(closed) = opt_bool(op, "closed")? {
         if !node.kind.is_path() {
@@ -1501,6 +1538,7 @@ fn tools() -> Value {
                 "stroke": color,
                 "stroke_token": token_ref,
                 "stroke_width": { "type": "number", "minimum": 0, "maximum": 1000 },
+                "anchors": {"type":"array","minItems":2,"maxItems":1024,"description":"v4 normalized cubic anchors; mutually exclusive with points/svg_path; handles may extend outside 0–1","items":{"type":"object","additionalProperties":false,"required":["position"],"properties":{"position":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}},"incoming":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}},"outgoing":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}},"mode":{"enum":["corner","smooth","symmetric"]}}}},
                 "points": { "type": "array", "minItems":2, "maxItems":10000, "items": { "type": "array", "minItems":2, "maxItems":2, "items": { "type": "number", "minimum":0, "maximum":1 } }, "description": "Normalized straight path vertices; not curve control points (path layers only)." },
                 "svg_path": { "type": "string", "description": "One absolute M/L contour with optional final Z, normalized into vertices. Relative/curve/multiple-subpath input rejects (path layers only)." },
                 "closed": { "type": "boolean", "description": "Whether the vector path is closed (path layers only)." },
@@ -1539,7 +1577,7 @@ fn tools() -> Value {
         },
         {
             "name": "document_apply",
-            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_frame, create_rectangle, create_ellipse, create_triangle, create_shape, create_path, create_text {name,shape,parent,clip,x,y,width,height,fill,fill_token,stroke,stroke_token,stroke_width,radius,points,svg_path,closed,shader|text,font_size,line_height,text_align,fit_text,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; select_layers {ids}; align_layers {ids,align}; distribute_layers {ids,axis}; duplicate_layers {ids,offset_x,offset_y}; wrap_in_frame {ids,name?}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id|name}; create_directive {layer_id?,x?,y?,message}; resolve_directive {id,resolved?}; delete_directive {id}. Tokens may be referenced by id or name. A literal fill/stroke detaches a token; fill_token/stroke_token null detaches and keeps the color. Unknown fields are errors. Single-result creations/wrap may add ref; later matching IDs accept {ref:label}, typed and batch-local. Returns ordered created ids with final layer bounds, refs, content_bounds and state.",
+            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_frame, create_rectangle, create_ellipse, create_triangle, create_shape, create_path, create_text {name,shape,parent,clip,x,y,width,height,fill,fill_token,stroke,stroke_token,stroke_width,radius,points,anchors,svg_path,closed,shader|text,font_size,line_height,text_align,fit_text,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; select_layers {ids}; align_layers {ids,align}; distribute_layers {ids,axis}; duplicate_layers {ids,offset_x,offset_y}; wrap_in_frame {ids,name?}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id|name}; create_directive {layer_id?,x?,y?,message}; resolve_directive {id,resolved?}; delete_directive {id}. Tokens may be referenced by id or name. A literal fill/stroke detaches a token; fill_token/stroke_token null detaches and keeps the color. Unknown fields are errors. Single-result creations/wrap may add ref; later matching IDs accept {ref:label}, typed and batch-local. Returns ordered created ids with final layer bounds, refs, content_bounds and state.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id", "operations"],
                 "properties": {
                     "document_id": id,

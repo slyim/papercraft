@@ -174,13 +174,13 @@ fn straight_paths_hit_segments_closure_and_convex_fill_not_the_box() {
     doc.nodes[0].stroke_width = 4.0;
     assert_eq!(doc.hit_test([70.0, 30.0]), None, "hollow closed path");
     assert_eq!(doc.hit_test([50.0, 50.0]), Some(1), "closing segment");
-    // Existing concave data remains readable but does not claim a filled hit area.
+    // Pen adds even-odd concave fills without rewriting released vertices.
     doc.nodes[0].points = vec![[0.0, 0.0], [1.0, 0.0], [0.3, 0.3], [0.0, 1.0]];
     doc.nodes[0].fill[3] = 255;
     assert_eq!(
         doc.hit_test([20.0, 20.0]),
-        None,
-        "concave interior is outside 1b fill support"
+        Some(1),
+        "concave interior follows the even-odd fill"
     );
 }
 

@@ -1,5 +1,7 @@
 # Editor completion roadmap
 
+**Current update:** editable starter Frames and bounded authored Pen/point/Bézier editing are implemented after the historical 1a/1b gates below. See [Pen/workspace verification](pen-workspace-verification.md) and [v4 contract](format-v4.md). This advances parts of stages 2/4, not the entire roadmap. Historical “stop at 1b”, convex-only and missing-Pen statements retain their original revision scope.
+
 Current increment baseline: `97e833e51e6d2056eeb7691f17fd5cfcfb008d03` (verified 1a). The source-backed inventory below was recorded at `53f99a6734473a9ca8a6933b5fb69de291dc1172` (v0.3.0); completed 1a/1b contracts and proof follow it.
 This is the current roadmap; older gap assessments, toolbar plans and release notes are historical, not completion evidence. Product decisions in the implementation request govern scope. All new behavior below is a PaperCraft decision, not a new Paper parity claim. No Paper or FigCraft code/assets are adopted by this increment.
 
