@@ -13,6 +13,8 @@ The objc2 family includes upstream licensing references and the retained [Steven
 
 Bounded even-odd path fill tessellation uses `lyon_tessellation` (locked version 1.0.23, MIT OR Apache-2.0) and its Cargo-resolved dependencies. Their original notices are collected into packaged `licenses/crates/`; PaperCraft's vector model, editing and cubic geometry remain original Rust.
 
+Figma import adapts FigCraft's generic Kiwi decoder from [revision e04c5d2](https://github.com/storytold/figcraft/tree/e04c5d2274329587b9213f27ad8f88708ea77748) under MIT. The [copyright and license notice](licenses/figcraft-MIT.txt) are retained and included in packaged project notices. PaperCraft supplies its own bounded archive reader and document mapping.
+
 Other dependencies retain their own licenses in their packages. `Cargo.lock` and `package-lock.json` identify the versions used; this file is not a complete distribution-license inventory. No Paper assets or source are included in application code.
 
 Release archives include dependency notices, package metadata, pinned upstream notice references, Rust standard-library notices, and font/icon licenses in `licenses/` (inside `PaperCraft.app/Contents/Resources/` on macOS). These materials retain their own terms. Original PaperCraft code, documentation and the generated logo are separately offered under the root MIT license. The earlier Crumbs v0.1.0 distribution retains its published MIT-or-Apache-2.0 grant.

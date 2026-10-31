@@ -1466,6 +1466,10 @@ expected_revision from your last inspect to avoid editing a state you have not s
 all-or-nothing and one undo step. Use document_render to check the result visually, then \
 document_save. Node x/y are absolute world coordinates even with a parent. Name a single created \
 result with ref and use {ref: label} in matching ID fields later in the same batch. \
+When creating designs, choose text_align explicitly for each create_text (left, center, right), \
+and set width to the intended text box. After rendering, review text alignment, wrapping and clipping \
+before saving. To change existing text alignment, use update_layer with id and text_align. \
+align_layers moves layer boxes instead. Text alignment is visible when width exceeds the text width. \
 Use document_render with frame_id or region to inspect distant content. HTML/SVG remain artboard-only \
 and reject shaders/ancestor clipping. Headless in-place format upgrades require allow_upgrade:true; \
 live upgrades require GUI confirmation or a new path. State results report revision, saved_revision and dirty.";
@@ -1509,7 +1513,7 @@ fn tools() -> Value {
         .extend(
             json!({
                 "line_height": { "type": ["number", "null"], "minimum":1, "maximum":4096 },
-                "text_align": { "type": "string", "enum": ["left", "center", "right"] },
+                "text_align": { "type": "string", "enum": ["left", "center", "right"], "description": "Choose explicitly on create_text; omitted values default to left. Aligns text horizontally inside the layer width. Change with update_layer {id, text_align}; preserves position and size. Applies only to text. Full justification and vertical alignment are unsupported." },
                 "fit_text": { "type": "boolean", "description": "When true on a text layer, sets height to the measured text height." },
                 "hidden": { "type": "boolean" },
                 "locked": { "type": "boolean" },
@@ -1519,7 +1523,7 @@ fn tools() -> Value {
                 "canvas": color.clone(),
                 "canvas_token": token_ref.clone(),
                 "value": color.clone(),
-                "align": { "type": "string", "enum": ["left", "center", "center_x", "horizontal_center", "right", "top", "middle", "center_y", "vertical_center", "bottom"] },
+                "align": { "type": "string", "enum": ["left", "center", "center_x", "horizontal_center", "right", "top", "middle", "center_y", "vertical_center", "bottom"], "description": "For align_layers: moves layer boxes. To align text within a box, use update_layer with text_align." },
                 "axis": { "type": "string", "enum": ["horizontal", "vertical"] },
                 "offset_x": { "type": "number" },
                 "offset_y": { "type": "number" }
@@ -1577,7 +1581,7 @@ fn tools() -> Value {
         },
         {
             "name": "document_apply",
-            "description": "Apply operations as one all-or-nothing batch and one undo step. Operations (field \"op\"): create_frame, create_rectangle, create_ellipse, create_triangle, create_shape, create_path, create_text {name,shape,parent,clip,x,y,width,height,fill,fill_token,stroke,stroke_token,stroke_width,radius,points,anchors,svg_path,closed,shader|text,font_size,line_height,text_align,fit_text,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; select_layers {ids}; align_layers {ids,align}; distribute_layers {ids,axis}; duplicate_layers {ids,offset_x,offset_y}; wrap_in_frame {ids,name?}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id|name}; create_directive {layer_id?,x?,y?,message}; resolve_directive {id,resolved?}; delete_directive {id}. Tokens may be referenced by id or name. A literal fill/stroke detaches a token; fill_token/stroke_token null detaches and keeps the color. Unknown fields are errors. Single-result creations/wrap may add ref; later matching IDs accept {ref:label}, typed and batch-local. Returns ordered created ids with final layer bounds, refs, content_bounds and state.",
+            "description": "Apply operations as one all-or-nothing batch and one undo step. For each create_text, choose text_align explicitly (left, center, right) and set width to the intended text box. Example: {\"op\":\"create_text\",\"text\":\"Heading\",\"width\":400,\"text_align\":\"center\"}. Edit existing text with update_layer {id,text_align}; align_layers moves boxes. Render and review alignment, wrapping and clipping before saving. Operations (field \"op\"): create_frame, create_rectangle, create_ellipse, create_triangle, create_shape, create_path, create_text {name,shape,parent,clip,x,y,width,height,fill,fill_token,stroke,stroke_token,stroke_width,radius,points,anchors,svg_path,closed,shader|text,font_size,line_height,text_align,fit_text,hidden,locked,index}; update_layer {id,...same fields}; delete_layers {ids}; move_layer {id,index}; select_layers {ids}; align_layers {ids,align}; distribute_layers {ids,axis}; duplicate_layers {ids,offset_x,offset_y}; wrap_in_frame {ids,name?}; set_artboard {name,width,height,background,background_token,canvas,canvas_token}; create_token {name,value}; update_token {id,name,value}; delete_token {id|name}; create_directive {layer_id?,x?,y?,message}; resolve_directive {id,resolved?}; delete_directive {id}. Tokens may be referenced by id or name. A literal fill/stroke detaches a token; fill_token/stroke_token null detaches and keeps the color. Unknown fields are errors. Single-result creations/wrap may add ref; later matching IDs accept {ref:label}, typed and batch-local. Returns ordered created ids with final layer bounds, refs, content_bounds and state.",
             "inputSchema": { "type": "object", "additionalProperties": false, "required": ["document_id", "operations"],
                 "properties": {
                     "document_id": id,

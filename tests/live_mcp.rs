@@ -62,6 +62,43 @@ fn manual_and_mcp_edits_share_history_and_tabs() {
 }
 
 #[test]
+fn live_text_alignment_updates_preserve_bounds_and_share_history() {
+    let mut app = PaperCraftApp::from_document(Document::default());
+    let (_, list) = call(&mut app, "document_list", json!({}));
+    let id = list[0]["document_id"].clone();
+    let (error, created) = call(
+        &mut app,
+        "document_apply",
+        json!({"document_id":id,"operations":[{"op":"create_text","text":"Align me","x":20,"y":30,"width":400,"height":80,"text_align":"right"}]}),
+    );
+    assert!(!error, "{created}");
+    assert_eq!(app.editor.document.nodes[0].text_align.name(), "right");
+    let layer = created["created"][0]["id"].clone();
+    for align in ["center", "right", "left"] {
+        let before = app.editor.document.clone();
+        let revision = app.editor.revision();
+        let (error, state) = call(
+            &mut app,
+            "document_apply",
+            json!({"document_id":id,"expected_revision":revision,"operations":[{"op":"update_layer","id":layer,"text_align":align}]}),
+        );
+        assert!(!error, "{state}");
+        let (error, inspected) = call(&mut app, "document_inspect", json!({"document_id":id}));
+        assert!(!error, "{inspected}");
+        let text = &inspected["layers"][0];
+        assert_eq!(text["text_align"], align);
+        assert_eq!(text["bounds"], json!([20.0, 30.0, 420.0, 110.0]));
+        let after = app.editor.document.clone();
+        assert_ne!(before, after);
+        app.editor.undo();
+        assert_eq!(app.editor.document, before);
+        let (error, state) = call(&mut app, "document_redo", json!({"document_id":id}));
+        assert!(!error, "{state}");
+        assert_eq!(app.editor.document, after);
+    }
+}
+
+#[test]
 fn live_saves_protect_other_tabs_and_reject_silent_upgrades() {
     let directory = tempfile::tempdir().unwrap();
     let first = directory.path().join("first.papercraft");

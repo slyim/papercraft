@@ -1,6 +1,7 @@
 pub mod app;
 pub mod cli;
 pub mod document;
+pub mod fig_import;
 mod geometry;
 pub mod live;
 pub mod mcp;

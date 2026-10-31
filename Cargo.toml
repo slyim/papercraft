@@ -1,6 +1,6 @@
 [package]
 name = "papercraft"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "A local design canvas built in Rust and egui."
 repository = "https://github.com/slyim/papercraft"
@@ -16,6 +16,9 @@ png = "0.18.1"
 tempfile = "3"
 getrandom = "0.4"
 lyon_tessellation = "1.0.20"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+ruzstd = { version = "0.8", default-features = false, features = ["std"] }
+zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 craft-quit = { git = "https://github.com/storytold/craft-libs", rev = "82a24b006eefa036b43c09a67fb9a3fbd17ffe63", features = ["menu"] }

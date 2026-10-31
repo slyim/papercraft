@@ -14,6 +14,8 @@ use std::{
 pub const USAGE: &str = "\
 Usage:
   papercraft [FILE]                     Open the editor, optionally with FILE
+  papercraft convert INPUT.fig --output OUTPUT.papercraft
+                                        Convert the first Figma page (best effort)
   papercraft inspect FILE               Print the document as JSON
   papercraft export FILE --format FORMAT --output PATH [--scale N]
                                         Export html, svg or png (scale 0.1–8, default 1)
@@ -35,12 +37,13 @@ pub fn run(args: &[OsString]) -> Option<i32> {
     let command = args.first()?.to_str()?;
     if !matches!(
         command,
-        "inspect" | "export" | "mcp" | "help" | "--help" | "-h" | "--version" | "-V"
+        "convert" | "inspect" | "export" | "mcp" | "help" | "--help" | "-h" | "--version" | "-V"
     ) {
         return None;
     }
     attach_console();
     let exit = match command {
+        "convert" => convert(&args[1..]),
         "inspect" => inspect(&args[1..]),
         "export" => export(&args[1..]),
         "mcp" if args.len() == 1 => match crate::live::discover_optional() {
@@ -92,6 +95,35 @@ pub fn run(args: &[OsString]) -> Option<i32> {
             2
         }
     })
+}
+
+fn convert(args: &[OsString]) -> Exit {
+    let [input, flag, output] = args else {
+        return Exit::Usage("Use convert INPUT.fig --output OUTPUT.papercraft.".into());
+    };
+    let (input, output) = (Path::new(input), Path::new(output));
+    if flag != "--output"
+        || !crate::fig_import::is_fig(input)
+        || !output
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("papercraft"))
+    {
+        return Exit::Usage("Conversion requires .fig input and .papercraft output.".into());
+    }
+    // Refuse aliases too: conversion must never replace its source.
+    if same_file(input, output) {
+        return Exit::Failure("Conversion output must differ from its source.".into());
+    }
+    match crate::fig_import::load(input).and_then(|import| {
+        import.document.save(output)?;
+        for warning in import.warnings {
+            eprintln!("warning: {warning}");
+        }
+        Ok(())
+    }) {
+        Ok(()) => Exit::Ok,
+        Err(error) => Exit::Failure(error),
+    }
 }
 
 fn inspect(args: &[OsString]) -> Exit {

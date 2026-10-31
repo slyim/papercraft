@@ -1058,6 +1058,10 @@ impl PaperCraftApp {
     }
 
     fn write_document(&mut self, path: PathBuf) -> bool {
+        if crate::fig_import::is_fig(&path) {
+            self.status = "Figma files are import-only. Save as .papercraft.".into();
+            return false;
+        }
         self.upgrade_prompt = false;
         let path = std::path::absolute(&path).unwrap_or(path);
         let identity = document_path(path.clone());
@@ -1095,6 +1099,21 @@ impl PaperCraftApp {
                 .is_some_and(|p| document_path(p.to_path_buf()) == identity)
         }) {
             self.activate_tab(index);
+            return;
+        }
+        if crate::fig_import::is_fig(&path) {
+            match crate::fig_import::load(&path) {
+                Ok(import) => {
+                    self.open_tab(import.document, None);
+                    self.set_saved(Document::default());
+                    self.saved_revision = None;
+                    self.status = format!(
+                        "{} Save As .papercraft to keep the conversion.",
+                        import.warnings.join(" ")
+                    );
+                }
+                Err(error) => self.status = format!("{error} Open documents were kept."),
+            }
             return;
         }
         match Document::load(&path) {
@@ -1145,7 +1164,10 @@ impl PaperCraftApp {
             }
             Intent::Open => {
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("PaperCraft document", &["papercraft", "crumbs"])
+                    .add_filter(
+                        "PaperCraft / Figma document",
+                        &["papercraft", "crumbs", "fig"],
+                    )
                     .pick_file()
                 {
                     self.open_path(path);
@@ -2188,7 +2210,8 @@ impl PaperCraftApp {
             }))
             .show_separator_line(false)
             .show(ui, |ui| {
-                ui.label(RichText::new(&self.status).size(CAPTION).color(TEXT_DIM));
+                ui.label(RichText::new(&self.status).size(CAPTION).color(TEXT_DIM))
+                    .on_hover_text(&self.status);
             });
     }
 
@@ -5187,6 +5210,34 @@ impl eframe::App for PaperCraftApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fig_import_is_unsaved_preserves_tabs_and_cannot_overwrite_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("design.fig");
+        let bytes = crate::fig_import::tests::fixture();
+        std::fs::write(&source, &bytes).unwrap();
+        let mut app = PaperCraftApp::from_document(Document::example());
+        let before = app.editor.document.clone();
+        app.open_path(source.clone());
+        assert_eq!(app.tabs.len(), 2);
+        assert!(app.path.is_none());
+        assert!(app.dirty());
+        assert!(app.status.contains("first page"));
+        assert!(!app.write_document(source.clone()));
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
+        let destination = directory.path().join("converted.papercraft");
+        assert!(app.write_document(destination.clone()));
+        assert!(!app.dirty());
+        assert_eq!(Document::load(&destination).unwrap(), app.editor.document);
+        std::fs::write(&source, b"broken").unwrap();
+        let converted = app.editor.document.clone();
+        app.open_path(source);
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.editor.document, converted);
+        app.activate_tab(0);
+        assert_eq!(app.editor.document, before);
+    }
 
     #[test]
     fn dimension_pill_clears_the_bottom_handle_and_stays_on_canvas() {

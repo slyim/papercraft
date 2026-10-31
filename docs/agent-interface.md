@@ -104,6 +104,10 @@ claude mcp add papercraft -- /path/to/papercraft mcp
 
 ### Batch operations
 
+When creating a design, choose `text_align` explicitly on each `create_text` and set `width` to the intended text box. For example: `{"op":"create_text","text":"Heading","width":400,"text_align":"center"}`. After rendering, review alignment, wrapping and clipping before saving. Omitted alignment defaults to `left`; omission is valid for existing clients.
+
+To change horizontal text alignment without moving its box, inspect the document for the text layer ID, then call `document_apply` with `{"document_id":"<id>","expected_revision":<revision>,"operations":[{"op":"update_layer","id":<text-layer-id>,"text_align":"center"}]}`. Supported values are `left`, `center`, and `right`. The effect is visible when the layer width exceeds the text width; a tightly fitted single-line box has no spare horizontal space. `align_layers` moves layer boxes instead. Full justification and vertical text alignment are unsupported.
+
 `document_apply` takes `operations` (1–10,000) and optional `expected_revision`. Operations:
 
 - `create_frame`, `create_rectangle`, `create_ellipse`, `create_triangle`, `create_shape` (`shape`: `"rectangle"` | `"ellipse"` | `"triangle"`), `create_path`, `create_text`: `name`, `parent` (frame layer id or `null`), `x`, `y`, `width`, `height`, `fill`, `fill_token`, `stroke` (color or `null`), `stroke_token`, `stroke_width` (0–1000; defaults to `1` when `stroke` or `stroke_token` is set while width is `0`), `hidden`, `locked`, `index`; frames also `clip` (`bool`, default `true`) and `radius` (default `12`); rectangles also `radius`; frames and shapes also `shader` (`null` or `{kind: "linear_gradient"|"radial_gradient"|"mesh"|"grain"|"halftone", secondary?, angle?, intensity?}`); paths also `points` (`[[x, y], …]` in `0..=1`), `svg_path` (`"M x y L x y ... Z"` parsed and normalized into `points` and `closed`) and `closed` (`bool`); text also `text`, `font_size`, `line_height` (1–4096 or `null` for the font's spacing), `text_align` (`left`, `center`, `right`) and `fit_text` (`true` auto-sizes `height` to `ceil(measured_height)`).
